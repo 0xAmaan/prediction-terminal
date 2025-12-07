@@ -1,0 +1,43 @@
+[package]
+name = "terminal-polymarket"
+version = "0.1.0"
+edition = "2021"
+description = "Polymarket integration for the Prediction Market Terminal"
+authors = ["Amaan"]
+
+[dependencies]
+terminal-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+
+# HTTP
+reqwest = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { workspace = true }
+url = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Data types
+rust_decimal = { workspace = true, features = ["serde"] }
+chrono = { workspace = true }
+uuid = { version = "1.0", features = ["v4"] }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Crypto for HMAC authentication
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"

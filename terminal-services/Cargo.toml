@@ -1,0 +1,42 @@
+[package]
+name = "terminal-services"
+version = "0.1.0"
+edition = "2021"
+description = "Business logic services for the Prediction Market Terminal"
+authors = ["Amaan"]
+
+[dependencies]
+terminal-core = { workspace = true }
+terminal-kalshi = { workspace = true }
+terminal-polymarket = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["sync"] }
+async-trait = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+tokio-stream = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { workspace = true }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Data types
+rust_decimal = { workspace = true, features = ["serde"] }
+chrono = { workspace = true }
+
+# Concurrency
+dashmap = "6.0"
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }

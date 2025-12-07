@@ -1,0 +1,46 @@
+[package]
+name = "terminal-api"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP API server for the Prediction Market Terminal"
+authors = ["Amaan"]
+
+[[bin]]
+name = "terminal-api"
+path = "src/main.rs"
+
+[dependencies]
+terminal-core = { workspace = true }
+terminal-kalshi = { workspace = true }
+terminal-polymarket = { workspace = true }
+terminal-services = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["ws"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# WebSocket
+futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["full"] }
+
+# SerDe
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# DateTime
+chrono = { workspace = true }
+
+# Environment variables
+dotenvy = "0.15"
