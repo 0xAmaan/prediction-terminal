@@ -12,13 +12,14 @@ use std::time::Duration;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use rand;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::pss::BlindedSigningKey;
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use rsa::RsaPrivateKey;
-use sha2::Sha256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::time::interval;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -63,15 +64,9 @@ pub struct KalshiCommandParams {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum KalshiResponse {
     /// Subscription confirmed
-    Subscribed {
-        id: u64,
-        msg: SubscribedMsg,
-    },
+    Subscribed { id: u64, msg: SubscribedMsg },
     /// Unsubscription confirmed
-    Unsubscribed {
-        id: u64,
-        msg: UnsubscribedMsg,
-    },
+    Unsubscribed { id: u64, msg: UnsubscribedMsg },
     /// Orderbook snapshot (initial state)
     OrderbookSnapshot {
         #[serde(default)]
@@ -97,10 +92,7 @@ pub enum KalshiResponse {
         msg: TradeMsg,
     },
     /// Error message
-    Error {
-        id: Option<u64>,
-        msg: ErrorMsg,
-    },
+    Error { id: Option<u64>, msg: ErrorMsg },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -132,17 +124,17 @@ pub struct OrderbookSnapshotMsg {
 #[derive(Debug, Clone, Deserialize)]
 pub struct OrderbookDeltaMsg {
     pub market_ticker: String,
-    pub price: i64,      // Price in cents (1-99)
-    pub delta: i64,      // Quantity change (positive or negative)
-    pub side: String,    // "yes" or "no"
+    pub price: i64,   // Price in cents (1-99)
+    pub delta: i64,   // Quantity change (positive or negative)
+    pub side: String, // "yes" or "no"
     #[serde(default)]
     pub seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OrderbookLevel {
-    pub price: i64,      // Price in cents
-    pub quantity: i64,   // Number of contracts
+    pub price: i64,    // Price in cents
+    pub quantity: i64, // Number of contracts
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,13 +152,13 @@ pub struct TickerMsg {
 pub struct TradeMsg {
     pub market_ticker: String,
     pub trade_id: String,
-    pub side: String,        // "yes" or "no"
-    pub price: i64,          // Price in cents
-    pub count: i64,          // Number of contracts
+    pub side: String, // "yes" or "no"
+    pub price: i64,   // Price in cents
+    pub count: i64,   // Number of contracts
     #[serde(default)]
-    pub taker_side: Option<String>,  // "buy" or "sell"
+    pub taker_side: Option<String>, // "buy" or "sell"
     #[serde(default)]
-    pub ts: Option<i64>,     // Timestamp
+    pub ts: Option<i64>, // Timestamp
 }
 
 // ============================================================================
@@ -197,10 +189,7 @@ pub enum KalshiUpdate {
         volume: Option<Decimal>,
     },
     /// Trade executed
-    Trade {
-        market_ticker: String,
-        trade: Trade,
-    },
+    Trade { market_ticker: String, trade: Trade },
     /// Connection state change
     ConnectionState {
         connected: bool,
@@ -225,7 +214,10 @@ impl std::fmt::Debug for KalshiWebSocketConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KalshiWebSocketConfig")
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
-            .field("private_key_pem", &self.private_key_pem.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "private_key_pem",
+                &self.private_key_pem.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("auto_reconnect", &self.auto_reconnect)
             .field("max_reconnect_attempts", &self.max_reconnect_attempts)
             .finish()
@@ -283,8 +275,12 @@ fn sign_rsa_pss(private_key_input: &str, message: &str) -> Result<String, anyhow
         } else {
             // Try PKCS#1 format (BEGIN RSA PRIVATE KEY) - this is what Kalshi uses
             let pkcs1_pem = format_as_pem(&clean_b64, "RSA PRIVATE KEY");
-            RsaPrivateKey::from_pkcs1_pem(&pkcs1_pem)
-                .map_err(|e| anyhow::anyhow!("Failed to parse private key (tried PKCS#8 and PKCS#1): {}", e))?
+            RsaPrivateKey::from_pkcs1_pem(&pkcs1_pem).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to parse private key (tried PKCS#8 and PKCS#1): {}",
+                    e
+                )
+            })?
         }
     };
 
@@ -311,7 +307,10 @@ fn format_as_pem(b64_content: &str, key_type: &str) -> String {
 }
 
 /// Create authentication headers for Kalshi WebSocket
-fn create_auth_headers(api_key: &str, private_key_pem: &str) -> Result<(String, String, String), anyhow::Error> {
+fn create_auth_headers(
+    api_key: &str,
+    private_key_pem: &str,
+) -> Result<(String, String, String), anyhow::Error> {
     // Timestamp in milliseconds
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -362,7 +361,9 @@ impl KalshiWebSocket {
     pub async fn start(&mut self) -> Result<(), anyhow::Error> {
         // Check if we have both API key AND private key - Kalshi WS requires RSA-PSS auth
         if self.config.api_key.is_none() || self.config.private_key_pem.is_none() {
-            warn!("[Kalshi WS] Missing credentials. Need both KALSHI_API_KEY and KALSHI_PRIVATE_KEY.");
+            warn!(
+                "[Kalshi WS] Missing credentials. Need both KALSHI_API_KEY and KALSHI_PRIVATE_KEY."
+            );
             if self.config.api_key.is_none() {
                 warn!("[Kalshi WS] KALSHI_API_KEY not set");
             }
@@ -571,7 +572,10 @@ impl KalshiWebSocket {
             }
 
             let delay = RECONNECT_DELAY_BASE * 2u32.pow(reconnect_attempts - 1);
-            info!("[Kalshi WS] Reconnecting in {:?} (attempt {})", delay, reconnect_attempts);
+            info!(
+                "[Kalshi WS] Reconnecting in {:?} (attempt {})",
+                delay, reconnect_attempts
+            );
             tokio::time::sleep(delay).await;
         }
     }
@@ -579,54 +583,58 @@ impl KalshiWebSocket {
     /// Handle an incoming message from the WebSocket
     fn handle_message(text: &str, update_tx: &broadcast::Sender<KalshiUpdate>) {
         match serde_json::from_str::<KalshiResponse>(text) {
-            Ok(response) => {
-                match response {
-                    KalshiResponse::Subscribed { id, msg } => {
-                        info!("[Kalshi WS] Subscribed to {} (id: {}, sid: {})", msg.channel, id, msg.sid);
-                    }
-                    KalshiResponse::Unsubscribed { id, msg } => {
-                        info!("[Kalshi WS] Unsubscribed from {} (id: {})", msg.channel, id);
-                    }
-                    KalshiResponse::OrderbookSnapshot { msg, .. } => {
-                        debug!("[Kalshi WS] Orderbook snapshot for {}", msg.market_ticker);
-                        let orderbook = Self::convert_orderbook_snapshot(&msg);
-                        let _ = update_tx.send(KalshiUpdate::OrderbookSnapshot {
-                            market_ticker: msg.market_ticker,
-                            orderbook,
-                        });
-                    }
-                    KalshiResponse::OrderbookDelta { msg, .. } => {
-                        debug!("[Kalshi WS] Orderbook delta for {} @ {}", msg.market_ticker, msg.price);
-                        let _ = update_tx.send(KalshiUpdate::OrderbookDelta {
-                            market_ticker: msg.market_ticker,
-                            side: msg.side,
-                            price: Decimal::from(msg.price) / Decimal::from(100),
-                            delta: Decimal::from(msg.delta),
-                            seq: msg.seq,
-                        });
-                    }
-                    KalshiResponse::Ticker { msg, .. } => {
-                        debug!("[Kalshi WS] Ticker update for {}", msg.market_ticker);
-                        let _ = update_tx.send(KalshiUpdate::PriceUpdate {
-                            market_ticker: msg.market_ticker,
-                            yes_price: msg.yes_price.map(|p| Decimal::from(p) / Decimal::from(100)),
-                            no_price: msg.no_price.map(|p| Decimal::from(p) / Decimal::from(100)),
-                            volume: msg.volume.map(Decimal::from),
-                        });
-                    }
-                    KalshiResponse::Trade { msg, .. } => {
-                        debug!("[Kalshi WS] Trade on {} @ {}", msg.market_ticker, msg.price);
-                        let trade = Self::convert_trade(&msg);
-                        let _ = update_tx.send(KalshiUpdate::Trade {
-                            market_ticker: msg.market_ticker,
-                            trade,
-                        });
-                    }
-                    KalshiResponse::Error { msg, .. } => {
-                        error!("[Kalshi WS] Error: {:?} - {}", msg.code, msg.message);
-                    }
+            Ok(response) => match response {
+                KalshiResponse::Subscribed { id, msg } => {
+                    info!(
+                        "[Kalshi WS] Subscribed to {} (id: {}, sid: {})",
+                        msg.channel, id, msg.sid
+                    );
                 }
-            }
+                KalshiResponse::Unsubscribed { id, msg } => {
+                    info!("[Kalshi WS] Unsubscribed from {} (id: {})", msg.channel, id);
+                }
+                KalshiResponse::OrderbookSnapshot { msg, .. } => {
+                    debug!("[Kalshi WS] Orderbook snapshot for {}", msg.market_ticker);
+                    let orderbook = Self::convert_orderbook_snapshot(&msg);
+                    let _ = update_tx.send(KalshiUpdate::OrderbookSnapshot {
+                        market_ticker: msg.market_ticker,
+                        orderbook,
+                    });
+                }
+                KalshiResponse::OrderbookDelta { msg, .. } => {
+                    debug!(
+                        "[Kalshi WS] Orderbook delta for {} @ {}",
+                        msg.market_ticker, msg.price
+                    );
+                    let _ = update_tx.send(KalshiUpdate::OrderbookDelta {
+                        market_ticker: msg.market_ticker,
+                        side: msg.side,
+                        price: Decimal::from(msg.price) / Decimal::from(100),
+                        delta: Decimal::from(msg.delta),
+                        seq: msg.seq,
+                    });
+                }
+                KalshiResponse::Ticker { msg, .. } => {
+                    debug!("[Kalshi WS] Ticker update for {}", msg.market_ticker);
+                    let _ = update_tx.send(KalshiUpdate::PriceUpdate {
+                        market_ticker: msg.market_ticker,
+                        yes_price: msg.yes_price.map(|p| Decimal::from(p) / Decimal::from(100)),
+                        no_price: msg.no_price.map(|p| Decimal::from(p) / Decimal::from(100)),
+                        volume: msg.volume.map(Decimal::from),
+                    });
+                }
+                KalshiResponse::Trade { msg, .. } => {
+                    debug!("[Kalshi WS] Trade on {} @ {}", msg.market_ticker, msg.price);
+                    let trade = Self::convert_trade(&msg);
+                    let _ = update_tx.send(KalshiUpdate::Trade {
+                        market_ticker: msg.market_ticker,
+                        trade,
+                    });
+                }
+                KalshiResponse::Error { msg, .. } => {
+                    error!("[Kalshi WS] Error: {:?} - {}", msg.code, msg.message);
+                }
+            },
             Err(e) => {
                 // Try parsing as raw JSON for debugging
                 debug!("[Kalshi WS] Unknown message: {} (error: {})", text, e);
@@ -645,7 +653,9 @@ impl KalshiWebSocket {
             let quantity = Decimal::from(level.quantity);
             // Positive quantity = bid, negative = ask (or vice versa based on Kalshi's format)
             if level.quantity > 0 {
-                orderbook.yes_bids.push(OrderBookLevel::new(price, quantity));
+                orderbook
+                    .yes_bids
+                    .push(OrderBookLevel::new(price, quantity));
             }
         }
 
@@ -667,9 +677,11 @@ impl KalshiWebSocket {
 
     /// Convert Kalshi trade message to internal Trade
     fn convert_trade(msg: &TradeMsg) -> Trade {
-        let timestamp = msg.ts
-            .map(|ts| chrono::DateTime::from_timestamp(ts / 1000, ((ts % 1000) * 1_000_000) as u32))
-            .flatten()
+        let timestamp = msg
+            .ts
+            .and_then(|ts| {
+                chrono::DateTime::from_timestamp(ts / 1000, ((ts % 1000) * 1_000_000) as u32)
+            })
             .unwrap_or_else(Utc::now);
 
         Trade {
@@ -679,9 +691,17 @@ impl KalshiWebSocket {
             timestamp,
             price: Decimal::from(msg.price) / Decimal::from(100),
             quantity: Decimal::from(msg.count),
-            outcome: if msg.side == "yes" { TradeOutcome::Yes } else { TradeOutcome::No },
+            outcome: if msg.side == "yes" {
+                TradeOutcome::Yes
+            } else {
+                TradeOutcome::No
+            },
             side: msg.taker_side.as_ref().map(|s| {
-                if s == "buy" { TradeSide::Buy } else { TradeSide::Sell }
+                if s == "buy" {
+                    TradeSide::Buy
+                } else {
+                    TradeSide::Sell
+                }
             }),
         }
     }
