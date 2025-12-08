@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.idea
+*.iml
+.vscode
+
+# Secrets - NEVER include these
+.env.local
+*.pem
+
+# Build artifacts
+target
+frontend/.next
+frontend/node_modules
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Data files (will be created at runtime)
+data
+
+# Claude
+.claude
