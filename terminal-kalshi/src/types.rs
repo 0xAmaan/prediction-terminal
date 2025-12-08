@@ -138,6 +138,10 @@ pub struct KalshiMarket {
     /// Image URL
     #[serde(default)]
     pub image_url: Option<String>,
+
+    /// Primary resolution rules
+    #[serde(default)]
+    pub rules_primary: Option<String>,
 }
 
 impl KalshiMarket {
@@ -283,7 +287,7 @@ impl KalshiMarket {
             leading_outcome: None,
             is_multi_outcome: false,
             options_json: None,
-            resolution_source: None, // Kalshi doesn't provide resolution info via API
+            resolution_source: self.rules_primary.clone(),
             // Sports fields
             is_sports,
             is_live: false, // Kalshi API doesn't provide live game data
@@ -688,7 +692,7 @@ pub fn markets_to_multi_outcome(
         outcome_count: Some(markets.len()),
         leading_outcome: Some(leader.title.clone()),
         options_json: Some(serde_json::to_string(&outcomes).unwrap_or_default()),
-        resolution_source: None, // Kalshi doesn't provide resolution info via API
+        resolution_source: leader.rules_primary.clone(),
         // Sports fields
         is_sports,
         is_live: false,
@@ -701,4 +705,53 @@ pub fn markets_to_multi_outcome(
         spread_line: None,
         total_line: None,
     }
+}
+
+// ============================================================================
+// Candlesticks Types (for price history)
+// ============================================================================
+
+/// Response from GET /series/{series}/markets/{ticker}/candlesticks
+#[derive(Debug, Clone, Deserialize)]
+pub struct CandlesticksResponse {
+    pub candlesticks: Vec<KalshiCandlestick>,
+}
+
+/// A single candlestick from Kalshi API
+#[derive(Debug, Clone, Deserialize)]
+pub struct KalshiCandlestick {
+    /// End timestamp for this period (Unix timestamp)
+    pub end_period_ts: i64,
+    /// YES ask OHLC data
+    pub yes_ask: Option<CandlestickOHLC>,
+    /// YES bid OHLC data
+    pub yes_bid: Option<CandlestickOHLC>,
+    /// Volume during this period
+    #[serde(default)]
+    pub volume: i64,
+    /// Open interest
+    #[serde(default)]
+    pub open_interest: i64,
+}
+
+/// OHLC (Open/High/Low/Close) data for a candlestick
+#[derive(Debug, Clone, Deserialize)]
+pub struct CandlestickOHLC {
+    /// Close price in cents (0-99)
+    pub close: Option<i64>,
+    /// High price in cents
+    pub high: Option<i64>,
+    /// Low price in cents
+    pub low: Option<i64>,
+    /// Open price in cents
+    pub open: Option<i64>,
+}
+
+/// A single price point for charts (matches Polymarket format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PriceHistoryPoint {
+    /// Unix timestamp in seconds
+    pub t: i64,
+    /// Price (0.0 - 1.0)
+    pub p: f64,
 }

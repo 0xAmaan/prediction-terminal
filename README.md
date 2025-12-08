@@ -56,6 +56,9 @@ bun install
 
 # Start development server
 bun run dev --turbopack
+
+# Or run both frontend and backend with hot reload
+bun run dev:backend  # Runs cargo watch for the Rust backend
 ```
 
 The frontend runs on `http://localhost:3000` by default.
@@ -89,7 +92,7 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 - **reqwest**: HTTP client for exchange APIs
 
 ### Frontend (TypeScript)
-- **Next.js 16**: React framework with App Router
+- **Next.js 15**: React framework with App Router
 - **React 19**: UI library
 - **TanStack Query**: Data fetching and caching
 - **TradingView Lightweight Charts**: Price charts
@@ -197,8 +200,18 @@ cd frontend && bun run build
 # Run Rust tests
 cargo test
 
+# Test a single crate
+cargo test -p terminal-core
+
 # Run frontend linting
 cd frontend && bun run lint
+```
+
+### Formatting
+
+```bash
+# Format Rust code (uses rustfmt.toml: edition 2024, crate-level imports)
+cargo fmt
 ```
 
 ## About This Project

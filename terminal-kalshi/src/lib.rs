@@ -9,4 +9,5 @@ pub mod types;
 pub mod websocket;
 
 pub use client::KalshiClient;
+pub use types::PriceHistoryPoint;
 pub use websocket::{KalshiUpdate, KalshiWebSocket, KalshiWebSocketConfig};

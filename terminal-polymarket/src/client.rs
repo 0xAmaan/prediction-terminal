@@ -4,10 +4,13 @@
 //! for market data retrieval.
 
 use crate::types::{
-    ClobOrderbookResponse, DataApiTrade, PolymarketEvent, PolymarketMarket,
-    PriceHistoryPoint, PricesHistoryResponse, CLOB_API_BASE, DATA_API_BASE,
+    ClobOrderbookResponse, DataApiTrade, PolymarketEvent, PolymarketMarket, PriceHistoryPoint,
+    PricesHistoryResponse, CLOB_API_BASE, DATA_API_BASE,
 };
-use base64::{engine::general_purpose::{STANDARD, URL_SAFE}, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE},
+    Engine as _,
+};
 use hmac::{Hmac, Mac};
 use reqwest::Client;
 use sha2::Sha256;
@@ -73,7 +76,10 @@ impl PolymarketCredentials {
 
         tracing::debug!(
             "HMAC message: timestamp={}, method={}, path={}, body_len={}",
-            timestamp, method, path, body.len()
+            timestamp,
+            method,
+            path,
+            body.len()
         );
 
         // Create HMAC-SHA256
@@ -202,10 +208,9 @@ impl PolymarketClient {
             )));
         }
 
-        let markets: Vec<PolymarketMarket> = response
-            .json()
-            .await
-            .map_err(|e| TerminalError::parse(format!("Failed to parse markets response: {}", e)))?;
+        let markets: Vec<PolymarketMarket> = response.json().await.map_err(|e| {
+            TerminalError::parse(format!("Failed to parse markets response: {}", e))
+        })?;
 
         let prediction_markets = markets
             .into_iter()
@@ -289,10 +294,9 @@ impl PolymarketClient {
             .map_err(|e| TerminalError::network(format!("Failed to fetch market: {}", e)))?;
 
         if response.status().is_success() {
-            let markets: Vec<PolymarketMarket> = response
-                .json()
-                .await
-                .map_err(|e| TerminalError::parse(format!("Failed to parse market response: {}", e)))?;
+            let markets: Vec<PolymarketMarket> = response.json().await.map_err(|e| {
+                TerminalError::parse(format!("Failed to parse market response: {}", e))
+            })?;
 
             if let Some(market) = markets.into_iter().next() {
                 return Ok(market.to_prediction_market());
@@ -346,7 +350,9 @@ impl PolymarketClient {
         loop {
             debug!("Fetching Polymarket markets page, offset: {}", offset);
 
-            let markets = self.list_markets(Some(limit), Some(offset), active_only).await?;
+            let markets = self
+                .list_markets(Some(limit), Some(offset), active_only)
+                .await?;
 
             if markets.is_empty() {
                 break;
@@ -382,7 +388,9 @@ impl PolymarketClient {
         loop {
             debug!("Fetching Polymarket events page, offset: {}", offset);
 
-            let events = self.list_events(Some(limit), Some(offset), active_only).await?;
+            let events = self
+                .list_events(Some(limit), Some(offset), active_only)
+                .await?;
 
             if events.is_empty() {
                 break;
@@ -444,10 +452,9 @@ impl PolymarketClient {
             )));
         }
 
-        let clob_book: ClobOrderbookResponse = response
-            .json()
-            .await
-            .map_err(|e| TerminalError::parse(format!("Failed to parse orderbook response: {}", e)))?;
+        let clob_book: ClobOrderbookResponse = response.json().await.map_err(|e| {
+            TerminalError::parse(format!("Failed to parse orderbook response: {}", e))
+        })?;
 
         Ok(clob_book.to_order_book(token_id, is_yes_token))
     }
@@ -461,12 +468,13 @@ impl PolymarketClient {
         let event = self.get_event_by_id(event_id).await?;
 
         // Get the first market's condition ID
-        event.markets
+        event
+            .markets
             .first()
             .and_then(|m| m.condition_id.clone())
-            .ok_or_else(|| TerminalError::not_found(format!(
-                "No condition ID found for event {}", event_id
-            )))
+            .ok_or_else(|| {
+                TerminalError::not_found(format!("No condition ID found for event {}", event_id))
+            })
     }
 
     /// Get recent trades for an event from the public data API
@@ -519,10 +527,7 @@ impl PolymarketClient {
             .await
             .map_err(|e| TerminalError::parse(format!("Failed to parse trades response: {}", e)))?;
 
-        let trades = trades
-            .into_iter()
-            .map(|t| t.to_trade(event_id))
-            .collect();
+        let trades = trades.into_iter().map(|t| t.to_trade(event_id)).collect();
 
         Ok(TradeHistory {
             market_id: event_id.to_string(),
@@ -580,10 +585,7 @@ impl PolymarketClient {
         })?;
 
         market.yes_token_id().ok_or_else(|| {
-            TerminalError::not_found(format!(
-                "Market {} has no CLOB token ID",
-                market.id
-            ))
+            TerminalError::not_found(format!("Market {} has no CLOB token ID", market.id))
         })
     }
 
@@ -676,12 +678,10 @@ impl PolymarketClient {
 
         debug!("Fetching Polymarket price history from: {}", url);
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| TerminalError::network(format!("Failed to fetch price history: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                TerminalError::network(format!("Failed to fetch price history: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -692,10 +692,9 @@ impl PolymarketClient {
             )));
         }
 
-        let prices_response: PricesHistoryResponse = response
-            .json()
-            .await
-            .map_err(|e| TerminalError::parse(format!("Failed to parse price history response: {}", e)))?;
+        let prices_response: PricesHistoryResponse = response.json().await.map_err(|e| {
+            TerminalError::parse(format!("Failed to parse price history response: {}", e))
+        })?;
 
         Ok(prices_response.history)
     }

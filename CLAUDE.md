@@ -13,6 +13,7 @@ This is a **Prediction Market Terminal** - a full-stack application that aggrega
 cd frontend
 bun install              # Install dependencies
 bun run dev --turbopack  # Start dev server (usually already running)
+bun run dev:backend      # Run Rust backend with hot reload (from frontend dir)
 bun run build            # Production build
 bun run lint             # ESLint
 ```
@@ -23,6 +24,13 @@ cargo build                    # Build all crates
 cargo build -p terminal-api    # Build just the API server
 cargo run -p terminal-api      # Run the API server
 cargo watch -w terminal-api -w terminal-core -w terminal-services -w terminal-kalshi -w terminal-polymarket -x 'run -p terminal-api'  # Dev with hot reload
+
+# Testing
+cargo test                     # Run all tests
+cargo test -p terminal-core    # Test a single crate
+
+# Formatting
+cargo fmt                      # Format all code (uses rustfmt.toml: edition 2024, crate-level imports)
 ```
 
 ### Environment

@@ -282,9 +282,66 @@ impl MarketService {
         );
 
         match platform {
-            Platform::Kalshi => Err(TerminalError::api(
-                "Multi-outcome price history not yet supported for Kalshi".to_string(),
-            )),
+            Platform::Kalshi => {
+                // Get the event to access options
+                let market = self.kalshi.get_market(event_id).await?;
+
+                // Parse options from options_json
+                let options: Vec<serde_json::Value> = if let Some(json) = &market.options_json {
+                    serde_json::from_str(json).unwrap_or_default()
+                } else {
+                    return Err(TerminalError::not_found(
+                        "No options found for market".to_string(),
+                    ));
+                };
+
+                // Extract series ticker from event_id (e.g., "KXNEWPOPE-70" -> "KXNEWPOPE")
+                let series_ticker = terminal_kalshi::types::KalshiMarket::extract_series_ticker_static(event_id);
+
+                // Sort by yes_price descending and take top N
+                let mut sorted_options = options.clone();
+                sorted_options.sort_by(|a, b| {
+                    let price_a: f64 = a["yes_price"].as_str()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0.0);
+                    let price_b: f64 = b["yes_price"].as_str()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0.0);
+                    price_b.partial_cmp(&price_a).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let top_options: Vec<_> = sorted_options.into_iter().take(top).collect();
+
+                // Fetch price history for each outcome
+                let mut results = Vec::new();
+                for (idx, option) in top_options.into_iter().enumerate() {
+                    let market_ticker = option["market_id"].as_str().unwrap_or("");
+                    let option_name = option["name"].as_str().unwrap_or("Unknown").to_string();
+
+                    if !market_ticker.is_empty() {
+                        match self.kalshi.get_candlesticks(series_ticker, market_ticker, interval).await {
+                            Ok(history) => {
+                                // Convert Kalshi PriceHistoryPoint to Polymarket format
+                                let history: Vec<PriceHistoryPoint> = history
+                                    .into_iter()
+                                    .map(|p| PriceHistoryPoint { t: p.t, p: p.p })
+                                    .collect();
+
+                                results.push(OutcomePriceHistory {
+                                    name: option_name,
+                                    market_id: market_ticker.to_string(),
+                                    color: OUTCOME_COLORS[idx % OUTCOME_COLORS.len()].to_string(),
+                                    history,
+                                });
+                            }
+                            Err(e) => {
+                                warn!("Failed to fetch price history for {}: {}", option_name, e);
+                            }
+                        }
+                    }
+                }
+
+                Ok(results)
+            }
             Platform::Polymarket => {
                 // Get the event to access options
                 let market = self.polymarket.get_market(event_id).await?;

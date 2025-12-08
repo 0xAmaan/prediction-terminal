@@ -690,6 +690,93 @@ impl KalshiClient {
     }
 
     // ========================================================================
+    // Price History Methods
+    // ========================================================================
+
+    /// Get candlestick price history for a market
+    ///
+    /// # Arguments
+    /// * `series_ticker` - The series ticker (e.g., "KXNEWPOPE")
+    /// * `market_ticker` - The full market ticker (e.g., "KXNEWPOPE-70-PPIZ")
+    /// * `interval` - Time interval: "1h", "1d", "1w", or "max"
+    #[instrument(skip(self))]
+    pub async fn get_candlesticks(
+        &self,
+        series_ticker: &str,
+        market_ticker: &str,
+        interval: &str,
+    ) -> Result<Vec<crate::types::PriceHistoryPoint>, TerminalError> {
+        use crate::types::{CandlesticksResponse, PriceHistoryPoint};
+
+        // Map interval to period (in minutes) and time range
+        let (period_interval, duration_secs): (i32, i64) = match interval {
+            "1h" => (60, 3600),           // 1 hour periods, 1 hour of data
+            "1d" => (60, 86400),           // 1 hour periods, 24 hours of data
+            "1w" => (1440, 604800),        // 1 day periods, 7 days of data
+            "max" => (1440, 365 * 86400),  // 1 day periods, 1 year of data
+            _ => (1440, 604800),           // Default to 1 week
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let start_ts = now - duration_secs;
+
+        let url = format!(
+            "{}/series/{}/markets/{}/candlesticks?period_interval={}&start_ts={}&end_ts={}",
+            self.base_url, series_ticker, market_ticker, period_interval, start_ts, now
+        );
+
+        debug!("Fetching candlesticks for {}: {}", market_ticker, url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TerminalError::network(format!("Failed to fetch candlesticks: {}", e)))?;
+
+        if response.status().as_u16() == 404 {
+            return Err(TerminalError::not_found(format!(
+                "Market candlesticks not found: {}",
+                market_ticker
+            )));
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TerminalError::api(format!(
+                "Kalshi candlesticks API error ({}): {}",
+                status, body
+            )));
+        }
+
+        let candles_response: CandlesticksResponse = response
+            .json()
+            .await
+            .map_err(|e| TerminalError::parse(format!("Failed to parse candlesticks: {}", e)))?;
+
+        // Convert to PriceHistoryPoint format
+        // Use yes_ask.close as the price (or mid-price if both available)
+        let points: Vec<PriceHistoryPoint> = candles_response
+            .candlesticks
+            .into_iter()
+            .filter_map(|c| {
+                // Get price from yes_ask.close (in cents, convert to 0.0-1.0)
+                let price = c.yes_ask.as_ref()
+                    .and_then(|ask| ask.close)
+                    .map(|cents| cents as f64 / 100.0)?;
+
+                Some(PriceHistoryPoint {
+                    t: c.end_period_ts,
+                    p: price,
+                })
+            })
+            .collect();
+
+        Ok(points)
+    }
+
+    // ========================================================================
     // Authenticated Methods (Portfolio)
     // ========================================================================
 
