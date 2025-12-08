@@ -103,7 +103,6 @@ pub struct PredictionMarket {
     // ========================================================================
     // Sports-specific fields
     // ========================================================================
-
     /// Whether this is a sports market (detected from category/title)
     #[serde(default)]
     pub is_sports: bool,
