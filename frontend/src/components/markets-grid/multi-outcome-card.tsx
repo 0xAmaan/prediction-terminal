@@ -31,7 +31,7 @@ export const MultiOutcomeCard = ({
   return (
     <div
       onClick={onClick}
-      className="group relative h-[280px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
+      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
       style={{
         background: colors.cardBg,
         border: `1px solid ${colors.border}`,
@@ -59,7 +59,7 @@ export const MultiOutcomeCard = ({
 
         {/* Title - MORE PROMINENT */}
         <h3
-          className="text-[19px] font-semibold leading-snug line-clamp-2 mb-5"
+          className="text-[19px] font-semibold leading-snug line-clamp-3 mb-5"
           style={{ color: colors.textPrimary }}
         >
           {market.title}

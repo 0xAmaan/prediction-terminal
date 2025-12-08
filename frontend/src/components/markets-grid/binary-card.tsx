@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { colors } from "./colors";
 import { formatPercent, formatVolume, formatCloseTime } from "./utils";
 import type { PredictionMarket } from "@/lib/types";
@@ -7,14 +8,14 @@ import type { PredictionMarket } from "@/lib/types";
 interface BinaryCardProps {
   market: PredictionMarket;
   index: number;
-  onClick?: () => void;
+  href: string;
 }
 
-export const BinaryCard = ({ market, index, onClick }: BinaryCardProps) => {
+export const BinaryCard = ({ market, index, href }: BinaryCardProps) => {
   return (
-    <div
-      onClick={onClick}
-      className="group relative h-[280px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
+    <Link
+      href={href}
+      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer block"
       style={{
         background: colors.cardBg,
         border: `1px solid ${colors.border}`,
@@ -45,7 +46,7 @@ export const BinaryCard = ({ market, index, onClick }: BinaryCardProps) => {
 
         {/* Title - MORE PROMINENT */}
         <h3
-          className="text-[19px] font-semibold leading-snug line-clamp-2 mb-auto"
+          className="text-[19px] font-semibold leading-snug line-clamp-3 mb-auto"
           style={{ color: colors.textPrimary }}
         >
           {market.title}

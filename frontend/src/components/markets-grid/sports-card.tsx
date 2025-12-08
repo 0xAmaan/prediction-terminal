@@ -25,7 +25,7 @@ export const SportsCard = ({ market, index, onClick }: SportsCardProps) => {
   return (
     <div
       onClick={onClick}
-      className="group relative h-[280px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
+      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
       style={{
         background: colors.cardBg,
         border: `1px solid ${colors.border}`,

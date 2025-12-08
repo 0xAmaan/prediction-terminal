@@ -356,6 +356,15 @@ const MarketPageContent = ({
                   </span>
                   <span className="text-sm">{formatDate(market.close_time)}</span>
                 </div>
+                {market.ticker && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Activity className="h-4 w-4" />
+                      Ticker
+                    </span>
+                    <span className="font-mono text-sm">{market.ticker}</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -370,16 +379,16 @@ const MarketPageContent = ({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {market.description && (
-                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                    <p className="text-[15px] text-foreground/80 leading-relaxed whitespace-pre-wrap">
                       {market.description}
                     </p>
                   )}
                   {market.resolution_source && (
                     <div>
-                      <div className="text-xs text-muted-foreground/70 uppercase tracking-wide mb-1.5">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1.5">
                         Resolution Source
                       </div>
-                      <p className="text-sm text-muted-foreground leading-relaxed">
+                      <p className="text-[15px] text-foreground/70 leading-relaxed">
                         {market.resolution_source}
                       </p>
                     </div>
@@ -391,29 +400,6 @@ const MarketPageContent = ({
             {/* Trade History - only show for binary markets */}
             {!isMultiOutcome && (
               <TradeHistory trades={trades} isLoading={tradesLoading} maxTrades={20} />
-            )}
-
-            {/* User Position Placeholder */}
-            <Card className="border-border/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Your Position</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-6 text-muted-foreground">
-                  <p className="text-sm">Connect to view your position</p>
-                  <p className="text-xs mt-1">Authentication coming soon</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Ticker Info */}
-            {market.ticker && (
-              <Card className="border-border/30">
-                <CardContent className="p-4">
-                  <div className="text-sm text-muted-foreground mb-1">Ticker</div>
-                  <div className="font-mono text-sm">{market.ticker}</div>
-                </CardContent>
-              </Card>
             )}
 
             {/* Related Markets */}
