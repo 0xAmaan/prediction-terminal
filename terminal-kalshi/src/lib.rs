@@ -9,4 +9,4 @@ pub mod types;
 pub mod websocket;
 
 pub use client::KalshiClient;
-pub use websocket::{KalshiWebSocket, KalshiWebSocketConfig, KalshiUpdate};
+pub use websocket::{KalshiUpdate, KalshiWebSocket, KalshiWebSocketConfig};

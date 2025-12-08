@@ -12,7 +12,7 @@ pub mod websocket;
 
 pub use aggregator::{AggregatorConfig, AggregatorHealth, ConnectionHealth, MarketDataAggregator};
 pub use candle_service::CandleService;
-pub use market_service::MarketService;
+pub use market_service::{MarketService, OutcomePriceHistory};
 pub use trade_collector::{TradeCollector, TradeCollectorConfig};
 pub use trade_storage::TradeStorage;
 pub use websocket::{SubscriptionEvent, SubscriptionManager, WebSocketState};

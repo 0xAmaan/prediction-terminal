@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MarketsTable } from "@/components/markets-table";
+import { MarketsGrid } from "@/components/markets-grid";
 import { Activity, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -36,7 +36,7 @@ const HomePage = () => {
                   placeholder="Search markets..."
                   value={search}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  className="h-12 pl-12 pr-4 text-base bg-secondary/80 border-border/30 rounded-xl focus:ring-2 focus:ring-primary/30 focus:border-primary/50 placeholder:text-muted-foreground/60"
+                  className="search-input h-12 pl-12 pr-4 text-base bg-secondary/80 border border-border/30 rounded-xl focus-visible:ring-0 focus-visible:border-transparent placeholder:text-muted-foreground/60"
                 />
               </div>
             </div>
@@ -52,7 +52,7 @@ const HomePage = () => {
       {/* Main content - scrollable */}
       <main className="flex-1 overflow-hidden">
         <div className="h-full mx-auto px-8 pt-10 pb-6" style={{ maxWidth: "1600px" }}>
-          <MarketsTable search={debouncedSearch} />
+          <MarketsGrid search={debouncedSearch} />
         </div>
       </main>
 

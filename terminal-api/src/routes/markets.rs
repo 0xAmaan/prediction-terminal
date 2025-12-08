@@ -71,6 +71,29 @@ pub struct PriceHistoryQuery {
     pub timeframe: Option<String>,
 }
 
+/// Query parameters for multi-outcome prices
+#[derive(Debug, Deserialize)]
+pub struct MultiOutcomePricesQuery {
+    /// Number of top outcomes to include (default 5)
+    pub top: Option<usize>,
+    /// Interval: "1h", "6h", "1d", "1w", "max"
+    pub interval: Option<String>,
+}
+
+/// Query parameters for outcome-specific data
+#[derive(Debug, Deserialize)]
+pub struct OutcomeQuery {
+    /// Maximum number of trades
+    pub limit: Option<u32>,
+}
+
+/// Query parameters for outcome price history
+#[derive(Debug, Deserialize)]
+pub struct OutcomePriceHistoryQuery {
+    /// Interval: "1h", "6h", "1d", "1w", "max"
+    pub interval: Option<String>,
+}
+
 /// Create market routes
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -80,6 +103,11 @@ pub fn routes() -> Router<AppState> {
         .route("/markets/:platform/:id/trades", get(get_trades))
         .route("/markets/:platform/:id/history", get(get_price_history))
         .route("/markets/:platform/:id/related", get(get_related_markets))
+        // Multi-outcome / outcome-specific routes
+        .route("/markets/:platform/:id/prices-history", get(get_multi_outcome_prices))
+        .route("/markets/:platform/:id/outcomes/:outcome_id/orderbook", get(get_outcome_orderbook))
+        .route("/markets/:platform/:id/outcomes/:outcome_id/trades", get(get_outcome_trades))
+        .route("/markets/:platform/:id/outcomes/:outcome_id/prices-history", get(get_outcome_prices))
 }
 
 /// List markets with optional filtering
@@ -422,6 +450,212 @@ async fn get_price_history(
         }
         Err(e) => {
             error!("Failed to fetch price history: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ============================================================================
+// Multi-Outcome / Outcome-Specific Endpoints
+// ============================================================================
+
+/// Get price history for multiple outcomes (top N by price)
+async fn get_multi_outcome_prices(
+    State(state): State<AppState>,
+    Path((platform_str, id)): Path<(String, String)>,
+    Query(params): Query<MultiOutcomePricesQuery>,
+) -> impl IntoResponse {
+    info!("Getting multi-outcome prices for {} on {}", id, platform_str);
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let top = params.top.unwrap_or(5);
+    let interval = params.interval.as_deref().unwrap_or("1d");
+
+    match state
+        .market_service
+        .get_multi_outcome_prices(platform, &id, top, interval)
+        .await
+    {
+        Ok(outcomes) => (StatusCode::OK, Json(outcomes)).into_response(),
+        Err(terminal_core::TerminalError::NotFound(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Market not found: {}", id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to fetch multi-outcome prices: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get orderbook for a specific outcome within a multi-outcome event
+async fn get_outcome_orderbook(
+    State(state): State<AppState>,
+    Path((platform_str, event_id, outcome_id)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    info!(
+        "Getting outcome orderbook for {} in {} on {}",
+        outcome_id, event_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .market_service
+        .get_outcome_orderbook(platform, &event_id, &outcome_id)
+        .await
+    {
+        Ok(orderbook) => (StatusCode::OK, Json(orderbook)).into_response(),
+        Err(terminal_core::TerminalError::NotFound(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Outcome not found: {}", outcome_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to fetch outcome orderbook: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get trades for a specific outcome within a multi-outcome event
+async fn get_outcome_trades(
+    State(state): State<AppState>,
+    Path((platform_str, event_id, outcome_id)): Path<(String, String, String)>,
+    Query(params): Query<OutcomeQuery>,
+) -> impl IntoResponse {
+    info!(
+        "Getting outcome trades for {} in {} on {}",
+        outcome_id, event_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .market_service
+        .get_outcome_trades(platform, &event_id, &outcome_id, params.limit)
+        .await
+    {
+        Ok(trade_history) => (StatusCode::OK, Json(trade_history)).into_response(),
+        Err(terminal_core::TerminalError::NotFound(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Outcome not found: {}", outcome_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to fetch outcome trades: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get price history for a specific outcome
+async fn get_outcome_prices(
+    State(state): State<AppState>,
+    Path((platform_str, event_id, outcome_id)): Path<(String, String, String)>,
+    Query(params): Query<OutcomePriceHistoryQuery>,
+) -> impl IntoResponse {
+    info!(
+        "Getting outcome price history for {} in {} on {}",
+        outcome_id, event_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let interval = params.interval.as_deref().unwrap_or("1d");
+    let _ = event_id; // We don't need event_id for this - outcome_id is the token_id
+
+    match state
+        .market_service
+        .get_outcome_prices(platform, &outcome_id, interval)
+        .await
+    {
+        Ok(history) => (StatusCode::OK, Json(history)).into_response(),
+        Err(terminal_core::TerminalError::NotFound(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Outcome not found: {}", outcome_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to fetch outcome price history: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {

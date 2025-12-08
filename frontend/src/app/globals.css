@@ -246,6 +246,21 @@
   --orb-y: 50%;
 }
 
+/* Gradient border search input */
+.search-input {
+  transition: all 0.2s ease;
+}
+
+.search-input:focus,
+.search-input:focus-visible {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  background-image: linear-gradient(#242424, #242424),
+                    linear-gradient(135deg, #6366f1 0%, #8b5cf6 25%, #a855f7 50%, #6366f1 75%, #0ea5e9 100%) !important;
+  background-origin: border-box !important;
+  background-clip: padding-box, border-box !important;
+}
+
 /* Custom scrollbar for dark theme */
 ::-webkit-scrollbar {
   width: 8px;

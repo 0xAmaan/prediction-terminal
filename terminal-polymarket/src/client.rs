@@ -5,7 +5,7 @@
 
 use crate::types::{
     ClobOrderbookResponse, DataApiTrade, PolymarketEvent, PolymarketMarket,
-    CLOB_API_BASE, DATA_API_BASE,
+    PriceHistoryPoint, PricesHistoryResponse, CLOB_API_BASE, DATA_API_BASE,
 };
 use base64::{engine::general_purpose::{STANDARD, URL_SAFE}, Engine as _};
 use hmac::{Hmac, Mac};
@@ -640,6 +640,119 @@ impl PolymarketClient {
             .collect();
 
         Ok(markets)
+    }
+
+    // ========================================================================
+    // Price History API Methods
+    // ========================================================================
+
+    /// Get price history for a token from the CLOB API
+    ///
+    /// # Arguments
+    /// * `token_id` - The CLOB token ID (YES token)
+    /// * `interval` - Duration string: "1m", "1h", "6h", "1d", "1w", "max"
+    #[instrument(skip(self))]
+    pub async fn get_prices_history(
+        &self,
+        token_id: &str,
+        interval: &str,
+    ) -> Result<Vec<PriceHistoryPoint>, TerminalError> {
+        // Map interval to minimum required fidelity (in minutes)
+        // Fidelity controls data granularity - lower = more data points
+        let fidelity = match interval {
+            "1m" => 1,
+            "1h" => 1,
+            "6h" => 5,
+            "1d" => 15,
+            "1w" => 60,
+            "max" => 1440, // 1 day in minutes
+            _ => 60,       // default to hourly
+        };
+
+        let url = format!(
+            "{}/prices-history?market={}&interval={}&fidelity={}",
+            self.clob_url, token_id, interval, fidelity
+        );
+
+        debug!("Fetching Polymarket price history from: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TerminalError::network(format!("Failed to fetch price history: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TerminalError::api(format!(
+                "CLOB API error ({}): {}",
+                status, body
+            )));
+        }
+
+        let prices_response: PricesHistoryResponse = response
+            .json()
+            .await
+            .map_err(|e| TerminalError::parse(format!("Failed to parse price history response: {}", e)))?;
+
+        Ok(prices_response.history)
+    }
+
+    /// Get trades for a specific outcome within an event
+    ///
+    /// # Arguments
+    /// * `condition_id` - The condition ID for the outcome
+    /// * `limit` - Maximum number of trades to return (default 50)
+    #[instrument(skip(self))]
+    pub async fn get_outcome_trades(
+        &self,
+        condition_id: &str,
+        limit: Option<u32>,
+    ) -> Result<TradeHistory, TerminalError> {
+        use terminal_core::Platform;
+
+        let limit = limit.unwrap_or(50);
+        let url = format!(
+            "{}/trades?market={}&limit={}",
+            self.data_api_url, condition_id, limit
+        );
+
+        debug!("Fetching Polymarket outcome trades from: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TerminalError::network(format!("Failed to fetch trades: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TerminalError::api(format!(
+                "Data API error ({}): {}",
+                status, body
+            )));
+        }
+
+        let trades: Vec<DataApiTrade> = response
+            .json()
+            .await
+            .map_err(|e| TerminalError::parse(format!("Failed to parse trades response: {}", e)))?;
+
+        let trades = trades
+            .into_iter()
+            .map(|t| t.to_trade(condition_id))
+            .collect();
+
+        Ok(TradeHistory {
+            market_id: condition_id.to_string(),
+            platform: Platform::Polymarket,
+            trades,
+            next_cursor: None,
+        })
     }
 }
 

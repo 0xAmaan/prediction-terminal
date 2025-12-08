@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { Platform, PredictionMarket } from "@/lib/types";
+import type { Platform, PredictionMarket, MarketOption } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +13,8 @@ import { TradeHistory } from "@/components/market/trade-history";
 import { PriceChart } from "@/components/market/price-chart";
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
 import { RelatedMarkets } from "@/components/market/related-markets";
+import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
+import { OutcomeAccordion } from "@/components/market/outcome-accordion";
 import { useMarketStream } from "@/hooks/use-market-stream";
 import type { ConnectionState } from "@/hooks/use-websocket";
 import {
@@ -178,12 +180,6 @@ interface MarketPageContentProps {
 }
 
 // Parse options from options_json
-interface MarketOption {
-  name: string;
-  yes_price: string;
-  market_id: string;
-}
-
 const parseOptions = (optionsJson: string | null): MarketOption[] => {
   if (!optionsJson) return [];
   try {
@@ -219,7 +215,7 @@ const MarketPageContent = ({
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 py-4">
+        <div className="px-32 py-4">
           <div className="flex items-center gap-4">
             <Link
               href="/"
@@ -257,38 +253,39 @@ const MarketPageContent = ({
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <main className="px-32 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Column - Main Info */}
           <div className="lg:col-span-2 space-y-6">
             {/* Price Cards - different display for multi-outcome */}
             {isMultiOutcome ? (
-              <Card className="border-border/30">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-primary" />
-                    Outcomes ({options.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-2">
-                    {options.map((option, idx) => (
-                      <div
-                        key={option.market_id || idx}
-                        className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                      >
-                        <span className="font-medium">{option.name}</span>
-                        <span className="text-muted-foreground font-mono">
-                          {option.yes_price === "0" ? "—" : formatPrice(option.yes_price)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-3">
-                    Note: Multi-outcome markets don&apos;t have detailed orderbook/trades view yet.
-                  </p>
-                </CardContent>
-              </Card>
+              <div className="space-y-6">
+                {/* Multi-line chart showing top outcomes */}
+                <MultiOutcomeChart
+                  platform={market.platform}
+                  marketId={market.id}
+                  height={350}
+                  title="Price History"
+                  top={5}
+                />
+
+                {/* Expandable outcomes list with full detail */}
+                <Card className="border-border/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Activity className="h-4 w-4 text-primary" />
+                      Outcomes ({options.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <OutcomeAccordion
+                      platform={market.platform}
+                      eventId={market.id}
+                      options={options}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
             ) : (
               <div className="grid grid-cols-2 gap-4">
                 <PriceCard label="Yes Price" price={currentYesPrice} variant="yes" />
@@ -319,22 +316,6 @@ const MarketPageContent = ({
               />
             )}
 
-            {/* Description */}
-            {market.description && (
-              <Card className="border-border/30">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Info className="h-4 w-4 text-primary" />
-                    About This Market
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                    {market.description}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* Right Column - Sidebar */}
@@ -377,6 +358,35 @@ const MarketPageContent = ({
                 </div>
               </CardContent>
             </Card>
+
+            {/* About This Market / Resolution */}
+            {(market.description || market.resolution_source) && (
+              <Card className="border-border/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Info className="h-4 w-4 text-primary" />
+                    About This Market
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {market.description && (
+                    <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {market.description}
+                    </p>
+                  )}
+                  {market.resolution_source && (
+                    <div>
+                      <div className="text-xs text-muted-foreground/70 uppercase tracking-wide mb-1.5">
+                        Resolution Source
+                      </div>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {market.resolution_source}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Trade History - only show for binary markets */}
             {!isMultiOutcome && (
@@ -423,7 +433,7 @@ const MarketPageContent = ({
 const LoadingSkeleton = () => (
   <div className="min-h-screen bg-background">
     <header className="border-b border-border/50 bg-card/50">
-      <div className="max-w-6xl mx-auto px-6 py-4">
+      <div className="px-32 py-4">
         <div className="flex items-center gap-4">
           <Skeleton className="h-9 w-9 rounded-lg" />
           <div className="flex-1">
@@ -436,8 +446,8 @@ const LoadingSkeleton = () => (
         </div>
       </div>
     </header>
-    <main className="max-w-6xl mx-auto px-6 py-8">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <main className="px-32 py-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <Skeleton className="h-32 rounded-xl" />

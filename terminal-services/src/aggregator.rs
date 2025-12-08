@@ -4,8 +4,8 @@
 //! normalizes incoming data, and broadcasts updates to connected frontend clients.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
@@ -95,7 +95,10 @@ impl ConnectionMetrics {
         let message_count = self.message_count.load(Ordering::SeqCst);
 
         let last_message_time = if last_ms > 0 {
-            DateTime::from_timestamp((last_ms / 1000) as i64, ((last_ms % 1000) * 1_000_000) as u32)
+            DateTime::from_timestamp(
+                (last_ms / 1000) as i64,
+                ((last_ms % 1000) * 1_000_000) as u32,
+            )
         } else {
             None
         };
@@ -207,7 +210,14 @@ impl MarketDataAggregator {
             let metrics = Arc::clone(&self.kalshi_metrics);
 
             tokio::spawn(async move {
-                Self::process_kalshi_updates(kalshi_rx, ws_state, ticker_map, orderbook_cache, metrics).await;
+                Self::process_kalshi_updates(
+                    kalshi_rx,
+                    ws_state,
+                    ticker_map,
+                    orderbook_cache,
+                    metrics,
+                )
+                .await;
             });
 
             self.kalshi_ws = Some(kalshi_ws);
@@ -228,7 +238,14 @@ impl MarketDataAggregator {
             let metrics = Arc::clone(&self.polymarket_metrics);
 
             tokio::spawn(async move {
-                Self::process_polymarket_updates(polymarket_rx, ws_state, token_map, orderbook_cache, metrics).await;
+                Self::process_polymarket_updates(
+                    polymarket_rx,
+                    ws_state,
+                    token_map,
+                    orderbook_cache,
+                    metrics,
+                )
+                .await;
             });
 
             self.polymarket_ws = Some(polymarket_ws);
@@ -244,7 +261,10 @@ impl MarketDataAggregator {
         platform: Platform,
         market_id: &str,
     ) -> Result<(), anyhow::Error> {
-        info!("[Aggregator] Subscribing to {:?} market: {}", platform, market_id);
+        info!(
+            "[Aggregator] Subscribing to {:?} market: {}",
+            platform, market_id
+        );
 
         match platform {
             Platform::Kalshi => {
@@ -303,7 +323,10 @@ impl MarketDataAggregator {
         platform: Platform,
         market_id: &str,
     ) -> Result<(), anyhow::Error> {
-        info!("[Aggregator] Unsubscribing from {:?} market: {}", platform, market_id);
+        info!(
+            "[Aggregator] Unsubscribing from {:?} market: {}",
+            platform, market_id
+        );
 
         match platform {
             Platform::Kalshi => {
@@ -379,7 +402,10 @@ impl MarketDataAggregator {
         match client.get_clob_token_id(market_id).await {
             Ok(token_id) => Ok(token_id),
             Err(e) => {
-                warn!("[Aggregator] Failed to get token_id for {}: {}", market_id, e);
+                warn!(
+                    "[Aggregator] Failed to get token_id for {}: {}",
+                    market_id, e
+                );
                 // Fall back to using market_id as token_id (some markets use condition_id directly)
                 Ok(market_id.to_string())
             }
@@ -403,7 +429,10 @@ impl MarketDataAggregator {
                     metrics.record_message();
 
                     match update {
-                        KalshiUpdate::OrderbookSnapshot { market_ticker, orderbook } => {
+                        KalshiUpdate::OrderbookSnapshot {
+                            market_ticker,
+                            orderbook,
+                        } => {
                             // Kalshi orderbook snapshot received
 
                             // Cache the orderbook
@@ -419,7 +448,13 @@ impl MarketDataAggregator {
                                 orderbook,
                             );
                         }
-                        KalshiUpdate::OrderbookDelta { market_ticker, side, price, delta, seq: _ } => {
+                        KalshiUpdate::OrderbookDelta {
+                            market_ticker,
+                            side,
+                            price,
+                            delta,
+                            seq: _,
+                        } => {
                             // Kalshi orderbook delta received
 
                             // Apply delta to cached orderbook
@@ -434,7 +469,9 @@ impl MarketDataAggregator {
                                     };
 
                                     // Find and update or add the level
-                                    if let Some(level) = levels.iter_mut().find(|l| l.price == price) {
+                                    if let Some(level) =
+                                        levels.iter_mut().find(|l| l.price == price)
+                                    {
                                         level.quantity += delta;
                                         if level.quantity <= Decimal::ZERO {
                                             levels.retain(|l| l.price != price);
@@ -460,7 +497,12 @@ impl MarketDataAggregator {
                                 );
                             }
                         }
-                        KalshiUpdate::PriceUpdate { market_ticker, yes_price, no_price, volume: _ } => {
+                        KalshiUpdate::PriceUpdate {
+                            market_ticker,
+                            yes_price,
+                            no_price,
+                            volume: _,
+                        } => {
                             // Kalshi price update received
 
                             if let (Some(yes), Some(no)) = (yes_price, no_price) {
@@ -472,7 +514,10 @@ impl MarketDataAggregator {
                                 );
                             }
                         }
-                        KalshiUpdate::Trade { market_ticker: _, trade } => {
+                        KalshiUpdate::Trade {
+                            market_ticker: _,
+                            trade,
+                        } => {
                             // Kalshi trade received
                             ws_state.broadcast_trade(trade);
                         }
@@ -514,11 +559,16 @@ impl MarketDataAggregator {
                     metrics.record_message();
 
                     match update {
-                        PolymarketUpdate::OrderbookSnapshot { asset_id, orderbook } => {
+                        PolymarketUpdate::OrderbookSnapshot {
+                            asset_id,
+                            orderbook,
+                        } => {
                             // Look up market_id from token_id
                             let market_id = {
                                 let map = token_map.read().await;
-                                map.get(&asset_id).cloned().unwrap_or_else(|| asset_id.clone())
+                                map.get(&asset_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| asset_id.clone())
                             };
 
                             // Polymarket orderbook snapshot received
@@ -536,10 +586,17 @@ impl MarketDataAggregator {
                                 orderbook,
                             );
                         }
-                        PolymarketUpdate::PriceChange { asset_id, changes, best_bid, best_ask } => {
+                        PolymarketUpdate::PriceChange {
+                            asset_id,
+                            changes,
+                            best_bid,
+                            best_ask,
+                        } => {
                             let market_id = {
                                 let map = token_map.read().await;
-                                map.get(&asset_id).cloned().unwrap_or_else(|| asset_id.clone())
+                                map.get(&asset_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| asset_id.clone())
                             };
 
                             // Polymarket price change received
@@ -555,7 +612,9 @@ impl MarketDataAggregator {
                                             &mut book.yes_asks
                                         };
 
-                                        if let Some(level) = levels.iter_mut().find(|l| l.price == price) {
+                                        if let Some(level) =
+                                            levels.iter_mut().find(|l| l.price == price)
+                                        {
                                             level.quantity = size;
                                             if level.quantity <= Decimal::ZERO {
                                                 levels.retain(|l| l.price != price);
@@ -602,7 +661,9 @@ impl MarketDataAggregator {
                         PolymarketUpdate::Trade { asset_id, trade } => {
                             let market_id = {
                                 let map = token_map.read().await;
-                                map.get(&asset_id).cloned().unwrap_or_else(|| asset_id.clone())
+                                map.get(&asset_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| asset_id.clone())
                             };
 
                             // Polymarket trade received
@@ -618,13 +679,19 @@ impl MarketDataAggregator {
                             if connected {
                                 info!("[Aggregator] Polymarket WebSocket connected");
                             } else {
-                                warn!("[Aggregator] Polymarket WebSocket disconnected: {:?}", error);
+                                warn!(
+                                    "[Aggregator] Polymarket WebSocket disconnected: {:?}",
+                                    error
+                                );
                             }
                         }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("[Aggregator] Polymarket update receiver lagged {} messages", n);
+                    warn!(
+                        "[Aggregator] Polymarket update receiver lagged {} messages",
+                        n
+                    );
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     info!("[Aggregator] Polymarket update channel closed");
@@ -651,16 +718,34 @@ impl MarketDataAggregator {
 
         while let Some(event) = rx.recv().await {
             match event {
-                SubscriptionEvent::Subscribe { platform, market_id } => {
-                    info!("[Aggregator] Received subscribe event for {:?}:{}", platform, market_id);
+                SubscriptionEvent::Subscribe {
+                    platform,
+                    market_id,
+                } => {
+                    info!(
+                        "[Aggregator] Received subscribe event for {:?}:{}",
+                        platform, market_id
+                    );
                     if let Err(e) = self.subscribe(platform, &market_id).await {
-                        warn!("[Aggregator] Failed to subscribe to {:?}:{}: {}", platform, market_id, e);
+                        warn!(
+                            "[Aggregator] Failed to subscribe to {:?}:{}: {}",
+                            platform, market_id, e
+                        );
                     }
                 }
-                SubscriptionEvent::Unsubscribe { platform, market_id } => {
-                    info!("[Aggregator] Received unsubscribe event for {:?}:{}", platform, market_id);
+                SubscriptionEvent::Unsubscribe {
+                    platform,
+                    market_id,
+                } => {
+                    info!(
+                        "[Aggregator] Received unsubscribe event for {:?}:{}",
+                        platform, market_id
+                    );
                     if let Err(e) = self.unsubscribe(platform, &market_id).await {
-                        warn!("[Aggregator] Failed to unsubscribe from {:?}:{}: {}", platform, market_id, e);
+                        warn!(
+                            "[Aggregator] Failed to unsubscribe from {:?}:{}: {}",
+                            platform, market_id, e
+                        );
                     }
                 }
             }

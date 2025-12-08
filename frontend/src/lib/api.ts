@@ -6,6 +6,8 @@ import type {
   TradeHistory,
   PriceHistory,
   PriceInterval,
+  OutcomePriceHistory,
+  PriceHistoryPoint,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -146,6 +148,100 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to fetch price history: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // ========================================================================
+  // Multi-Outcome / Outcome-Specific Methods
+  // ========================================================================
+
+  /** Get price history for top N outcomes (multi-line chart data) */
+  async getMultiOutcomePrices(
+    platform: string,
+    id: string,
+    options?: { top?: number; interval?: string },
+  ): Promise<OutcomePriceHistory[]> {
+    const searchParams = new URLSearchParams();
+    if (options?.top) {
+      searchParams.set("top", options.top.toString());
+    }
+    if (options?.interval) {
+      searchParams.set("interval", options.interval);
+    }
+
+    const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(id)}/prices-history${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch multi-outcome prices: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  },
+
+  /** Get orderbook for a specific outcome within an event */
+  async getOutcomeOrderBook(
+    platform: string,
+    eventId: string,
+    outcomeId: string,
+  ): Promise<OrderBook> {
+    const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(eventId)}/outcomes/${encodeURIComponent(outcomeId)}/orderbook`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch outcome orderbook: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  },
+
+  /** Get trades for a specific outcome within an event */
+  async getOutcomeTrades(
+    platform: string,
+    eventId: string,
+    outcomeId: string,
+    limit?: number,
+  ): Promise<TradeHistory> {
+    const searchParams = new URLSearchParams();
+    if (limit) {
+      searchParams.set("limit", limit.toString());
+    }
+
+    const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(eventId)}/outcomes/${encodeURIComponent(outcomeId)}/trades${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch outcome trades: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get price history for a specific outcome */
+  async getOutcomePriceHistory(
+    platform: string,
+    eventId: string,
+    outcomeId: string,
+    interval?: string,
+  ): Promise<PriceHistoryPoint[]> {
+    const searchParams = new URLSearchParams();
+    if (interval) {
+      searchParams.set("interval", interval);
+    }
+
+    const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(eventId)}/outcomes/${encodeURIComponent(outcomeId)}/prices-history${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch outcome price history: ${response.statusText}`,
+      );
     }
 
     return response.json();

@@ -193,8 +193,8 @@ export const TradeHistory = ({
         {/* Trades */}
         <div className="max-h-[400px] overflow-y-auto">
           {displayTrades.length > 0 ? (
-            displayTrades.map((trade) => (
-              <TradeRow key={trade.id} trade={trade} />
+            displayTrades.map((trade, index) => (
+              <TradeRow key={`${trade.id}-${index}`} trade={trade} />
             ))
           ) : (
             <div className="py-8 text-center text-sm text-muted-foreground">

@@ -96,6 +96,10 @@ pub struct PolymarketMarket {
     /// Events this market belongs to (contains event slugs)
     #[serde(default)]
     pub events: Option<Vec<MarketEvent>>,
+
+    /// Resolution source - describes how the market will be resolved
+    #[serde(default, rename = "resolutionSource")]
+    pub resolution_source: Option<String>,
 }
 
 /// Event reference within a market
@@ -197,6 +201,43 @@ impl PolymarketMarket {
         self.parse_clob_token_ids().map(|(_, no)| no)
     }
 
+    /// Check if category indicates a sports market
+    pub fn is_sports_category(category: Option<&str>) -> bool {
+        let sports_keywords = [
+            "nfl", "nba", "mlb", "nhl", "mls", "soccer", "football", "basketball",
+            "baseball", "hockey", "tennis", "boxing", "ufc", "mma", "cricket",
+            "f1", "formula 1", "golf", "esports", "counter strike", "valorant",
+            "league of legends", "la liga", "premier league", "champions league",
+            "serie a", "bundesliga", "ncaa", "college football", "college basketball",
+        ];
+
+        if let Some(cat) = category {
+            let cat_lower = cat.to_lowercase();
+            sports_keywords.iter().any(|kw| cat_lower.contains(kw))
+        } else {
+            false
+        }
+    }
+
+    /// Parse team names from title if it matches "Team A vs Team B" pattern
+    pub fn parse_teams_from_title(title: &str) -> Option<(String, String)> {
+        // Try "vs" first, then "v"
+        let separators = [" vs ", " vs. ", " v ", " v. "];
+
+        for sep in separators {
+            if let Some(pos) = title.to_lowercase().find(sep) {
+                let team_a = title[..pos].trim().to_string();
+                let team_b = title[pos + sep.len()..].trim();
+                // Remove any trailing question mark or extra text
+                let team_b = team_b.split('?').next().unwrap_or(team_b).trim().to_string();
+                if !team_a.is_empty() && !team_b.is_empty() {
+                    return Some((team_a, team_b));
+                }
+            }
+        }
+        None
+    }
+
     /// Convert to terminal-core PredictionMarket
     pub fn to_prediction_market(&self) -> terminal_core::PredictionMarket {
         use terminal_core::{MarketStatus, Platform, PredictionMarket};
@@ -238,6 +279,20 @@ impl PolymarketMarket {
             (url, self.question.clone())
         };
 
+        // Sports detection
+        let is_sports = Self::is_sports_category(self.category.as_deref())
+            || Self::parse_teams_from_title(&title).is_some();
+
+        let (home_team, away_team, home_odds, away_odds) = if is_sports {
+            if let Some((team_a, team_b)) = Self::parse_teams_from_title(&title) {
+                (Some(team_a), Some(team_b), Some(yes_price), Some(no_price))
+            } else {
+                (None, None, None, None)
+            }
+        } else {
+            (None, None, None, None)
+        };
+
         PredictionMarket {
             id: self.id.clone(),
             platform: Platform::Polymarket,
@@ -259,6 +314,18 @@ impl PolymarketMarket {
             leading_outcome: None,
             is_multi_outcome: false,
             options_json: None,
+            // Sports fields
+            is_sports,
+            is_live: false, // Polymarket API doesn't provide live game data
+            score: None,
+            game_period: None,
+            home_team,
+            away_team,
+            home_odds,
+            away_odds,
+            spread_line: None,
+            total_line: None,
+            resolution_source: self.resolution_source.clone(),
         }
     }
 }
@@ -320,6 +387,10 @@ pub struct PolymarketEvent {
     /// Associated markets
     #[serde(default)]
     pub markets: Vec<PolymarketMarket>,
+
+    /// Resolution source - describes how the event will be resolved
+    #[serde(default, rename = "resolutionSource")]
+    pub resolution_source: Option<String>,
 }
 
 /// Option data for multi-outcome events (stored as JSON)
@@ -328,6 +399,12 @@ pub struct MarketOption {
     pub name: String,
     pub yes_price: Decimal,
     pub market_id: String,
+    /// YES token ID for orderbook and price history API calls
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clob_token_id: Option<String>,
+    /// Condition ID for trades API filtering
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition_id: Option<String>,
 }
 
 // ============================================================================
@@ -566,6 +643,26 @@ impl DataApiTrade {
     }
 }
 
+// ============================================================================
+// Price History Types (from CLOB API /prices-history)
+// ============================================================================
+
+/// Response from GET /prices-history
+#[derive(Debug, Clone, Deserialize)]
+pub struct PricesHistoryResponse {
+    /// List of timestamp/price pairs
+    pub history: Vec<PriceHistoryPoint>,
+}
+
+/// A single price point from the CLOB API
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PriceHistoryPoint {
+    /// Unix timestamp in seconds
+    pub t: i64,
+    /// Price (0.0 - 1.0)
+    pub p: f64,
+}
+
 impl PolymarketEvent {
     /// Check if this is a binary event (single market with 2 outcomes)
     pub fn is_binary(&self) -> bool {
@@ -598,10 +695,28 @@ impl PolymarketEvent {
 
         let url = self.slug.as_ref().map(|s| format!("https://polymarket.com/event/{}", s));
 
+        // Sports detection (use PolymarketMarket's helper methods)
+        let is_sports = PolymarketMarket::is_sports_category(self.category.as_deref())
+            || PolymarketMarket::parse_teams_from_title(&self.title).is_some();
+
+        let (home_team, away_team) = if is_sports {
+            PolymarketMarket::parse_teams_from_title(&self.title)
+                .map(|(a, b)| (Some(a), Some(b)))
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+
         if self.is_binary() {
             // Single market - use the market's prices directly
             let market = &self.markets[0];
             let (yes_price, no_price) = market.parse_outcome_prices().unwrap_or((Decimal::ZERO, Decimal::ZERO));
+
+            let (home_odds, away_odds) = if is_sports && home_team.is_some() {
+                (Some(yes_price), Some(no_price))
+            } else {
+                (None, None)
+            };
 
             PredictionMarket {
                 id: self.id.clone(),
@@ -623,11 +738,30 @@ impl PolymarketEvent {
                 leading_outcome: None,
                 is_multi_outcome: false,
                 options_json: None,
+                // For binary events, resolution rules may be in child market description
+                resolution_source: self.resolution_source.clone()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        self.markets.first()
+                            .and_then(|m| m.description.clone())
+                            .filter(|d| d.len() > 100) // Detailed rules are longer
+                    }),
+                // Sports fields
+                is_sports,
+                is_live: false,
+                score: None,
+                game_period: None,
+                home_team,
+                away_team,
+                home_odds,
+                away_odds,
+                spread_line: None,
+                total_line: None,
             }
         } else {
             // Multi-outcome event - find the leading option
             let mut options: Vec<MarketOption> = Vec::new();
-            let mut leading_option: Option<(String, Decimal)> = None;
+            let mut leading_option: Option<(String, Decimal, Option<String>)> = None;
 
             for market in &self.markets {
                 let (yes_price, _) = market.parse_outcome_prices().unwrap_or((Decimal::ZERO, Decimal::ZERO));
@@ -641,19 +775,21 @@ impl PolymarketEvent {
                     name: option_name.clone(),
                     yes_price,
                     market_id: market.id.clone(),
+                    clob_token_id: market.yes_token_id(),
+                    condition_id: market.condition_id.clone(),
                 });
 
-                // Track leading option (highest probability)
+                // Track leading option (highest probability) with its description
                 match &leading_option {
-                    None => leading_option = Some((option_name, yes_price)),
-                    Some((_, current_price)) if yes_price > *current_price => {
-                        leading_option = Some((option_name, yes_price));
+                    None => leading_option = Some((option_name, yes_price, market.description.clone())),
+                    Some((_, current_price, _)) if yes_price > *current_price => {
+                        leading_option = Some((option_name, yes_price, market.description.clone()));
                     }
                     _ => {}
                 }
             }
 
-            let (leading_name, yes_price) = leading_option.unwrap_or(("Unknown".to_string(), Decimal::ZERO));
+            let (leading_name, yes_price, leading_description) = leading_option.unwrap_or(("Unknown".to_string(), Decimal::ZERO, None));
             let no_price = Decimal::ONE - yes_price;
 
             // Serialize options to JSON for detail view
@@ -679,6 +815,25 @@ impl PolymarketEvent {
                 leading_outcome: Some(leading_name),
                 is_multi_outcome: true,
                 options_json,
+                // For multi-outcome events, use leading outcome's resolution rules
+                resolution_source: self.resolution_source.clone()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        // Use leading market's description (the one with highest probability)
+                        leading_description.clone()
+                            .filter(|d| d.len() > 100) // Detailed rules are longer
+                    }),
+                // Sports fields - multi-outcome sports are less common, but support them
+                is_sports,
+                is_live: false,
+                score: None,
+                game_period: None,
+                home_team: None, // Multi-outcome doesn't map to 2 teams
+                away_team: None,
+                home_odds: None,
+                away_odds: None,
+                spread_line: None,
+                total_line: None,
             }
         }
     }

@@ -1,9 +1,11 @@
 //! Market service for aggregating markets from multiple platforms
 
 use std::sync::Arc;
-use terminal_core::{OrderBook, Platform, PredictionMarket, TerminalError, TradeHistory, UnifiedMarket};
+use terminal_core::{
+    OrderBook, Platform, PredictionMarket, TerminalError, TradeHistory, UnifiedMarket,
+};
 use terminal_kalshi::KalshiClient;
-use terminal_polymarket::PolymarketClient;
+use terminal_polymarket::{MarketOption, PolymarketClient, PriceHistoryPoint};
 use tracing::{debug, info, instrument, warn};
 
 /// Service for fetching and aggregating markets across platforms
@@ -30,9 +32,9 @@ impl MarketService {
     ) -> Result<Vec<PredictionMarket>, TerminalError> {
         match platform {
             Platform::Kalshi => {
-                info!("Fetching Kalshi markets");
-                // Kalshi uses "open" status for active markets
-                self.kalshi.list_all_markets(Some("open"), limit).await
+                info!("Fetching Kalshi markets (grouped by event)");
+                // Use grouped method to combine multi-outcome events into single cards
+                self.kalshi.list_markets_grouped(Some("open"), limit).await
             }
             Platform::Polymarket => {
                 info!("Fetching Polymarket events");
@@ -51,7 +53,10 @@ impl MarketService {
         info!("Fetching markets from all platforms");
 
         // Fetch from both platforms concurrently
-        let kalshi_future = self.kalshi.list_all_markets(Some("open"), limit_per_platform);
+        // Use grouped method for Kalshi to combine multi-outcome events
+        let kalshi_future = self
+            .kalshi
+            .list_markets_grouped(Some("open"), limit_per_platform);
         // Use events endpoint for Polymarket (proper grouping, not individual options)
         let poly_future = self.polymarket.list_all_events(true, limit_per_platform);
 
@@ -205,7 +210,10 @@ impl MarketService {
         market_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<PredictionMarket>, TerminalError> {
-        info!("Fetching related markets for {} on {:?}", market_id, platform);
+        info!(
+            "Fetching related markets for {} on {:?}",
+            market_id, platform
+        );
 
         let markets = match platform {
             Platform::Kalshi => {
@@ -215,7 +223,10 @@ impl MarketService {
                 // Format: TICKER or EVENT_TICKER-VARIANT
                 if let Some(ticker) = &market.ticker {
                     // Try to get event markets
-                    self.kalshi.get_related_markets(ticker).await.unwrap_or_default()
+                    self.kalshi
+                        .get_related_markets(ticker)
+                        .await
+                        .unwrap_or_default()
                 } else {
                     Vec::new()
                 }
@@ -226,7 +237,10 @@ impl MarketService {
                 if let Some(url) = &market.url {
                     // URL format: https://polymarket.com/event/{slug}
                     if let Some(slug) = url.strip_prefix("https://polymarket.com/event/") {
-                        self.polymarket.get_related_markets(slug).await.unwrap_or_default()
+                        self.polymarket
+                            .get_related_markets(slug)
+                            .await
+                            .unwrap_or_default()
                     } else {
                         Vec::new()
                     }
@@ -245,7 +259,174 @@ impl MarketService {
 
         Ok(markets)
     }
+
+    // ========================================================================
+    // Multi-Outcome / Price History Methods (Polymarket-specific for now)
+    // ========================================================================
+
+    /// Get price history for multiple outcomes (top N by price)
+    ///
+    /// Returns price history for each of the top N outcomes in a multi-outcome market.
+    /// Only supported for Polymarket currently.
+    #[instrument(skip(self))]
+    pub async fn get_multi_outcome_prices(
+        &self,
+        platform: Platform,
+        event_id: &str,
+        top: usize,
+        interval: &str,
+    ) -> Result<Vec<OutcomePriceHistory>, TerminalError> {
+        info!(
+            "Fetching multi-outcome prices for {} on {:?}",
+            event_id, platform
+        );
+
+        match platform {
+            Platform::Kalshi => Err(TerminalError::api(
+                "Multi-outcome price history not yet supported for Kalshi".to_string(),
+            )),
+            Platform::Polymarket => {
+                // Get the event to access options
+                let market = self.polymarket.get_market(event_id).await?;
+
+                // Parse options from options_json
+                let options: Vec<MarketOption> = if let Some(json) = &market.options_json {
+                    serde_json::from_str(json).unwrap_or_default()
+                } else {
+                    return Err(TerminalError::not_found(
+                        "No options found for market".to_string(),
+                    ));
+                };
+
+                // Sort by yes_price descending and take top N
+                let mut sorted_options = options.clone();
+                sorted_options.sort_by(|a, b| {
+                    b.yes_price
+                        .partial_cmp(&a.yes_price)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let top_options: Vec<_> = sorted_options.into_iter().take(top).collect();
+
+                // Fetch price history for each outcome
+                let mut results = Vec::new();
+                for (idx, option) in top_options.into_iter().enumerate() {
+                    if let Some(token_id) = &option.clob_token_id {
+                        match self.polymarket.get_prices_history(token_id, interval).await {
+                            Ok(history) => {
+                                results.push(OutcomePriceHistory {
+                                    name: option.name.clone(),
+                                    market_id: option.market_id.clone(),
+                                    color: OUTCOME_COLORS[idx % OUTCOME_COLORS.len()].to_string(),
+                                    history,
+                                });
+                            }
+                            Err(e) => {
+                                warn!("Failed to fetch price history for {}: {}", option.name, e);
+                            }
+                        }
+                    }
+                }
+
+                Ok(results)
+            }
+        }
+    }
+
+    /// Get orderbook for a specific outcome within a multi-outcome event
+    #[instrument(skip(self))]
+    pub async fn get_outcome_orderbook(
+        &self,
+        platform: Platform,
+        _event_id: &str,
+        token_id: &str,
+    ) -> Result<OrderBook, TerminalError> {
+        info!(
+            "Fetching outcome orderbook for token {} on {:?}",
+            token_id, platform
+        );
+
+        match platform {
+            Platform::Kalshi => {
+                // For Kalshi, the token_id is actually the ticker
+                self.kalshi.get_orderbook(token_id).await
+            }
+            Platform::Polymarket => {
+                // For Polymarket, use the CLOB token ID directly
+                self.polymarket.get_orderbook(token_id, true).await
+            }
+        }
+    }
+
+    /// Get trades for a specific outcome within a multi-outcome event
+    #[instrument(skip(self))]
+    pub async fn get_outcome_trades(
+        &self,
+        platform: Platform,
+        _event_id: &str,
+        condition_id: &str,
+        limit: Option<u32>,
+    ) -> Result<TradeHistory, TerminalError> {
+        info!(
+            "Fetching outcome trades for condition {} on {:?}",
+            condition_id, platform
+        );
+
+        match platform {
+            Platform::Kalshi => {
+                // For Kalshi, condition_id is the ticker
+                self.kalshi.get_trades(condition_id, limit, None).await
+            }
+            Platform::Polymarket => {
+                // For Polymarket, use the condition ID to filter trades
+                self.polymarket
+                    .get_outcome_trades(condition_id, limit)
+                    .await
+            }
+        }
+    }
+
+    /// Get price history for a specific outcome
+    #[instrument(skip(self))]
+    pub async fn get_outcome_prices(
+        &self,
+        platform: Platform,
+        token_id: &str,
+        interval: &str,
+    ) -> Result<Vec<PriceHistoryPoint>, TerminalError> {
+        info!(
+            "Fetching outcome prices for token {} on {:?}",
+            token_id, platform
+        );
+
+        match platform {
+            Platform::Kalshi => Err(TerminalError::api(
+                "Price history not yet supported for Kalshi outcomes".to_string(),
+            )),
+            Platform::Polymarket => self.polymarket.get_prices_history(token_id, interval).await,
+        }
+    }
 }
+
+/// Price history for a single outcome
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OutcomePriceHistory {
+    pub name: String,
+    pub market_id: String,
+    pub color: String,
+    pub history: Vec<PriceHistoryPoint>,
+}
+
+/// Color palette for outcome chart lines
+const OUTCOME_COLORS: &[&str] = &[
+    "#22c55e", // green
+    "#3b82f6", // blue
+    "#f59e0b", // amber
+    "#8b5cf6", // purple
+    "#ef4444", // red
+    "#06b6d4", // cyan
+    "#ec4899", // pink
+    "#14b8a6", // teal
+];
 
 impl Clone for MarketService {
     fn clone(&self) -> Self {

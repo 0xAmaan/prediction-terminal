@@ -71,20 +71,14 @@ impl TradeCollector {
     pub async fn track_market(&self, platform: Platform, market_id: String) {
         let mut markets = self.tracked_markets.write().await;
         markets.insert((platform, market_id.clone()));
-        info!(
-            "Now tracking market: {:?}/{}",
-            platform, market_id
-        );
+        info!("Now tracking market: {:?}/{}", platform, market_id);
     }
 
     /// Remove a market from tracking
     pub async fn untrack_market(&self, platform: Platform, market_id: &str) {
         let mut markets = self.tracked_markets.write().await;
         markets.remove(&(platform, market_id.to_string()));
-        debug!(
-            "Stopped tracking market: {:?}/{}",
-            platform, market_id
-        );
+        debug!("Stopped tracking market: {:?}/{}", platform, market_id);
     }
 
     /// Start the background collection loop
@@ -151,7 +145,12 @@ impl TradeCollector {
         // Fetch trades from the API
         let trade_history = self
             .market_service
-            .get_trades(platform, market_id, Some(self.config.trades_per_request), None)
+            .get_trades(
+                platform,
+                market_id,
+                Some(self.config.trades_per_request),
+                None,
+            )
             .await
             .map_err(|e| TradeCollectorError::Api(e.to_string()))?;
 
@@ -276,11 +275,16 @@ pub enum TradeCollectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use terminal_kalshi::KalshiClient;
+    use terminal_polymarket::PolymarketClient;
 
     #[tokio::test]
     async fn test_track_untrack_market() {
         let storage = Arc::new(TradeStorage::new_in_memory().unwrap());
-        let market_service = Arc::new(MarketService::new(None, None));
+        let market_service = Arc::new(MarketService::new(
+            KalshiClient::new(true),
+            PolymarketClient::new(),
+        ));
         let collector = TradeCollector::new(
             market_service,
             storage,

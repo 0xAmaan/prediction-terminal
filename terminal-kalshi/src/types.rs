@@ -6,6 +6,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Response from GET /markets
 #[derive(Debug, Clone, Deserialize)]
@@ -24,9 +25,12 @@ pub struct EventsResponse {
 }
 
 /// Response from GET /events/{event_ticker}
+/// This endpoint returns both the event AND its markets in a single response
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventResponse {
     pub event: KalshiEvent,
+    #[serde(default)]
+    pub markets: Vec<KalshiMarket>,
 }
 
 /// A Kalshi event from the API
@@ -148,6 +152,11 @@ impl KalshiMarket {
     /// Extract series ticker from event_ticker by stripping numeric suffix
     /// e.g., "KXELONMARS-99" -> "KXELONMARS", "KXFUSION" -> "KXFUSION"
     fn extract_series_ticker(event_ticker: &str) -> &str {
+        Self::extract_series_ticker_static(event_ticker)
+    }
+
+    /// Static version of extract_series_ticker for use outside impl
+    pub fn extract_series_ticker_static(event_ticker: &str) -> &str {
         // Find the last hyphen
         if let Some(pos) = event_ticker.rfind('-') {
             // Check if everything after the hyphen starts with a digit
@@ -180,6 +189,43 @@ impl KalshiMarket {
         Decimal::ONE - self.yes_price()
     }
 
+    /// Check if category indicates a sports market
+    pub fn is_sports_category(category: Option<&str>) -> bool {
+        let sports_keywords = [
+            "nfl", "nba", "mlb", "nhl", "mls", "soccer", "football", "basketball",
+            "baseball", "hockey", "tennis", "boxing", "ufc", "mma", "cricket",
+            "f1", "formula 1", "golf", "esports", "counter strike", "valorant",
+            "league of legends", "la liga", "premier league", "champions league",
+            "serie a", "bundesliga", "ncaa", "college football", "college basketball",
+        ];
+
+        if let Some(cat) = category {
+            let cat_lower = cat.to_lowercase();
+            sports_keywords.iter().any(|kw| cat_lower.contains(kw))
+        } else {
+            false
+        }
+    }
+
+    /// Parse team names from title if it matches "Team A vs Team B" pattern
+    fn parse_teams_from_title(title: &str) -> Option<(String, String)> {
+        // Try "vs" first, then "v"
+        let separators = [" vs ", " vs. ", " v ", " v. "];
+
+        for sep in separators {
+            if let Some(pos) = title.to_lowercase().find(sep) {
+                let team_a = title[..pos].trim().to_string();
+                let team_b = title[pos + sep.len()..].trim();
+                // Remove any trailing question mark or extra text
+                let team_b = team_b.split('?').next().unwrap_or(team_b).trim().to_string();
+                if !team_a.is_empty() && !team_b.is_empty() {
+                    return Some((team_a, team_b));
+                }
+            }
+        }
+        None
+    }
+
     /// Convert to terminal-core PredictionMarket
     pub fn to_prediction_market(&self) -> terminal_core::PredictionMarket {
         use terminal_core::{MarketStatus, Platform, PredictionMarket};
@@ -199,6 +245,22 @@ impl KalshiMarket {
             .map(|et| Self::extract_series_ticker(et))
             .unwrap_or(&self.ticker);
         let url = Some(format!("https://kalshi.com/markets/{}", series_ticker.to_lowercase()));
+
+        // Sports detection
+        let is_sports = Self::is_sports_category(self.category.as_deref())
+            || Self::parse_teams_from_title(&self.title).is_some();
+
+        let (home_team, away_team, home_odds, away_odds) = if is_sports {
+            if let Some((team_a, team_b)) = Self::parse_teams_from_title(&self.title) {
+                let yes = self.yes_price();
+                let no = self.no_price();
+                (Some(team_a), Some(team_b), Some(yes), Some(no))
+            } else {
+                (None, None, None, None)
+            }
+        } else {
+            (None, None, None, None)
+        };
 
         PredictionMarket {
             id: self.ticker.clone(),
@@ -221,6 +283,18 @@ impl KalshiMarket {
             leading_outcome: None,
             is_multi_outcome: false,
             options_json: None,
+            resolution_source: None, // Kalshi doesn't provide resolution info via API
+            // Sports fields
+            is_sports,
+            is_live: false, // Kalshi API doesn't provide live game data
+            score: None,
+            game_period: None,
+            home_team,
+            away_team,
+            home_odds,
+            away_odds,
+            spread_line: None,
+            total_line: None,
         }
     }
 }
@@ -477,4 +551,154 @@ pub struct EventMarketsResponse {
     pub markets: Vec<KalshiMarket>,
     #[serde(default)]
     pub cursor: Option<String>,
+}
+
+// ============================================================================
+// Market Grouping Functions
+// ============================================================================
+
+/// Group markets by event_ticker and convert to multi-outcome PredictionMarkets
+///
+/// This function takes raw Kalshi markets and groups them by their event.
+/// Events with multiple markets become multi-outcome cards, while
+/// single-market events remain as binary cards.
+pub fn group_markets_by_event(
+    markets: Vec<KalshiMarket>,
+    event_titles: &HashMap<String, String>,
+) -> Vec<terminal_core::PredictionMarket> {
+    let mut event_groups: HashMap<String, Vec<KalshiMarket>> = HashMap::new();
+    let mut standalone: Vec<KalshiMarket> = Vec::new();
+
+    // Group markets by event_ticker
+    for market in markets {
+        match &market.event_ticker {
+            Some(et) => event_groups.entry(et.clone()).or_default().push(market),
+            None => standalone.push(market),
+        }
+    }
+
+    let mut result: Vec<terminal_core::PredictionMarket> = Vec::new();
+
+    // Process grouped events
+    for (event_ticker, group) in event_groups {
+        if group.len() == 1 {
+            // Single market in event = binary card
+            result.push(group.into_iter().next().unwrap().to_prediction_market());
+        } else {
+            // Multiple markets = multi-outcome card
+            let event_title = event_titles.get(&event_ticker);
+            result.push(markets_to_multi_outcome(&event_ticker, group, event_title));
+        }
+    }
+
+    // Add standalone markets (no event_ticker)
+    for market in standalone {
+        result.push(market.to_prediction_market());
+    }
+
+    result
+}
+
+/// Convert a group of related markets into a single multi-outcome PredictionMarket
+pub fn markets_to_multi_outcome(
+    event_ticker: &str,
+    markets: Vec<KalshiMarket>,
+    event_title: Option<&String>,
+) -> terminal_core::PredictionMarket {
+    use terminal_core::{MarketStatus, Platform, PredictionMarket};
+
+    let first = &markets[0];
+
+    // Build outcomes JSON with market-level titles (these are the specific options)
+    // Frontend expects: name, market_id, yes_price
+    let outcomes: Vec<serde_json::Value> = markets
+        .iter()
+        .map(|m| {
+            let price = m.yes_price();
+            serde_json::json!({
+                "name": m.title.clone(),
+                "market_id": m.ticker.clone(),
+                "yes_price": price.to_string(),
+            })
+        })
+        .collect();
+
+    // Find leading outcome (highest yes price)
+    let leader = markets
+        .iter()
+        .max_by(|a, b| a.yes_price().cmp(&b.yes_price()))
+        .unwrap();
+    let leader_price = leader.yes_price();
+
+    // Sum volume across all markets in the event
+    let total_volume: i64 = markets
+        .iter()
+        .map(|m| m.volume.unwrap_or(0))
+        .sum();
+
+    // Use earliest close time from all markets
+    let close_time = markets
+        .iter()
+        .filter_map(|m| m.close_time.or(m.expiration_time))
+        .min();
+
+    // Use earliest created time
+    let created_at = markets
+        .iter()
+        .filter_map(|m| m.created_time.or(m.open_time))
+        .min();
+
+    // Status from first market (they should all be the same)
+    let status = match first.status.as_deref() {
+        Some("active") | Some("open") => MarketStatus::Open,
+        Some("closed") => MarketStatus::Closed,
+        Some("settled") | Some("finalized") => MarketStatus::Settled,
+        _ => MarketStatus::Open,
+    };
+
+    // URL uses series ticker derived from event_ticker
+    let series_ticker = KalshiMarket::extract_series_ticker_static(event_ticker);
+    let url = Some(format!(
+        "https://kalshi.com/markets/{}",
+        series_ticker.to_lowercase()
+    ));
+
+    // Sports detection
+    let is_sports = KalshiMarket::is_sports_category(first.category.as_deref());
+
+    PredictionMarket {
+        id: event_ticker.to_string(),
+        platform: Platform::Kalshi,
+        ticker: Some(event_ticker.to_string()),
+        // Use event title if available, fallback to first market title
+        title: event_title.cloned().unwrap_or_else(|| first.title.clone()),
+        description: first.subtitle.clone(),
+        category: first.category.clone(),
+        yes_price: leader_price,
+        no_price: Decimal::ONE - leader_price,
+        volume: Decimal::from(total_volume),
+        liquidity: None,
+        close_time,
+        created_at,
+        status,
+        image_url: first.image_url.clone(),
+        url,
+        // Multi-outcome fields
+        is_multi_outcome: true,
+        outcome_count: Some(markets.len()),
+        leading_outcome: Some(leader.title.clone()),
+        options_json: Some(serde_json::to_string(&outcomes).unwrap_or_default()),
+        resolution_source: None, // Kalshi doesn't provide resolution info via API
+        // Sports fields
+        is_sports,
+        is_live: false,
+        score: None,
+        game_period: None,
+        home_team: None,
+        away_team: None,
+        home_odds: None,
+        away_odds: None,
+        spread_line: None,
+        total_line: None,
+    }
 }

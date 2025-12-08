@@ -95,6 +95,54 @@ pub struct PredictionMarket {
     /// Format: [{ "name": string, "yes_price": number, "market_id": string }, ...]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options_json: Option<String>,
+
+    /// Resolution source - describes how the market will be resolved
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_source: Option<String>,
+
+    // ========================================================================
+    // Sports-specific fields
+    // ========================================================================
+
+    /// Whether this is a sports market (detected from category/title)
+    #[serde(default)]
+    pub is_sports: bool,
+
+    /// Whether this game is currently live/in-progress
+    #[serde(default)]
+    pub is_live: bool,
+
+    /// Current score (e.g., "13 - 6")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<String>,
+
+    /// Current game period (e.g., "Q3", "2nd Half", "Map 2")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_period: Option<String>,
+
+    /// Home/first team name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_team: Option<String>,
+
+    /// Away/second team name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub away_team: Option<String>,
+
+    /// Home team odds (0.00 - 1.00)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home_odds: Option<Decimal>,
+
+    /// Away team odds (0.00 - 1.00)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub away_odds: Option<Decimal>,
+
+    /// Spread line (e.g., "-3.5")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spread_line: Option<String>,
+
+    /// Total/over-under line (e.g., "45.5")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_line: Option<String>,
 }
 
 impl PredictionMarket {

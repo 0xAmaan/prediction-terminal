@@ -23,6 +23,18 @@ export interface PredictionMarket {
   leading_outcome: string | null;
   is_multi_outcome: boolean;
   options_json: string | null; // JSON array of MarketOption
+  resolution_source: string | null; // How the market will be resolved
+  // Sports-specific fields
+  is_sports: boolean;
+  is_live: boolean;
+  score: string | null; // e.g., "13 - 6"
+  game_period: string | null; // e.g., "Q3", "2nd Half", "Map 2"
+  home_team: string | null;
+  away_team: string | null;
+  home_odds: string | null;
+  away_odds: string | null;
+  spread_line: string | null;
+  total_line: string | null;
 }
 
 // Option data for multi-outcome events
@@ -30,6 +42,8 @@ export interface MarketOption {
   name: string;
   yes_price: string;
   market_id: string;
+  clob_token_id?: string; // YES token for orderbook/price history
+  condition_id?: string; // For trades filtering
 }
 
 export interface MarketsResponse {
@@ -120,4 +134,22 @@ export interface PriceHistory {
   platform: Platform;
   interval: PriceInterval;
   candles: PriceCandle[];
+}
+
+// ============================================================================
+// Multi-Outcome Price History Types (from Polymarket CLOB API)
+// ============================================================================
+
+/** A single price point from Polymarket's prices-history API */
+export interface PriceHistoryPoint {
+  t: number; // Unix timestamp in seconds
+  p: number; // Price (0.0 - 1.0)
+}
+
+/** Price history for a single outcome (used in multi-line charts) */
+export interface OutcomePriceHistory {
+  name: string;
+  market_id: string;
+  color: string;
+  history: PriceHistoryPoint[];
 }
