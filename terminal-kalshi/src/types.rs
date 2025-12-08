@@ -172,6 +172,23 @@ impl KalshiMarket {
         event_ticker
     }
 
+    /// Extract series ticker from a full market ticker
+    /// e.g., "KXTRILLION-25-MUSK" -> "KXTRILLION"
+    /// e.g., "KXNEWPOPE-70-PPIZ" -> "KXNEWPOPE"
+    pub fn extract_series_from_market_ticker(market_ticker: &str) -> &str {
+        // Find the first hyphen followed by a digit
+        for (i, c) in market_ticker.char_indices() {
+            if c == '-' {
+                if let Some(next_char) = market_ticker[i + 1..].chars().next() {
+                    if next_char.is_ascii_digit() {
+                        return &market_ticker[..i];
+                    }
+                }
+            }
+        }
+        market_ticker
+    }
+
     /// Get the YES price as a decimal
     pub fn yes_price(&self) -> Decimal {
         // Prefer last_price, then yes_bid, then midpoint of bid/ask
@@ -614,7 +631,7 @@ pub fn markets_to_multi_outcome(
     let first = &markets[0];
 
     // Build outcomes JSON with market-level titles (these are the specific options)
-    // Frontend expects: name, market_id, yes_price
+    // Frontend expects: name, market_id, yes_price, clob_token_id, condition_id
     let outcomes: Vec<serde_json::Value> = markets
         .iter()
         .map(|m| {
@@ -623,6 +640,8 @@ pub fn markets_to_multi_outcome(
                 "name": m.title.clone(),
                 "market_id": m.ticker.clone(),
                 "yes_price": price.to_string(),
+                "clob_token_id": m.ticker.clone(),  // Kalshi uses ticker for orderbook/chart
+                "condition_id": m.ticker.clone(),   // Kalshi uses ticker for trades
             })
         })
         .collect();

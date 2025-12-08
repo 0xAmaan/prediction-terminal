@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { colors } from "./colors";
 import { formatPercent, formatVolume } from "./utils";
 import type { PredictionMarket, MarketOption } from "@/lib/types";
@@ -7,13 +8,13 @@ import type { PredictionMarket, MarketOption } from "@/lib/types";
 interface MultiOutcomeCardProps {
   market: PredictionMarket;
   index: number;
-  onClick?: () => void;
+  href: string;
 }
 
 export const MultiOutcomeCard = ({
   market,
   index,
-  onClick,
+  href,
 }: MultiOutcomeCardProps) => {
   // Parse options from JSON
   let options: MarketOption[] = [];
@@ -29,9 +30,9 @@ export const MultiOutcomeCard = ({
   const remainingCount = (market.outcome_count || 0) - 2;
 
   return (
-    <div
-      onClick={onClick}
-      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
+    <Link
+      href={href}
+      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer block"
       style={{
         background: colors.cardBg,
         border: `1px solid ${colors.border}`,
@@ -145,6 +146,6 @@ export const MultiOutcomeCard = ({
           </span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 };

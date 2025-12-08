@@ -62,6 +62,14 @@ const formatDate = (dateStr: string | null): string => {
   });
 };
 
+const formatTicker = (ticker: string): string => {
+  // Truncate long hex addresses (Polymarket) like 0x01d5...e569
+  if (ticker.startsWith("0x") && ticker.length > 20) {
+    return `${ticker.slice(0, 8)}...${ticker.slice(-4)}`;
+  }
+  return ticker;
+};
+
 const formatTimeRemaining = (dateStr: string | null): string => {
   if (!dateStr) return "—";
   const date = new Date(dateStr);
@@ -362,7 +370,9 @@ const MarketPageContent = ({
                       <Activity className="h-4 w-4" />
                       Ticker
                     </span>
-                    <span className="font-mono text-sm">{market.ticker}</span>
+                    <span className="font-mono text-sm" title={market.ticker}>
+                      {formatTicker(market.ticker)}
+                    </span>
                   </div>
                 )}
               </CardContent>

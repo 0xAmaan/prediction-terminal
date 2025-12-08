@@ -456,9 +456,25 @@ impl MarketService {
         );
 
         match platform {
-            Platform::Kalshi => Err(TerminalError::api(
-                "Price history not yet supported for Kalshi outcomes".to_string(),
-            )),
+            Platform::Kalshi => {
+                // For Kalshi, token_id is the market ticker (e.g., "KXTRILLION-25-MUSK")
+                // Extract series_ticker from market_ticker for the candlesticks API
+                let series_ticker =
+                    terminal_kalshi::types::KalshiMarket::extract_series_from_market_ticker(
+                        token_id,
+                    );
+
+                let history = self
+                    .kalshi
+                    .get_candlesticks(series_ticker, token_id, interval)
+                    .await?;
+
+                // Convert Kalshi PriceHistoryPoint to terminal-core format
+                Ok(history
+                    .into_iter()
+                    .map(|p| PriceHistoryPoint { t: p.t, p: p.p })
+                    .collect())
+            }
             Platform::Polymarket => self.polymarket.get_prices_history(token_id, interval).await,
         }
     }

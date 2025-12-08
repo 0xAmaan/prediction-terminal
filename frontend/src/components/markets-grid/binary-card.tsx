@@ -95,6 +95,6 @@ export const BinaryCard = ({ market, index, href }: BinaryCardProps) => {
           </span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 };

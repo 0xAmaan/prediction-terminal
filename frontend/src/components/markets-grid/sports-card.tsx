@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { colors } from "./colors";
 import { formatPercent, formatVolume, formatGameTime } from "./utils";
 import { getTeamAbbrev } from "./team-abbrev";
@@ -8,10 +9,10 @@ import type { PredictionMarket } from "@/lib/types";
 interface SportsCardProps {
   market: PredictionMarket;
   index: number;
-  onClick?: () => void;
+  href: string;
 }
 
-export const SportsCard = ({ market, index, onClick }: SportsCardProps) => {
+export const SportsCard = ({ market, index, href }: SportsCardProps) => {
   const scores = market.score?.split(" - ").map((s) => parseInt(s.trim())) || [
     0, 0,
   ];
@@ -23,9 +24,9 @@ export const SportsCard = ({ market, index, onClick }: SportsCardProps) => {
   const teamAFavored = teamAOdds > teamBOdds;
 
   return (
-    <div
-      onClick={onClick}
-      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer"
+    <Link
+      href={href}
+      className="group relative h-[310px] rounded-xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 font-[Inter,system-ui,sans-serif] cursor-pointer block"
       style={{
         background: colors.cardBg,
         border: `1px solid ${colors.border}`,
@@ -234,6 +235,6 @@ export const SportsCard = ({ market, index, onClick }: SportsCardProps) => {
           </span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 };

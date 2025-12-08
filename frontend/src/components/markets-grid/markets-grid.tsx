@@ -2,7 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import { Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import type { PredictionMarket } from "@/lib/types";
@@ -20,20 +19,20 @@ interface MarketsGridProps {
 const MarketCard = ({
   market,
   index,
-  onClick,
+  href,
 }: {
   market: PredictionMarket;
   index: number;
-  onClick: () => void;
+  href: string;
 }) => {
   // Sports cards require team data to render properly
   if (market.is_sports && market.home_team && market.away_team) {
-    return <SportsCard market={market} index={index} onClick={onClick} />;
+    return <SportsCard market={market} index={index} href={href} />;
   }
   if (market.is_multi_outcome) {
-    return <MultiOutcomeCard market={market} index={index} onClick={onClick} />;
+    return <MultiOutcomeCard market={market} index={index} href={href} />;
   }
-  return <BinaryCard market={market} index={index} onClick={onClick} />;
+  return <BinaryCard market={market} index={index} href={href} />;
 };
 
 // Loading skeleton
@@ -67,7 +66,6 @@ const LoadingSkeleton = () => (
 );
 
 export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
-  const router = useRouter();
   const [platform, setPlatform] = useState<"all" | "kalshi" | "polymarket">("all");
 
   const { data, isLoading, error } = useQuery({
@@ -94,9 +92,8 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
     return { markets: data.markets, liveMarkets: live };
   }, [data?.markets]);
 
-  const handleMarketClick = (market: PredictionMarket) => {
-    router.push(`/market/${market.platform}/${market.id}`);
-  };
+  const getMarketHref = (market: PredictionMarket) =>
+    `/market/${market.platform}/${market.id}`;
 
   return (
     <div className="h-full flex flex-col font-[Inter,system-ui,sans-serif]">
@@ -152,7 +149,7 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
                     key={market.id}
                     market={market}
                     index={i}
-                    onClick={() => handleMarketClick(market)}
+                    href={getMarketHref(market)}
                   />
                 ))}
               </div>
@@ -181,7 +178,7 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
                     key={market.id}
                     market={market}
                     index={i}
-                    onClick={() => handleMarketClick(market)}
+                    href={getMarketHref(market)}
                   />
                 ))}
             </div>
