@@ -121,6 +121,11 @@ pub enum ServerMessage {
     NewsUpdate {
         feed: NewsFeed,
     },
+    /// Research update (progress, completion, or failure)
+    ResearchUpdate {
+        /// The research update payload (from terminal-research crate)
+        update: serde_json::Value,
+    },
     /// Error message
     Error {
         code: ErrorCode,
