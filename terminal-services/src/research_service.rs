@@ -8,10 +8,10 @@ use std::{collections::HashMap, sync::Arc};
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
     ExaClient, ExaSearchResult, OpenAIClient, ResearchJob, ResearchProgress, ResearchStatus,
-    ResearchUpdate, SubQuestion, SynthesizedReport,
+    ResearchStorage, ResearchUpdate, SubQuestion, SynthesizedReport,
 };
 use tokio::sync::{broadcast, RwLock};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::MarketService;
 
@@ -20,6 +20,7 @@ pub struct ResearchService {
     market_service: Arc<MarketService>,
     exa_client: ExaClient,
     openai_client: OpenAIClient,
+    storage: Option<ResearchStorage>,
     jobs: RwLock<HashMap<String, ResearchJob>>,
     update_tx: broadcast::Sender<ResearchUpdate>,
 }
@@ -28,15 +29,29 @@ impl ResearchService {
     /// Create a new research service
     ///
     /// Requires EXA_API_KEY and OPENAI_API_KEY environment variables to be set.
-    pub fn new(market_service: Arc<MarketService>) -> Result<Self, TerminalError> {
+    /// AWS credentials are optional - if not provided, caching will be disabled.
+    pub async fn new(market_service: Arc<MarketService>) -> Result<Self, TerminalError> {
         let exa_client = ExaClient::new()?;
         let openai_client = OpenAIClient::new()?;
         let (update_tx, _) = broadcast::channel(100);
+
+        // Try to initialize storage, but don't fail if AWS credentials aren't configured
+        let storage = match ResearchStorage::new().await {
+            Ok(s) => {
+                info!("S3 research cache enabled");
+                Some(s)
+            }
+            Err(e) => {
+                warn!("S3 research cache disabled: {}", e);
+                None
+            }
+        };
 
         Ok(Self {
             market_service,
             exa_client,
             openai_client,
+            storage,
             jobs: RwLock::new(HashMap::new()),
             update_tx,
         })
@@ -50,16 +65,42 @@ impl ResearchService {
     /// Start a new research job for a market
     ///
     /// Returns the job immediately - research executes in background via `execute_research`.
+    /// If a cached result exists and is still valid (< 24 hours old), returns it immediately
+    /// with `cached: true`.
     #[instrument(skip(self))]
     pub async fn start_research(
         &self,
         platform: Platform,
         market_id: &str,
     ) -> Result<ResearchJob, TerminalError> {
+        // Check S3 cache first
+        if let Some(ref storage) = self.storage {
+            let cache_key = ResearchStorage::cache_key(platform, market_id);
+            match storage.get_cached(&cache_key).await {
+                Ok(Some(mut cached_job)) => {
+                    info!("Returning cached research for {}/{}", platform, market_id);
+                    cached_job.cached = true;
+
+                    // Store in local jobs map for API access
+                    {
+                        let mut jobs = self.jobs.write().await;
+                        jobs.insert(cached_job.id.clone(), cached_job.clone());
+                    }
+
+                    return Ok(cached_job);
+                }
+                Ok(None) => {
+                    info!("No valid cache for {}/{}", platform, market_id);
+                }
+                Err(e) => {
+                    warn!("Cache lookup failed: {}", e);
+                    // Continue without cache
+                }
+            }
+        }
+
         // Fetch market details
         let market = self.market_service.get_market(platform, market_id).await?;
-
-        // TODO: Implement S3 cache lookup
 
         // Create new job
         let job = ResearchJob::new(platform, market_id, &market.title);
@@ -251,14 +292,24 @@ impl ResearchService {
         }
     }
 
-    /// Mark job as completed with report
+    /// Mark job as completed with report and save to S3 cache
     async fn update_job_completed(&self, job_id: &str, report: SynthesizedReport) {
-        {
+        let completed_job = {
             let mut jobs = self.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
                 job.status = ResearchStatus::Completed;
                 job.report = Some(report.clone());
                 job.updated_at = chrono::Utc::now();
+                Some(job.clone())
+            } else {
+                None
+            }
+        };
+
+        // Save to S3 cache
+        if let (Some(ref storage), Some(ref job)) = (&self.storage, &completed_job) {
+            if let Err(e) = storage.save(job).await {
+                warn!("Failed to cache research result: {}", e);
             }
         }
 
@@ -304,6 +355,7 @@ impl Clone for ResearchService {
             market_service: self.market_service.clone(),
             exa_client: self.exa_client.clone(),
             openai_client: self.openai_client.clone(),
+            storage: None, // Storage is not cloned - each instance would need its own
             jobs: RwLock::new(HashMap::new()), // Fresh jobs map
             update_tx: self.update_tx.clone(),
         }
