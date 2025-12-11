@@ -11,3 +11,4 @@
 # Secrets
 .env.local
 *.pem
+data/trades.db
