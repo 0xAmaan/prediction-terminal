@@ -181,6 +181,28 @@ impl SubscriptionManager {
         }
     }
 
+    /// Broadcast a message to all connected clients (no subscription filtering)
+    ///
+    /// This is used for global messages like research updates that should
+    /// be sent to all clients regardless of their subscriptions.
+    pub fn broadcast_to_all(&self, message: ServerMessage) {
+        // Use a special "global" key that all clients will accept
+        // We create a dummy key that won't match any real subscriptions,
+        // but the handler.rs will need to be updated to recognize this pattern
+        let broadcast_msg = BroadcastMessage {
+            key: SubscriptionKey {
+                platform: terminal_core::Platform::Kalshi, // placeholder
+                market_id: "__global__".to_string(),
+                channel: terminal_core::SubscriptionChannel::Price, // placeholder
+            },
+            message,
+        };
+
+        if let Err(e) = self.broadcast_tx.send(broadcast_msg) {
+            warn!("Failed to broadcast global message: {} (no receivers)", e);
+        }
+    }
+
     /// Get all subscriptions for a specific platform/market
     pub fn get_market_subscriptions(
         &self,

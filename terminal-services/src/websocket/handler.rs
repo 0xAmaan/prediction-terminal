@@ -93,8 +93,10 @@ impl WebSocketState {
             loop {
                 match broadcast_rx.recv().await {
                     Ok(BroadcastMessage { key, message }) => {
+                        // Global messages (like research updates) go to all clients
+                        let is_global = key.market_id == "__global__";
                         // Check if this client is subscribed to this key
-                        if subscriptions_for_broadcast.is_subscribed(client_id, &key) {
+                        if is_global || subscriptions_for_broadcast.is_subscribed(client_id, &key) {
                             if outgoing_tx_clone.send(message).await.is_err() {
                                 break;
                             }
@@ -373,6 +375,14 @@ impl WebSocketState {
                 },
             },
         );
+    }
+
+    /// Broadcast a research update to all connected clients
+    ///
+    /// Research updates are global messages that go to all clients,
+    /// regardless of their subscriptions.
+    pub fn broadcast_research_update(&self, update: serde_json::Value) {
+        self.subscriptions.broadcast_to_all(ServerMessage::ResearchUpdate { update });
     }
 }
 
