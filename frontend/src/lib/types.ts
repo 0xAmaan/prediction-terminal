@@ -246,3 +246,68 @@ export interface NewsSearchParams {
   limit?: number;
   time_range?: string;
 }
+
+// ============================================================================
+// Research Types
+// ============================================================================
+
+export interface ResearchJob {
+  id: string;
+  platform: string;
+  market_id: string;
+  market_title: string;
+  status: ResearchStatus;
+  progress: ResearchProgress;
+  report?: SynthesizedReport;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  cached: boolean;
+}
+
+export type ResearchStatus =
+  | "pending"
+  | "decomposing"
+  | "searching"
+  | "analyzing"
+  | "synthesizing"
+  | "completed"
+  | "failed";
+
+export interface ResearchProgress {
+  current_step: string;
+  total_steps: number;
+  completed_steps: number;
+  current_query?: string;
+  searches_completed: number;
+  searches_total: number;
+}
+
+export interface SynthesizedReport {
+  title: string;
+  executive_summary: string;
+  sections: ReportSection[];
+  key_factors: KeyFactor[];
+  confidence_assessment: string;
+  sources: string[];
+}
+
+export interface ReportSection {
+  heading: string;
+  content: string;
+}
+
+export interface KeyFactor {
+  factor: string;
+  impact: "bullish" | "bearish" | "neutral";
+  confidence: "high" | "medium" | "low";
+}
+
+export interface ResearchUpdate {
+  type: "status_changed" | "progress_update" | "completed" | "failed";
+  job_id: string;
+  status?: ResearchStatus;
+  progress?: ResearchProgress;
+  report?: SynthesizedReport;
+  error?: string;
+}

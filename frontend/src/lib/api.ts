@@ -13,6 +13,7 @@ import type {
   NewsFeed,
   NewsSearchParams,
   ArticleContent,
+  ResearchJob,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -360,6 +361,48 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to fetch market news: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // ========================================================================
+  // Research Methods
+  // ========================================================================
+
+  async startResearch(
+    platform: string,
+    marketId: string,
+  ): Promise<{ job_id: string; status: string }> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to start research: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async getResearchJob(jobId: string): Promise<ResearchJob> {
+    const response = await fetch(
+      `${API_BASE}/api/research/job/${encodeURIComponent(jobId)}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get research job: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async listResearchJobs(): Promise<ResearchJob[]> {
+    const response = await fetch(`${API_BASE}/api/research/jobs`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to list research jobs: ${response.statusText}`);
     }
 
     return response.json();

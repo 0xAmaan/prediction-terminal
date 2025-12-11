@@ -11,6 +11,10 @@ import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/type
 // Existing components
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
 import { MarketNewsSection } from "@/components/news";
+import { RelatedMarkets } from "@/components/market/related-markets";
+import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
+import { OutcomeAccordion } from "@/components/market/outcome-accordion";
+import { ResearchButton } from "@/components/market/research-button";
 
 // New view components
 import { TradingView } from "@/components/market/views/trading-view";
