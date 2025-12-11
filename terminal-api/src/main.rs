@@ -14,7 +14,8 @@ use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
     AggregatorConfig, CandleService, MarketCache, MarketDataAggregator, MarketService,
-    MarketStatsService, TradeCollector, TradeCollectorConfig, TradeStorage, WebSocketState,
+    MarketStatsService, ResearchService, TradeCollector, TradeCollectorConfig, TradeStorage,
+    WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -32,6 +33,8 @@ pub struct AppState {
     pub aggregator: Arc<MarketDataAggregator>,
     pub market_stats_service: Arc<MarketStatsService>,
     pub news_service: Option<Arc<terminal_services::NewsService>>,
+    /// Research service (optional - requires EXA_API_KEY and OPENAI_API_KEY)
+    pub research_service: Option<Arc<ResearchService>>,
 }
 
 #[tokio::main]
@@ -168,9 +171,38 @@ async fn main() -> anyhow::Result<()> {
     let exa_api_key = std::env::var("EXA_API_KEY").ok();
     let firecrawl_api_key = std::env::var("FIRECRAWL_API_KEY").ok();
     let news_config = terminal_services::news_service::NewsServiceConfig::default();
-    let news_service = terminal_services::NewsService::new(exa_api_key, firecrawl_api_key, news_config);
+    let news_service = terminal_services::NewsService::new(exa_api_key.clone(), firecrawl_api_key, news_config);
     let news_service = Some(Arc::new(news_service));
     info!("News service initialized (RSS feeds + Google News)");
+
+    // Initialize research service (optional - may fail if API keys not set)
+    let research_service = match ResearchService::new(market_service.clone()) {
+        Ok(service) => {
+            info!("Research service initialized successfully");
+            let service = Arc::new(service);
+
+            // Spawn task to forward research updates to WebSocket
+            let ws_state_for_research = ws_state.clone();
+            let mut research_rx = service.subscribe();
+            tokio::spawn(async move {
+                while let Ok(update) = research_rx.recv().await {
+                    // Serialize the update to JSON Value
+                    if let Ok(json_value) = serde_json::to_value(&update) {
+                        ws_state_for_research.broadcast_research_update(json_value);
+                    }
+                }
+            });
+
+            Some(service)
+        }
+        Err(e) => {
+            info!(
+                "Research service not available: {}. Set EXA_API_KEY and OPENAI_API_KEY to enable.",
+                e
+            );
+            None
+        }
+    };
 
     // Create app state
     let state = AppState {
@@ -183,6 +215,7 @@ async fn main() -> anyhow::Result<()> {
         aggregator,
         market_stats_service,
         news_service,
+        research_service,
     };
 
     // Configure CORS for frontend
