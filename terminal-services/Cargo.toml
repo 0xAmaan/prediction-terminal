@@ -10,6 +10,7 @@ terminal-core = { workspace = true }
 terminal-kalshi = { workspace = true }
 terminal-polymarket = { workspace = true }
 terminal-news = { workspace = true }
+terminal-research = { path = "../terminal-research" }
 
 # Async
 tokio = { workspace = true, features = ["sync"] }
@@ -42,3 +43,6 @@ anyhow = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
+
+[dev-dependencies]
+rust_decimal_macros = "1.39"
