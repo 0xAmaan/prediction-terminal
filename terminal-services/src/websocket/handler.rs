@@ -7,7 +7,8 @@ use std::sync::Arc;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use terminal_core::{
-    ClientMessage, ErrorCode, Platform, ServerMessage, SubscriptionKey,
+    ClientMessage, ErrorCode, MarketNewsContext, NewsItem, Platform, ServerMessage,
+    SubscriptionChannel, SubscriptionKey,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
@@ -195,41 +196,51 @@ impl WebSocketState {
                         subscriptions.subscribe(client_id, &subscription);
 
                         // Notify aggregator if this is the first subscription for this market
-                        if is_first {
-                            if let Some(ref tx) = subscription_event_tx {
-                                let _ = tx.send(SubscriptionEvent::Subscribe {
-                                    platform: subscription.platform(),
-                                    market_id: subscription.market_id().to_string(),
-                                }).await;
+                        // (only for market-specific subscriptions, not global news)
+                        if is_first && !subscription.is_news() {
+                            if let (Some(platform), Some(market_id)) =
+                                (subscription.platform(), subscription.market_id())
+                            {
+                                if let Some(ref tx) = subscription_event_tx {
+                                    let _ = tx
+                                        .send(SubscriptionEvent::Subscribe {
+                                            platform,
+                                            market_id: market_id.to_string(),
+                                        })
+                                        .await;
+                                }
                             }
                         }
 
                         // Send confirmation
                         let _ = outgoing_tx
-                            .send(ServerMessage::Subscribed {
-                                subscription,
-                            })
+                            .send(ServerMessage::Subscribed { subscription })
                             .await;
                     }
                     ClientMessage::Unsubscribe { subscription } => {
                         subscriptions.unsubscribe(client_id, &subscription);
 
                         // Check if any clients remain subscribed to this market
+                        // (only for market-specific subscriptions, not global news)
                         let key = SubscriptionKey::from(&subscription);
-                        if !subscriptions.has_any_subscribers(&key) {
-                            if let Some(ref tx) = subscription_event_tx {
-                                let _ = tx.send(SubscriptionEvent::Unsubscribe {
-                                    platform: subscription.platform(),
-                                    market_id: subscription.market_id().to_string(),
-                                }).await;
+                        if !subscriptions.has_any_subscribers(&key) && !subscription.is_news() {
+                            if let (Some(platform), Some(market_id)) =
+                                (subscription.platform(), subscription.market_id())
+                            {
+                                if let Some(ref tx) = subscription_event_tx {
+                                    let _ = tx
+                                        .send(SubscriptionEvent::Unsubscribe {
+                                            platform,
+                                            market_id: market_id.to_string(),
+                                        })
+                                        .await;
+                                }
                             }
                         }
 
                         // Send confirmation
                         let _ = outgoing_tx
-                            .send(ServerMessage::Unsubscribed {
-                                subscription,
-                            })
+                            .send(ServerMessage::Unsubscribed { subscription })
                             .await;
                     }
                     ClientMessage::Ping { timestamp } => {
@@ -329,7 +340,7 @@ impl WebSocketState {
         let key = SubscriptionKey {
             platform: trade.platform,
             market_id: trade.market_id.clone(),
-            channel: terminal_core::SubscriptionChannel::Trades,
+            channel: SubscriptionChannel::Trades,
         };
 
         self.subscriptions.broadcast(
@@ -338,6 +349,40 @@ impl WebSocketState {
                 platform: trade.platform,
                 market_id: trade.market_id.clone(),
                 trade,
+            },
+        );
+    }
+
+    /// Broadcast a global news update to all clients subscribed to global news
+    pub fn broadcast_global_news(&self, item: NewsItem) {
+        let key = SubscriptionKey {
+            platform: Platform::Kalshi, // Placeholder for global news
+            market_id: "__global_news__".to_string(),
+            channel: SubscriptionChannel::GlobalNews,
+        };
+
+        self.subscriptions.broadcast(
+            key,
+            ServerMessage::NewsUpdate {
+                item,
+                market_context: None,
+            },
+        );
+    }
+
+    /// Broadcast a market-specific news update
+    pub fn broadcast_market_news(&self, item: NewsItem, platform: Platform, market_id: String) {
+        let key = SubscriptionKey {
+            platform,
+            market_id: market_id.clone(),
+            channel: SubscriptionChannel::MarketNews,
+        };
+
+        self.subscriptions.broadcast(
+            key,
+            ServerMessage::NewsUpdate {
+                item,
+                market_context: Some(MarketNewsContext { platform, market_id }),
             },
         );
     }

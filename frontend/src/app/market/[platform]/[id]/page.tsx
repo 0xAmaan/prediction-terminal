@@ -13,6 +13,7 @@ import { TradeHistory } from "@/components/market/trade-history";
 import { PriceChart } from "@/components/market/price-chart";
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
 import { RelatedMarkets } from "@/components/market/related-markets";
+import { MarketNewsSection } from "@/components/news";
 import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
 import { OutcomeAccordion } from "@/components/market/outcome-accordion";
 import { useMarketStream } from "@/hooks/use-market-stream";
@@ -411,6 +412,9 @@ const MarketPageContent = ({
             {!isMultiOutcome && (
               <TradeHistory trades={trades} isLoading={tradesLoading} maxTrades={20} />
             )}
+
+            {/* Related News */}
+            <MarketNewsSection platform={market.platform} marketId={market.id} />
 
             {/* Related Markets */}
             <RelatedMarkets

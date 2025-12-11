@@ -10,11 +10,20 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3001/ws";
 
 export type Platform = "kalshi" | "polymarket";
 
-export interface SubscriptionType {
-  type: "price" | "order_book" | "trades";
-  platform: Platform;
-  market_id: string;
-}
+export type SubscriptionType =
+  | {
+      type: "price" | "order_book" | "trades";
+      platform: Platform;
+      market_id: string;
+    }
+  | {
+      type: "global_news";
+    }
+  | {
+      type: "market_news";
+      platform: Platform;
+      market_id: string;
+    };
 
 export interface ClientMessage {
   type: "subscribe" | "unsubscribe" | "ping";
@@ -95,6 +104,37 @@ export interface ConnectionStatusMessage {
   status: "connected" | "connecting" | "disconnected" | "failed";
 }
 
+export interface NewsSource {
+  name: string;
+  url: string;
+  favicon_url: string | null;
+}
+
+export interface NewsItem {
+  id: string;
+  title: string;
+  url: string;
+  published_at: string;
+  source: NewsSource;
+  summary: string;
+  content: string | null;
+  image_url: string | null;
+  relevance_score: number;
+  related_market_ids: string[];
+  search_query: string | null;
+}
+
+export interface MarketNewsContext {
+  platform: Platform;
+  market_id: string;
+}
+
+export interface NewsUpdate {
+  type: "news_update";
+  item: NewsItem;
+  market_context: MarketNewsContext | null;
+}
+
 export type ServerMessage =
   | PriceUpdate
   | OrderBookUpdate
@@ -103,7 +143,8 @@ export type ServerMessage =
   | UnsubscribedMessage
   | ErrorMessage
   | PongMessage
-  | ConnectionStatusMessage;
+  | ConnectionStatusMessage
+  | NewsUpdate;
 
 // ============================================================================
 // Connection State

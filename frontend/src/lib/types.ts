@@ -153,3 +153,52 @@ export interface OutcomePriceHistory {
   color: string;
   history: PriceHistoryPoint[];
 }
+
+// ============================================================================
+// News Types
+// ============================================================================
+
+/** Source of a news article */
+export interface NewsSource {
+  name: string;
+  url: string;
+  favicon_url: string | null;
+}
+
+/** A news article */
+export interface NewsItem {
+  id: string;
+  title: string;
+  url: string;
+  published_at: string; // ISO datetime
+  source: NewsSource;
+  summary: string;
+  content: string | null;
+  image_url: string | null;
+  relevance_score: number;
+  related_market_ids: string[];
+  search_query: string | null;
+}
+
+/** News feed response */
+export interface NewsFeed {
+  items: NewsItem[];
+  total_count: number;
+  next_cursor: string | null;
+}
+
+/** Article content response */
+export interface ArticleContent {
+  content: string;
+  title: string | null;
+  description: string | null;
+  image_url: string | null;
+  site_name: string | null;
+}
+
+/** News search parameters */
+export interface NewsSearchParams {
+  query?: string;
+  limit?: number;
+  time_range?: string;
+}

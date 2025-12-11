@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::{OrderBookLevel, Platform, Trade};
+use crate::{MarketNewsContext, NewsItem, OrderBookLevel, Platform, Trade};
 
 // ============================================================================
 // Client -> Server Messages
@@ -53,25 +53,41 @@ pub enum SubscriptionType {
         platform: Platform,
         market_id: String,
     },
+    /// Subscribe to global news updates
+    GlobalNews,
+    /// Subscribe to news for a specific market
+    MarketNews {
+        platform: Platform,
+        market_id: String,
+    },
 }
 
 impl SubscriptionType {
-    /// Get the platform for this subscription
-    pub fn platform(&self) -> Platform {
+    /// Get the platform for this subscription (if applicable)
+    pub fn platform(&self) -> Option<Platform> {
         match self {
-            Self::Price { platform, .. } => *platform,
-            Self::OrderBook { platform, .. } => *platform,
-            Self::Trades { platform, .. } => *platform,
+            Self::Price { platform, .. } => Some(*platform),
+            Self::OrderBook { platform, .. } => Some(*platform),
+            Self::Trades { platform, .. } => Some(*platform),
+            Self::GlobalNews => None,
+            Self::MarketNews { platform, .. } => Some(*platform),
         }
     }
 
-    /// Get the market ID for this subscription
-    pub fn market_id(&self) -> &str {
+    /// Get the market ID for this subscription (if applicable)
+    pub fn market_id(&self) -> Option<&str> {
         match self {
-            Self::Price { market_id, .. } => market_id,
-            Self::OrderBook { market_id, .. } => market_id,
-            Self::Trades { market_id, .. } => market_id,
+            Self::Price { market_id, .. } => Some(market_id),
+            Self::OrderBook { market_id, .. } => Some(market_id),
+            Self::Trades { market_id, .. } => Some(market_id),
+            Self::GlobalNews => None,
+            Self::MarketNews { market_id, .. } => Some(market_id),
         }
+    }
+
+    /// Check if this is a news subscription
+    pub fn is_news(&self) -> bool {
+        matches!(self, Self::GlobalNews | Self::MarketNews { .. })
     }
 }
 
@@ -133,6 +149,14 @@ pub enum ServerMessage {
     ConnectionStatus {
         platform: Platform,
         status: ConnectionState,
+    },
+    /// News update
+    NewsUpdate {
+        /// The news item
+        item: NewsItem,
+        /// Market context (if this is market-specific news)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        market_context: Option<MarketNewsContext>,
     },
 }
 
@@ -196,6 +220,8 @@ pub enum SubscriptionChannel {
     Price,
     OrderBook,
     Trades,
+    GlobalNews,
+    MarketNews,
 }
 
 impl From<&SubscriptionType> for SubscriptionKey {
@@ -215,6 +241,16 @@ impl From<&SubscriptionType> for SubscriptionKey {
                 platform: *platform,
                 market_id: market_id.clone(),
                 channel: SubscriptionChannel::Trades,
+            },
+            SubscriptionType::GlobalNews => Self {
+                platform: Platform::Kalshi, // Placeholder for global news
+                market_id: "__global_news__".to_string(),
+                channel: SubscriptionChannel::GlobalNews,
+            },
+            SubscriptionType::MarketNews { platform, market_id } => Self {
+                platform: *platform,
+                market_id: market_id.clone(),
+                channel: SubscriptionChannel::MarketNews,
             },
         }
     }

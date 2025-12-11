@@ -75,6 +75,14 @@ pub struct KalshiMarket {
     #[serde(default)]
     pub subtitle: Option<String>,
 
+    /// YES outcome name (for multi-choice markets)
+    #[serde(default)]
+    pub yes_sub_title: Option<String>,
+
+    /// NO outcome name (for multi-choice markets)
+    #[serde(default)]
+    pub no_sub_title: Option<String>,
+
     /// Current YES price in cents (1-99)
     #[serde(default)]
     pub yes_bid: Option<i64>,
@@ -636,8 +644,10 @@ pub fn markets_to_multi_outcome(
         .iter()
         .map(|m| {
             let price = m.yes_price();
+            // Use yes_sub_title (outcome name) if available, otherwise fall back to title
+            let outcome_name = m.yes_sub_title.as_ref().unwrap_or(&m.title);
             serde_json::json!({
-                "name": m.title.clone(),
+                "name": outcome_name.clone(),
                 "market_id": m.ticker.clone(),
                 "yes_price": price.to_string(),
                 "clob_token_id": m.ticker.clone(),  // Kalshi uses ticker for orderbook/chart

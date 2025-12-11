@@ -88,6 +88,9 @@ export const WebSocketProvider = ({
 
   // Generate a unique key for a subscription
   const getSubscriptionKey = useCallback((sub: SubscriptionType): string => {
+    if (sub.type === "global_news") {
+      return "global_news";
+    }
     return `${sub.type}:${sub.platform}:${sub.market_id}`;
   }, []);
 

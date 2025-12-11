@@ -13,8 +13,9 @@ use std::sync::Arc;
 use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
-    AggregatorConfig, CandleService, MarketDataAggregator, MarketService, TradeCollector,
-    TradeCollectorConfig, TradeStorage, WebSocketState,
+    AggregatorConfig, CandleService, MarketDataAggregator, MarketService, NewsAggregator,
+    NewsAggregatorConfig, NewsService, NewsServiceConfig, TradeCollector, TradeCollectorConfig,
+    TradeStorage, WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -29,6 +30,8 @@ pub struct AppState {
     pub candle_service: Arc<CandleService>,
     pub trade_collector: Arc<TradeCollector>,
     pub aggregator: Arc<MarketDataAggregator>,
+    pub news_service: Option<Arc<NewsService>>,
+    pub news_aggregator: Option<Arc<NewsAggregator>>,
 }
 
 #[tokio::main]
@@ -98,6 +101,43 @@ async fn main() -> anyhow::Result<()> {
         collector_handle.start().await;
     });
 
+    // Initialize news services (Exa semantic search + RSS fallback)
+    let (news_service, news_aggregator) = {
+        let exa_api_key = std::env::var("EXA_API_KEY").ok();
+        let firecrawl_api_key = std::env::var("FIRECRAWL_API_KEY").ok();
+
+        info!(
+            "Initializing news service (Exa: {}, Firecrawl: {})",
+            exa_api_key.is_some(),
+            firecrawl_api_key.is_some()
+        );
+
+        let mut news_service = NewsService::new(
+            exa_api_key,
+            firecrawl_api_key,
+            NewsServiceConfig::default(),
+        );
+
+        // Connect to market service for relevance scoring
+        news_service.set_market_service(market_service.clone());
+
+        let news_service = Arc::new(news_service);
+
+        let news_aggregator = Arc::new(NewsAggregator::new(
+            news_service.clone(),
+            ws_state.clone(),
+            NewsAggregatorConfig::default(),
+        ));
+
+        // Start news aggregator in background
+        let aggregator_handle = news_aggregator.clone();
+        tokio::spawn(async move {
+            aggregator_handle.start().await;
+        });
+
+        (Some(news_service), Some(news_aggregator))
+    };
+
     // Initialize and start market data aggregator
     let aggregator_config = AggregatorConfig::default();
     let mut aggregator = MarketDataAggregator::new(
@@ -128,6 +168,8 @@ async fn main() -> anyhow::Result<()> {
         candle_service,
         trade_collector,
         aggregator,
+        news_service,
+        news_aggregator,
     };
 
     // Configure CORS for frontend

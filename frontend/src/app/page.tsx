@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { MarketsGrid } from "@/components/markets-grid";
-import { Activity, Search } from "lucide-react";
+import { NewsFeed } from "@/components/news";
+import { Activity, Search, TrendingUp, Newspaper } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 const HomePage = () => {
   const [search, setSearch] = useState("");
@@ -51,8 +53,39 @@ const HomePage = () => {
 
       {/* Main content - scrollable */}
       <main className="flex-1 overflow-hidden">
-        <div className="h-full mx-auto px-8 pt-10 pb-6" style={{ maxWidth: "1600px" }}>
-          <MarketsGrid search={debouncedSearch} />
+        <div className="h-full mx-auto px-8 pt-6 pb-6" style={{ maxWidth: "1600px" }}>
+          <Tabs defaultValue="markets" className="h-full flex flex-col">
+            <TabsList className="mb-4">
+              <TabsTrigger value="markets" className="gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Markets
+              </TabsTrigger>
+              <TabsTrigger value="news" className="gap-2">
+                <Newspaper className="h-4 w-4" />
+                News
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="markets" className="flex-1 overflow-hidden mt-0">
+              <div className="h-full">
+                <MarketsGrid search={debouncedSearch} />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="news" className="flex-1 overflow-hidden mt-0">
+              <div className="h-full overflow-y-auto">
+                <div className="max-w-3xl mx-auto space-y-4">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Newspaper className="h-5 w-5 text-primary" />
+                    </div>
+                    <h2 className="text-xl font-semibold">Latest Prediction Market News</h2>
+                  </div>
+                  <NewsFeed limit={30} />
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </main>
 
