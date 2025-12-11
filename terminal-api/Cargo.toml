@@ -13,6 +13,7 @@ path = "src/main.rs"
 terminal-core = { workspace = true }
 terminal-kalshi = { workspace = true }
 terminal-polymarket = { workspace = true }
+terminal-research = { workspace = true }
 terminal-services = { workspace = true }
 
 # Web framework

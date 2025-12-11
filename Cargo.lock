@@ -2757,6 +2757,7 @@ dependencies = [
  "terminal-core",
  "terminal-kalshi",
  "terminal-polymarket",
+ "terminal-research",
  "terminal-services",
  "thiserror 2.0.17",
  "tokio",

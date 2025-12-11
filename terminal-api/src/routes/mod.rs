@@ -3,6 +3,7 @@
 mod health;
 mod markets;
 mod news;
+mod research;
 pub mod ws;
 
 use axum::Router;
@@ -14,6 +15,7 @@ pub fn api_routes() -> Router<AppState> {
         .merge(markets::routes())
         .merge(news::routes())
         .merge(health::routes())
+        .merge(research::routes())
 }
 
 /// Create WebSocket routes (separate from API)
