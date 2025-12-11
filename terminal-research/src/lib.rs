@@ -1,0 +1,14 @@
+//! Deep Research Agent for Prediction Market Analysis
+//!
+//! This crate provides AI-powered research capabilities for prediction markets,
+//! using Exa AI for semantic search and OpenAI for question decomposition and synthesis.
+
+pub mod exa;
+pub mod openai;
+pub mod types;
+
+pub use exa::{ExaClient, ExaSearchRequest, ExaSearchResponse, ExaSearchResult};
+pub use openai::{
+    DecomposedQuestions, KeyFactor, OpenAIClient, ReportSection, SubQuestion, SynthesizedReport,
+};
+pub use types::{ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate};
