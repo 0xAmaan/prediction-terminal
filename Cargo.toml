@@ -14,6 +14,7 @@ members = [
     "terminal-news",
     "terminal-services",
     "terminal-api",
+    "terminal-research",
 ]
 
 [workspace.dependencies]
@@ -30,6 +31,7 @@ terminal-kalshi = { path = "./terminal-kalshi", version = "0.1.0" }
 terminal-polymarket = { path = "./terminal-polymarket", version = "0.1.0" }
 terminal-news = { path = "./terminal-news", version = "0.1.0" }
 terminal-services = { path = "./terminal-services", version = "0.1.0" }
+terminal-research = { path = "./terminal-research", version = "0.1.0" }
 
 # Web Framework
 axum = { version = "0.7" }
