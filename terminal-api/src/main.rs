@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     info!("News service initialized (RSS feeds + Google News)");
 
     // Initialize research service (optional - may fail if API keys not set)
-    let research_service = match ResearchService::new(market_service.clone()) {
+    let research_service = match ResearchService::new(market_service.clone()).await {
         Ok(service) => {
             info!("Research service initialized successfully");
             let service = Arc::new(service);
