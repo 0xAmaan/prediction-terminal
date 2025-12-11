@@ -5,10 +5,12 @@
 
 pub mod exa;
 pub mod openai;
+pub mod storage;
 pub mod types;
 
 pub use exa::{ExaClient, ExaSearchRequest, ExaSearchResponse, ExaSearchResult};
 pub use openai::{
     DecomposedQuestions, KeyFactor, OpenAIClient, ReportSection, SubQuestion, SynthesizedReport,
 };
+pub use storage::ResearchStorage;
 pub use types::{ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate};
