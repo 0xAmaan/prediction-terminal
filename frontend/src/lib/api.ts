@@ -407,4 +407,23 @@ export const api = {
 
     return response.json();
   },
+
+  async getResearchByMarket(
+    platform: string,
+    marketId: string,
+  ): Promise<ResearchJob | null> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}`,
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to get research: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
 };
