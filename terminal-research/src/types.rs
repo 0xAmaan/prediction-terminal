@@ -83,6 +83,21 @@ pub enum ResearchUpdate {
         job_id: String,
         error: String,
     },
+    /// Follow-up research has started processing
+    FollowUpStarted {
+        job_id: String,
+    },
+    /// Document content is being streamed during follow-up research
+    DocumentEditing {
+        job_id: String,
+        /// The content chunk being streamed
+        content_chunk: String,
+    },
+    /// Follow-up research has completed with an updated report
+    FollowUpCompleted {
+        job_id: String,
+        report: SynthesizedReport,
+    },
 }
 
 /// Metadata for a research version
@@ -173,4 +188,52 @@ impl ChatHistory {
     pub fn append(&mut self, message: ChatMessage) {
         self.messages.push(message);
     }
+}
+
+// ============================================================================
+// Follow-up Research Types (Phase 4)
+// ============================================================================
+
+/// Request for follow-up research on an existing report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowUpRequest {
+    /// The user's follow-up question
+    pub question: String,
+    /// The existing report to analyze/enhance
+    pub existing_report: crate::openai::SynthesizedReport,
+}
+
+/// Response from analyzing a follow-up question
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FollowUpResponse {
+    /// The answer to the question (may be from context or new research)
+    pub answer: String,
+    /// Whether new research was needed to answer the question
+    pub needs_research: bool,
+    /// Search queries to execute if research is needed
+    #[serde(default)]
+    pub search_queries: Vec<String>,
+}
+
+/// An edit operation on the research document
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentEdit {
+    /// Section index to edit (None = append new section)
+    pub section_index: Option<usize>,
+    /// Type of edit operation
+    pub operation: DocumentEditOperation,
+    /// Content to add/replace
+    pub content: String,
+}
+
+/// Type of document edit operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentEditOperation {
+    /// Append content to a section or the document
+    Append,
+    /// Replace a section's content
+    Replace,
+    /// Insert a new section at the index
+    Insert,
 }

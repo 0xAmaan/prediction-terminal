@@ -10,10 +10,12 @@ pub mod types;
 
 pub use exa::{ExaClient, ExaSearchRequest, ExaSearchResponse, ExaSearchResult};
 pub use openai::{
-    DecomposedQuestions, KeyFactor, OpenAIClient, ReportSection, SubQuestion, SynthesizedReport,
+    DecomposedQuestions, FollowUpAnalysis, KeyFactor, OpenAIClient, ReportSection, SubQuestion,
+    SynthesizedReport,
 };
 pub use storage::ResearchStorage;
 pub use types::{
-    ChatHistory, ChatMessage, ChatRole, ResearchJob, ResearchProgress, ResearchStatus,
-    ResearchUpdate, ResearchVersion, ResearchVersionList,
+    ChatHistory, ChatMessage, ChatRole, DocumentEdit, DocumentEditOperation, FollowUpRequest,
+    FollowUpResponse, ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate,
+    ResearchVersion, ResearchVersionList,
 };
