@@ -166,9 +166,9 @@ function ResearchJobCard({ job }: { job: ResearchJob }) {
         )}
         <div className="mt-4 flex justify-between items-center text-xs text-muted-foreground">
           <span>{new Date(job.created_at).toLocaleDateString()}</span>
-          <Link href={`/market/${job.platform}/${job.market_id}`}>
+          <Link href={`/research/${job.platform}-${job.market_id}`}>
             <Button variant="ghost" size="sm">
-              View Market
+              View Research
             </Button>
           </Link>
         </div>
