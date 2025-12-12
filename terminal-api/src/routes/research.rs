@@ -7,9 +7,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use terminal_core::Platform;
-use terminal_research::{ResearchJob, ResearchStatus};
+use terminal_research::{ChatMessage, ResearchJob, ResearchStatus, ResearchVersionList};
 use tracing::{error, info};
 
 use crate::AppState;
@@ -19,6 +19,16 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/research/:platform/:market_id", post(start_research))
         .route("/research/:platform/:market_id", get(get_research))
+        .route(
+            "/research/:platform/:market_id/versions",
+            get(list_versions),
+        )
+        .route(
+            "/research/:platform/:market_id/versions/:version_key",
+            get(get_version),
+        )
+        .route("/research/:platform/:market_id/chat", get(get_chat))
+        .route("/research/:platform/:market_id/chat", post(send_chat))
         .route("/research/job/:job_id", get(get_job))
         .route("/research/jobs", get(list_jobs))
 }
@@ -213,6 +223,246 @@ async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
 
     let jobs: Vec<ResearchJob> = research_service.list_jobs().await;
     (StatusCode::OK, Json(jobs)).into_response()
+}
+
+/// List all versions of research for a market
+async fn list_versions(
+    State(state): State<AppState>,
+    Path((platform_str, market_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    info!(
+        "Listing research versions for {} on {}",
+        market_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service.list_versions(platform, &market_id).await {
+        Ok(versions) => (StatusCode::OK, Json(ResearchVersionList { versions })).into_response(),
+        Err(e) => {
+            error!("Failed to list versions: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to list versions: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get a specific version of research
+async fn get_version(
+    State(state): State<AppState>,
+    Path((platform_str, market_id, version_key)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    info!(
+        "Getting research version {} for {} on {}",
+        version_key, market_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service
+        .get_version(platform, &market_id, &version_key)
+        .await
+    {
+        Ok(Some(job)) => (StatusCode::OK, Json(job)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Version not found: {}", version_key),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to get version: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get version: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ============================================================================
+// Chat Endpoints
+// ============================================================================
+
+/// Request body for sending a chat message
+#[derive(Debug, Deserialize)]
+struct SendChatRequest {
+    message: String,
+}
+
+/// Response for sending a chat message
+#[derive(Debug, Serialize)]
+struct SendChatResponse {
+    message: ChatMessage,
+}
+
+/// Get chat history for a market's research
+async fn get_chat(
+    State(state): State<AppState>,
+    Path((platform_str, market_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    info!(
+        "Getting chat history for {} on {}",
+        market_id, platform_str
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service.get_chat(platform, &market_id).await {
+        Ok(history) => (StatusCode::OK, Json(history)).into_response(),
+        Err(e) => {
+            error!("Failed to get chat history: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get chat history: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Send a chat message and get a response
+async fn send_chat(
+    State(state): State<AppState>,
+    Path((platform_str, market_id)): Path<(String, String)>,
+    Json(request): Json<SendChatRequest>,
+) -> impl IntoResponse {
+    info!(
+        "Sending chat message for {} on {}: {}",
+        market_id, platform_str, request.message
+    );
+
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service
+        .send_chat_message(platform, &market_id, &request.message)
+        .await
+    {
+        Ok(response_message) => (
+            StatusCode::OK,
+            Json(SendChatResponse {
+                message: response_message,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to send chat message: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to send message: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Helper to parse platform string
