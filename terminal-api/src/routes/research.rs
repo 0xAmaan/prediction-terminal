@@ -104,7 +104,7 @@ async fn start_research(
 
 /// Get cached research for a market (by platform/market_id)
 async fn get_research(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path((platform_str, market_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     info!(
@@ -112,15 +112,54 @@ async fn get_research(
         market_id, platform_str
     );
 
-    // TODO: Look up cached research by platform/market_id from S3
-    // For now, return 404
-    (
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse {
-            error: "No cached research found. Start a new research job.".to_string(),
-        }),
-    )
-        .into_response()
+    let platform = match parse_platform(&platform_str) {
+        Some(p) => p,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("Unknown platform: {}", platform_str),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Check if research service is available
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Try to get cached research
+    match research_service.get_cached_research(platform, &market_id).await {
+        Ok(Some(job)) => (StatusCode::OK, Json(job)).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No cached research found. Start a new research job.".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            error!("Failed to check research cache: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check cache: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Get a research job by ID

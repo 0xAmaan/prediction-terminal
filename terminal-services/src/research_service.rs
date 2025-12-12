@@ -347,6 +347,40 @@ impl ResearchService {
         let jobs = self.jobs.read().await;
         jobs.values().cloned().collect()
     }
+
+    /// Get cached research by platform and market ID (without starting new research)
+    ///
+    /// Returns Ok(Some(job)) if cached research exists and is valid (< 24 hours old)
+    /// Returns Ok(None) if no cached research exists or it has expired
+    #[instrument(skip(self))]
+    pub async fn get_cached_research(
+        &self,
+        platform: Platform,
+        market_id: &str,
+    ) -> Result<Option<ResearchJob>, TerminalError> {
+        // Check S3 cache
+        if let Some(ref storage) = self.storage {
+            let cache_key = ResearchStorage::cache_key(platform, market_id);
+            match storage.get_cached(&cache_key).await {
+                Ok(Some(mut cached_job)) => {
+                    info!("Found cached research for {}/{}", platform, market_id);
+                    cached_job.cached = true;
+                    return Ok(Some(cached_job));
+                }
+                Ok(None) => {
+                    info!("No valid cache for {}/{}", platform, market_id);
+                    return Ok(None);
+                }
+                Err(e) => {
+                    warn!("Cache lookup failed: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+
+        // No storage configured
+        Ok(None)
+    }
 }
 
 impl Clone for ResearchService {
