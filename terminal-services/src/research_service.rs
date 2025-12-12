@@ -7,9 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
-    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, OpenAIClient, ResearchJob,
-    ResearchProgress, ResearchStatus, ResearchStorage, ResearchUpdate, ResearchVersion,
-    SubQuestion, SynthesizedReport,
+    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis, OpenAIClient,
+    ResearchJob, ResearchProgress, ResearchStatus, ResearchStorage, ResearchUpdate,
+    ResearchVersion, SubQuestion, SynthesizedReport,
 };
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
@@ -441,8 +441,10 @@ impl ResearchService {
 
     /// Send a chat message and get a response
     ///
-    /// For Phase 3, this returns a placeholder response.
-    /// Phase 4 will implement actual follow-up research.
+    /// This implements the follow-up research flow:
+    /// 1. Analyze if the question can be answered from existing research
+    /// 2. If yes, answer directly
+    /// 3. If no, trigger targeted research and update the document
     #[instrument(skip(self))]
     pub async fn send_chat_message(
         &self,
@@ -451,20 +453,102 @@ impl ResearchService {
         message: &str,
     ) -> Result<ChatMessage, TerminalError> {
         // Save user message
-        let user_msg = ChatMessage::user(message);
+        let mut user_msg = ChatMessage::user(message);
         if let Some(ref storage) = self.storage {
             storage
                 .append_message(platform, market_id, user_msg.clone())
                 .await?;
         }
 
-        // Create placeholder assistant response
-        // Phase 4 will implement actual follow-up research logic
-        let assistant_msg = ChatMessage::assistant(
-            "Follow-up research coming in Phase 4. Your question has been saved and will be processed when this feature is fully implemented.",
+        // Get existing research
+        let existing_job = self.get_cached_research(platform, market_id).await?;
+        let existing_report = match existing_job.and_then(|j| j.report) {
+            Some(report) => report,
+            None => {
+                // No existing research, return a helpful message
+                let assistant_msg = ChatMessage::assistant(
+                    "No research exists for this market yet. Please wait for the initial research to complete before asking follow-up questions.",
+                );
+                if let Some(ref storage) = self.storage {
+                    storage
+                        .append_message(platform, market_id, assistant_msg.clone())
+                        .await?;
+                }
+                return Ok(assistant_msg);
+            }
+        };
+
+        // Analyze the follow-up question
+        let analysis = self
+            .openai_client
+            .analyze_followup(message, &existing_report)
+            .await?;
+
+        info!(
+            "Follow-up analysis for {}/{}: can_answer_from_context={}, reasoning={}",
+            platform, market_id, analysis.can_answer_from_context, analysis.reasoning
         );
 
-        // Save assistant message
+        let (answer, research_triggered) = if analysis.can_answer_from_context {
+            // Answer directly from existing research
+            let answer = analysis.answer.unwrap_or_else(|| {
+                // Fallback: generate answer if not provided in analysis
+                analysis.reasoning.clone()
+            });
+            (answer, false)
+        } else {
+            // Need to do research - mark user message as triggering research
+            user_msg.research_triggered = true;
+
+            // Update user message with research_triggered flag
+            if let Some(ref storage) = self.storage {
+                // Re-fetch and update the chat history to mark the message
+                let mut history = storage.get_chat(platform, market_id).await?;
+                if let Some(last_user_msg) = history
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .find(|m| m.role == terminal_research::ChatRole::User && m.content == message)
+                {
+                    last_user_msg.research_triggered = true;
+                }
+                storage.save_chat(platform, market_id, &history).await?;
+            }
+
+            // Execute follow-up research
+            let (answer, updated_report) = self
+                .execute_followup_research(
+                    platform,
+                    market_id,
+                    message,
+                    &existing_report,
+                    &analysis,
+                )
+                .await?;
+
+            // Save updated report as new version
+            if let Some(ref storage) = self.storage {
+                let mut job = ResearchJob::new(platform, market_id, &existing_report.title);
+                job.status = ResearchStatus::Completed;
+                job.report = Some(updated_report.clone());
+                job.updated_at = chrono::Utc::now();
+                storage.save(&job).await?;
+                info!("Saved updated research version for {}/{}", platform, market_id);
+
+                // Broadcast the update
+                let _ = self.update_tx.send(ResearchUpdate::FollowUpCompleted {
+                    job_id: job.id,
+                    report: updated_report,
+                });
+            }
+
+            (answer, true)
+        };
+
+        // Create and save assistant response
+        let mut assistant_msg = ChatMessage::assistant(&answer);
+        assistant_msg.research_triggered = research_triggered;
+
         if let Some(ref storage) = self.storage {
             storage
                 .append_message(platform, market_id, assistant_msg.clone())
@@ -472,11 +556,64 @@ impl ResearchService {
         }
 
         info!(
-            "Chat message processed for {}/{}: {}",
-            platform, market_id, message
+            "Chat message processed for {}/{}: research_triggered={}",
+            platform, market_id, research_triggered
         );
 
         Ok(assistant_msg)
+    }
+
+    /// Execute follow-up research to answer a question
+    ///
+    /// Returns the answer and the updated report.
+    async fn execute_followup_research(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        question: &str,
+        existing_report: &SynthesizedReport,
+        analysis: &FollowUpAnalysis,
+    ) -> Result<(String, SynthesizedReport), TerminalError> {
+        // Get search queries from analysis or generate new ones
+        let search_queries = if !analysis.search_queries.is_empty() {
+            analysis.search_queries.clone()
+        } else {
+            self.openai_client
+                .generate_search_queries(question, existing_report)
+                .await?
+        };
+
+        info!(
+            "Executing {} searches for follow-up on {}/{}",
+            search_queries.len(),
+            platform,
+            market_id
+        );
+
+        // Execute searches
+        let mut search_results: Vec<(String, Vec<ExaSearchResult>)> = Vec::new();
+        for query in &search_queries {
+            let results = self.exa_client.search_news(query, 7, 5).await?;
+            search_results.push((query.clone(), results.results));
+        }
+
+        // Update the report with new findings
+        let updated_report = self
+            .openai_client
+            .update_report(existing_report, &search_results, question)
+            .await?;
+
+        // Generate a summary answer for the chat
+        let answer = format!(
+            "I've researched your question and updated the report with new findings.\n\n**Summary of new information:**\n\n{}",
+            if updated_report.executive_summary != existing_report.executive_summary {
+                &updated_report.executive_summary
+            } else {
+                "The report has been updated with new details in the relevant sections."
+            }
+        );
+
+        Ok((answer, updated_report))
     }
 }
 
