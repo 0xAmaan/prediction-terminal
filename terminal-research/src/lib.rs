@@ -13,4 +13,7 @@ pub use openai::{
     DecomposedQuestions, KeyFactor, OpenAIClient, ReportSection, SubQuestion, SynthesizedReport,
 };
 pub use storage::ResearchStorage;
-pub use types::{ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate};
+pub use types::{
+    ChatHistory, ChatMessage, ChatRole, ResearchJob, ResearchProgress, ResearchStatus,
+    ResearchUpdate, ResearchVersion, ResearchVersionList,
+};
