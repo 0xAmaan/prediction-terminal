@@ -7,6 +7,7 @@ import type {
   ResearchJob,
   ResearchUpdate,
   ResearchStatus,
+  SynthesizedReport,
 } from "@/lib/types";
 import type { ServerMessage } from "@/hooks/use-websocket";
 
@@ -14,6 +15,8 @@ export function useResearch() {
   const [job, setJob] = useState<ResearchJob | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFollowUpInProgress, setIsFollowUpInProgress] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   const { onMessage, connectionState } = useWebSocketContext();
@@ -85,30 +88,55 @@ export function useResearch() {
 
       if (!update || update.job_id !== job.id) return;
 
-      setJob((prev) => {
-        if (!prev) return prev;
-
-        switch (update!.type) {
-          case "status_changed":
-            return { ...prev, status: update!.status! };
-          case "progress_update":
-            return { ...prev, progress: update!.progress! };
-          case "completed":
+      switch (update!.type) {
+        case "followup_started":
+          setIsFollowUpInProgress(true);
+          setStreamingContent(null);
+          break;
+        case "document_editing":
+          if (update!.content_chunk) {
+            setStreamingContent((prev) =>
+              prev ? prev + update!.content_chunk : update!.content_chunk!
+            );
+          }
+          break;
+        case "followup_completed":
+          setIsFollowUpInProgress(false);
+          setStreamingContent(null);
+          setJob((prev) => {
+            if (!prev) return prev;
             return {
               ...prev,
-              status: "completed" as ResearchStatus,
               report: update!.report,
             };
-          case "failed":
-            return {
-              ...prev,
-              status: "failed" as ResearchStatus,
-              error: update!.error,
-            };
-          default:
-            return prev;
-        }
-      });
+          });
+          break;
+        default:
+          setJob((prev) => {
+            if (!prev) return prev;
+
+            switch (update!.type) {
+              case "status_changed":
+                return { ...prev, status: update!.status! };
+              case "progress_update":
+                return { ...prev, progress: update!.progress! };
+              case "completed":
+                return {
+                  ...prev,
+                  status: "completed" as ResearchStatus,
+                  report: update!.report,
+                };
+              case "failed":
+                return {
+                  ...prev,
+                  status: "failed" as ResearchStatus,
+                  error: update!.error,
+                };
+              default:
+                return prev;
+            }
+          });
+      }
     });
 
     return unsubscribe;
@@ -149,13 +177,24 @@ export function useResearch() {
     setIsLoading(false);
   }, []);
 
+  // Update job report when WebSocket receives followup_completed
+  const updateReport = useCallback((report: SynthesizedReport) => {
+    setJob((prev) => {
+      if (!prev) return prev;
+      return { ...prev, report };
+    });
+  }, []);
+
   return {
     job,
     isLoading,
     error,
     isConnected,
+    isFollowUpInProgress,
+    streamingContent,
     startResearch,
     refreshJob,
     reset,
+    updateReport,
   };
 }
