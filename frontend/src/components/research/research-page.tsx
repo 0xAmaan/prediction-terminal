@@ -7,6 +7,7 @@ import { Loader2, ArrowLeft, CheckCircle, XCircle } from "lucide-react";
 import Link from "next/link";
 import { useResearch } from "@/hooks/use-research";
 import { ResearchDocument } from "./research-document";
+import { ResearchChat } from "./research-chat";
 import type { PredictionMarket } from "@/lib/types";
 
 interface ResearchPageProps {
@@ -65,12 +66,10 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex">
-        {/* Chat Panel (placeholder for Phase 3) */}
-        <div className="w-2/5 border-r border-border/30 p-6">
-          <div className="h-full flex items-center justify-center text-muted-foreground">
-            <p className="text-sm">Chat interface coming soon...</p>
-          </div>
+      <main className="flex-1 flex overflow-hidden">
+        {/* Chat Panel */}
+        <div className="w-2/5 border-r border-border/30 flex flex-col">
+          <ResearchChat platform={platform} marketId={marketId} />
         </div>
 
         {/* Document Panel */}
