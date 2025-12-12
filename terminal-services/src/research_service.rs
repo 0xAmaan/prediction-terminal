@@ -7,8 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
-    ExaClient, ExaSearchResult, OpenAIClient, ResearchJob, ResearchProgress, ResearchStatus,
-    ResearchStorage, ResearchUpdate, SubQuestion, SynthesizedReport,
+    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, OpenAIClient, ResearchJob,
+    ResearchProgress, ResearchStatus, ResearchStorage, ResearchUpdate, ResearchVersion,
+    SubQuestion, SynthesizedReport,
 };
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
@@ -380,6 +381,102 @@ impl ResearchService {
 
         // No storage configured
         Ok(None)
+    }
+
+    /// List all versions for a market's research
+    ///
+    /// Returns a list of version metadata sorted by creation time (newest first).
+    #[instrument(skip(self))]
+    pub async fn list_versions(
+        &self,
+        platform: Platform,
+        market_id: &str,
+    ) -> Result<Vec<ResearchVersion>, TerminalError> {
+        if let Some(ref storage) = self.storage {
+            storage.list_versions(platform, market_id).await
+        } else {
+            // No storage configured, return empty list
+            Ok(Vec::new())
+        }
+    }
+
+    /// Get a specific version of research
+    ///
+    /// The version_key should be the filename like "v1702389600000.json"
+    #[instrument(skip(self))]
+    pub async fn get_version(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        version_key: &str,
+    ) -> Result<Option<ResearchJob>, TerminalError> {
+        if let Some(ref storage) = self.storage {
+            storage.get_version(platform, market_id, version_key).await
+        } else {
+            // No storage configured
+            Ok(None)
+        }
+    }
+
+    // ========================================================================
+    // Chat Methods
+    // ========================================================================
+
+    /// Get chat history for a market's research
+    ///
+    /// Returns empty ChatHistory if no chat exists yet.
+    #[instrument(skip(self))]
+    pub async fn get_chat(
+        &self,
+        platform: Platform,
+        market_id: &str,
+    ) -> Result<ChatHistory, TerminalError> {
+        if let Some(ref storage) = self.storage {
+            storage.get_chat(platform, market_id).await
+        } else {
+            // No storage configured, return empty
+            Ok(ChatHistory::new())
+        }
+    }
+
+    /// Send a chat message and get a response
+    ///
+    /// For Phase 3, this returns a placeholder response.
+    /// Phase 4 will implement actual follow-up research.
+    #[instrument(skip(self))]
+    pub async fn send_chat_message(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        message: &str,
+    ) -> Result<ChatMessage, TerminalError> {
+        // Save user message
+        let user_msg = ChatMessage::user(message);
+        if let Some(ref storage) = self.storage {
+            storage
+                .append_message(platform, market_id, user_msg.clone())
+                .await?;
+        }
+
+        // Create placeholder assistant response
+        // Phase 4 will implement actual follow-up research logic
+        let assistant_msg = ChatMessage::assistant(
+            "Follow-up research coming in Phase 4. Your question has been saved and will be processed when this feature is fully implemented.",
+        );
+
+        // Save assistant message
+        if let Some(ref storage) = self.storage {
+            storage
+                .append_message(platform, market_id, assistant_msg.clone())
+                .await?;
+        }
+
+        info!(
+            "Chat message processed for {}/{}: {}",
+            platform, market_id, message
+        );
+
+        Ok(assistant_msg)
     }
 }
 
