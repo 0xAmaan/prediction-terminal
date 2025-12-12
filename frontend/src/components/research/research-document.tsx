@@ -2,17 +2,43 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, ExternalLink } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { cn } from "@/lib/utils";
 import type { SynthesizedReport, KeyFactor } from "@/lib/types";
 
 interface ResearchDocumentProps {
   report: SynthesizedReport;
+  isStreaming?: boolean;
+  streamingContent?: string | null;
 }
 
-export function ResearchDocument({ report }: ResearchDocumentProps) {
+export function ResearchDocument({ report, isStreaming = false, streamingContent }: ResearchDocumentProps) {
   return (
-    <div className="space-y-6">
+    <div className={cn("space-y-6", isStreaming && "animate-pulse-subtle")}>
+      {/* Streaming indicator */}
+      {isStreaming && (
+        <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/30 rounded-lg">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span className="text-sm text-primary">Updating research with new findings...</span>
+        </div>
+      )}
+
+      {/* Streaming content preview */}
+      {streamingContent && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              New Research Content
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="prose prose-invert prose-sm max-w-none">
+            <ReactMarkdown>{streamingContent}</ReactMarkdown>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Executive Summary */}
       <Card className="border-border/30">
         <CardHeader className="pb-2">
