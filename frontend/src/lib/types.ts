@@ -304,12 +304,13 @@ export interface KeyFactor {
 }
 
 export interface ResearchUpdate {
-  type: "status_changed" | "progress_update" | "completed" | "failed";
+  type: "status_changed" | "progress_update" | "completed" | "failed" | "followup_started" | "document_editing" | "followup_completed";
   job_id: string;
   status?: ResearchStatus;
   progress?: ResearchProgress;
   report?: SynthesizedReport;
   error?: string;
+  content_chunk?: string; // For document_editing streaming updates
 }
 
 // ============================================================================
