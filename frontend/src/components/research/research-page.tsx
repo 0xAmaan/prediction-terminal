@@ -17,7 +17,14 @@ interface ResearchPageProps {
 }
 
 export function ResearchPage({ platform, marketId, market }: ResearchPageProps) {
-  const { job, isLoading, error, startResearch } = useResearch();
+  const {
+    job,
+    isLoading,
+    error,
+    isFollowUpInProgress,
+    streamingContent,
+    startResearch,
+  } = useResearch();
 
   // Start research on mount if no job exists
   useEffect(() => {
@@ -69,7 +76,11 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
       <main className="flex-1 flex overflow-hidden">
         {/* Chat Panel */}
         <div className="w-2/5 border-r border-border/30 flex flex-col">
-          <ResearchChat platform={platform} marketId={marketId} />
+          <ResearchChat
+            platform={platform}
+            marketId={marketId}
+            isFollowUpInProgress={isFollowUpInProgress}
+          />
         </div>
 
         {/* Document Panel */}
@@ -141,8 +152,17 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
                     Cached
                   </Badge>
                 )}
+                {isFollowUpInProgress && (
+                  <Badge variant="outline" className="text-xs text-primary border-primary/50">
+                    Updating...
+                  </Badge>
+                )}
               </div>
-              <ResearchDocument report={job.report} />
+              <ResearchDocument
+                report={job.report}
+                isStreaming={isFollowUpInProgress}
+                streamingContent={streamingContent}
+              />
             </div>
           )}
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Loader2, User, Bot, AlertCircle } from "lucide-react";
+import { Send, Loader2, User, Bot, AlertCircle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -10,9 +10,16 @@ import type { ChatMessage } from "@/lib/types";
 interface ResearchChatProps {
   platform: string;
   marketId: string;
+  isFollowUpInProgress?: boolean;
+  disabled?: boolean;
 }
 
-export function ResearchChat({ platform, marketId }: ResearchChatProps) {
+export function ResearchChat({
+  platform,
+  marketId,
+  isFollowUpInProgress = false,
+  disabled = false,
+}: ResearchChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -191,8 +198,26 @@ export function ResearchChat({ platform, marketId }: ResearchChatProps) {
             <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
               <Bot className="h-4 w-4 text-muted-foreground" />
             </div>
-            <div className="bg-muted rounded-lg px-3 py-2">
+            <div className="bg-muted rounded-lg px-3 py-2 flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">
+                {isFollowUpInProgress ? "Researching..." : "Thinking..."}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Follow-up research in progress indicator (from WebSocket) */}
+        {isFollowUpInProgress && !isSending && (
+          <div className="flex gap-3">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+              <Search className="h-4 w-4 text-primary" />
+            </div>
+            <div className="bg-primary/10 border border-primary/30 rounded-lg px-3 py-2 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-sm text-primary">
+                Conducting follow-up research and updating document...
+              </span>
             </div>
           </div>
         )}
@@ -210,33 +235,41 @@ export function ResearchChat({ platform, marketId }: ResearchChatProps) {
 
       {/* Input area */}
       <div className="p-4 border-t border-border/30">
-        <div className="flex gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask a follow-up question..."
-            className="flex-1 min-h-[40px] max-h-[120px] px-3 py-2 text-sm bg-muted border border-border/50 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-            disabled={isSending}
-            rows={1}
-          />
-          <Button
-            size="icon"
-            onClick={handleSend}
-            disabled={!input.trim() || isSending}
-            className="flex-shrink-0"
-          >
-            {isSending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground mt-2">
-          Press Enter to send, Shift+Enter for new line
-        </p>
+        {disabled ? (
+          <div className="text-center py-2 text-muted-foreground text-sm">
+            Chat disabled while viewing historical version
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={isFollowUpInProgress ? "Research in progress..." : "Ask a follow-up question..."}
+                className="flex-1 min-h-[40px] max-h-[120px] px-3 py-2 text-sm bg-muted border border-border/50 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                disabled={isSending || isFollowUpInProgress}
+                rows={1}
+              />
+              <Button
+                size="icon"
+                onClick={handleSend}
+                disabled={!input.trim() || isSending || isFollowUpInProgress}
+                className="flex-shrink-0"
+              >
+                {isSending || isFollowUpInProgress ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Press Enter to send, Shift+Enter for new line
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
