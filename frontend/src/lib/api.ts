@@ -14,6 +14,8 @@ import type {
   NewsSearchParams,
   ArticleContent,
   ResearchJob,
+  ChatHistory,
+  ChatMessage,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -425,5 +427,48 @@ export const api = {
     }
 
     return response.json();
+  },
+
+  // ========================================================================
+  // Chat Methods
+  // ========================================================================
+
+  async getChatHistory(
+    platform: string,
+    marketId: string,
+  ): Promise<ChatHistory> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}/chat`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get chat history: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async sendChatMessage(
+    platform: string,
+    marketId: string,
+    message: string,
+  ): Promise<ChatMessage> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}/chat`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to send message: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.message;
   },
 };

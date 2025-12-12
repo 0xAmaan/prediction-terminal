@@ -311,3 +311,21 @@ export interface ResearchUpdate {
   report?: SynthesizedReport;
   error?: string;
 }
+
+// ============================================================================
+// Chat Types
+// ============================================================================
+
+export type ChatRole = "user" | "assistant";
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  created_at: string;
+  research_triggered: boolean;
+}
+
+export interface ChatHistory {
+  messages: ChatMessage[];
+}
