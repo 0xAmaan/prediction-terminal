@@ -84,3 +84,93 @@ pub enum ResearchUpdate {
         error: String,
     },
 }
+
+/// Metadata for a research version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchVersion {
+    /// The version key (filename like "v1702389600000.json")
+    pub key: String,
+    /// When this version was created
+    pub created_at: DateTime<Utc>,
+    /// Version number (1 = newest, increments for older versions)
+    #[serde(default)]
+    pub version_number: u32,
+}
+
+/// Response wrapper for list of versions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchVersionList {
+    pub versions: Vec<ResearchVersion>,
+}
+
+// ============================================================================
+// Chat Types
+// ============================================================================
+
+/// Role of a chat message sender
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    User,
+    Assistant,
+}
+
+/// A single chat message in the research conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    /// Unique message ID
+    pub id: String,
+    /// Who sent this message
+    pub role: ChatRole,
+    /// Message content
+    pub content: String,
+    /// When the message was created
+    pub created_at: DateTime<Utc>,
+    /// Whether this message triggered follow-up research
+    #[serde(default)]
+    pub research_triggered: bool,
+}
+
+impl ChatMessage {
+    /// Create a new user message
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            role: ChatRole::User,
+            content: content.into(),
+            created_at: Utc::now(),
+            research_triggered: false,
+        }
+    }
+
+    /// Create a new assistant message
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            role: ChatRole::Assistant,
+            content: content.into(),
+            created_at: Utc::now(),
+            research_triggered: false,
+        }
+    }
+}
+
+/// Chat history for a research session
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChatHistory {
+    pub messages: Vec<ChatMessage>,
+}
+
+impl ChatHistory {
+    /// Create empty chat history
+    pub fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+        }
+    }
+
+    /// Append a message to the history
+    pub fn append(&mut self, message: ChatMessage) {
+        self.messages.push(message);
+    }
+}
