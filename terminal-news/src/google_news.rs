@@ -302,8 +302,9 @@ fn get_context_terms(market_title_lower: &str) -> Vec<&'static str> {
 fn extract_key_terms(text: &str) -> Vec<String> {
     let mut terms = Vec::new();
 
-    // Stop words to filter out
+    // Stop words and overly specific terms to filter out
     let stop_words: std::collections::HashSet<&str> = [
+        // Question words
         "will",
         "what",
         "who",
@@ -312,6 +313,7 @@ fn extract_key_terms(text: &str) -> Vec<String> {
         "where",
         "how",
         "why",
+        // Articles and common words
         "the",
         "a",
         "an",
@@ -467,9 +469,49 @@ fn extract_key_terms(text: &str) -> Vec<String> {
             continue;
         }
 
-        // Skip date-like patterns (numbers, date ranges like "8-14", years like "2024")
+        // Skip date-like patterns (numbers, date ranges like "8-14")
         let is_date_like = clean.chars().all(|c| c.is_numeric() || c == '-');
         if is_date_like {
+            i += 1;
+            continue;
+        }
+
+        // Skip years (2024, 2025, 2026, etc.) - too specific for general news
+        if clean.len() == 4 && clean.chars().all(|c| c.is_numeric()) {
+            if let Ok(year) = clean.parse::<i32>() {
+                if year >= 2020 && year <= 2100 {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Skip year ranges (2025-26, 2024-25, etc.)
+        if clean.contains('-') && clean.len() <= 7 {
+            let parts: Vec<&str> = clean.split('-').collect();
+            if parts.len() == 2 {
+                let all_numeric = parts.iter().all(|p| p.chars().all(|c| c.is_numeric()));
+                if all_numeric {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+
+        // Skip prediction-specific terms that don't appear in news
+        let prediction_terms: std::collections::HashSet<&str> = [
+            "winner",
+            "champion", // Keep "championship" in important_terms
+            "announce",
+            "prediction",
+            "predict",
+            "odds",
+            "favorite",
+        ]
+        .into_iter()
+        .collect();
+
+        if prediction_terms.contains(lower.as_str()) {
             i += 1;
             continue;
         }
