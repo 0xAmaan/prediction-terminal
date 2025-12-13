@@ -294,6 +294,49 @@ export interface SynthesizedReport {
   key_factors: KeyFactor[];
   confidence_assessment: string;
   sources: string[];
+  trading_analysis?: TradingAnalysis;
+}
+
+// ============================================================================
+// Trading Analysis Types
+// ============================================================================
+
+export interface TradingAnalysis {
+  fair_value_low: number;
+  fair_value_high: number;
+  current_price: number;
+  implied_edge: number;
+  estimate_confidence: EstimateConfidence;
+  fair_value_reasoning: string;
+  catalysts: Catalyst[];
+  resolution_analysis: ResolutionAnalysis;
+  contrarian_case: ContrarianAnalysis;
+}
+
+export type EstimateConfidence = "high" | "medium" | "low";
+
+export interface Catalyst {
+  date: string | null;
+  event: string;
+  expected_impact: CatalystImpact;
+  direction_if_positive: Direction | null;
+}
+
+export type CatalystImpact = "high" | "medium" | "low";
+export type Direction = "bullish" | "bearish";
+
+export interface ResolutionAnalysis {
+  resolution_summary: string;
+  resolution_source: string | null;
+  ambiguity_flags: string[];
+  historical_edge_cases: string[];
+}
+
+export interface ContrarianAnalysis {
+  consensus_view: string;
+  contrarian_case: string;
+  mispricing_reasons: string[];
+  contrarian_triggers: string[];
 }
 
 export interface ReportSection {
