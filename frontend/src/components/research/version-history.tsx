@@ -12,6 +12,7 @@ interface VersionHistoryProps {
   selectedVersion: string | null; // null = current
   onVersionChange: (versionKey: string | null) => void;
   disabled?: boolean;
+  refreshKey?: number; // Change this to trigger a refresh
 }
 
 export function VersionHistory({
@@ -20,6 +21,7 @@ export function VersionHistory({
   selectedVersion,
   onVersionChange,
   disabled = false,
+  refreshKey = 0,
 }: VersionHistoryProps) {
   const [versions, setVersions] = useState<ResearchVersion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +35,10 @@ export function VersionHistory({
         setIsLoading(true);
         setError(null);
         const data = await api.getVersions(platform, marketId);
-        setVersions(data.versions);
+        // Skip the first (newest) version since it always corresponds to "Current"
+        // Every save creates both current.json AND a versioned file at the same time
+        const historicalVersions = data.versions.slice(1);
+        setVersions(historicalVersions);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load versions");
       } finally {
@@ -42,7 +47,7 @@ export function VersionHistory({
     };
 
     fetchVersions();
-  }, [platform, marketId]);
+  }, [platform, marketId, refreshKey]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

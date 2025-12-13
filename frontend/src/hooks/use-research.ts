@@ -171,6 +171,19 @@ export function useResearch() {
     }
   }, [job?.id]);
 
+  // Refresh by platform/marketId - fetches from S3 cache
+  // Use this after follow-up research since backend creates new job IDs
+  const refreshByMarket = useCallback(async (platform: string, marketId: string) => {
+    try {
+      const updated = await api.getResearchByMarket(platform, marketId);
+      if (updated) {
+        setJob(updated);
+      }
+    } catch (e) {
+      console.error("Failed to refresh by market:", e);
+    }
+  }, []);
+
   const reset = useCallback(() => {
     setJob(null);
     setError(null);
@@ -194,6 +207,7 @@ export function useResearch() {
     streamingContent,
     startResearch,
     refreshJob,
+    refreshByMarket,
     reset,
     updateReport,
   };

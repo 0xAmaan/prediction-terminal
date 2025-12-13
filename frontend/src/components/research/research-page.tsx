@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -27,12 +27,52 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
     isFollowUpInProgress,
     streamingContent,
     startResearch,
+    refreshByMarket,
   } = useResearch();
 
   // Version state
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [historicalReport, setHistoricalReport] = useState<SynthesizedReport | null>(null);
   const [isLoadingVersion, setIsLoadingVersion] = useState(false);
+
+  // Ref for document panel scrolling
+  const documentPanelRef = useRef<HTMLDivElement>(null);
+
+  // Scroll document panel to top
+  const handleScrollToTop = useCallback(() => {
+    documentPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  // State to track version refresh
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
+
+  // Handle when chat triggers research - refresh the job to get updated report
+  const handleResearchTriggered = useCallback(async () => {
+    // Poll for the updated report using platform/marketId
+    // (backend creates new job IDs for follow-up research, so we can't use job.id)
+    const pollForUpdate = async () => {
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds max wait
+      const pollInterval = 1000; // 1 second
+
+      while (attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        try {
+          await refreshByMarket(platform, marketId);
+          // Refresh version history
+          setVersionRefreshKey((prev) => prev + 1);
+          // Scroll to top to show updated content
+          handleScrollToTop();
+          return;
+        } catch (e) {
+          console.error("Failed to poll for update:", e);
+        }
+        attempts++;
+      }
+    };
+
+    pollForUpdate();
+  }, [platform, marketId, refreshByMarket, handleScrollToTop]);
 
   // Start research on mount if no job exists
   useEffect(() => {
@@ -81,9 +121,9 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
   const displayReport = isViewingHistorical ? historicalReport : job?.report;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-xl sticky top-0 z-50">
+      <header className="flex-shrink-0 border-b border-border/50 bg-card/50 backdrop-blur-xl z-50">
         <div className="px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link
@@ -105,24 +145,25 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
       </header>
 
       {/* Market Title */}
-      <div className="px-8 py-4 border-b border-border/30">
+      <div className="flex-shrink-0 px-8 py-4 border-b border-border/30">
         <h2 className="text-xl font-semibold">{market?.title || job?.market_title || "Loading..."}</h2>
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex min-h-0">
         {/* Chat Panel */}
-        <div className="w-2/5 border-r border-border/30 flex flex-col">
+        <div className="w-2/5 border-r border-border/30 flex flex-col min-h-0">
           <ResearchChat
             platform={platform}
             marketId={marketId}
             isFollowUpInProgress={isFollowUpInProgress}
             disabled={isViewingHistorical}
+            onResearchTriggered={handleResearchTriggered}
           />
         </div>
 
         {/* Document Panel */}
-        <div className="w-3/5 p-6 overflow-y-auto">
+        <div ref={documentPanelRef} className="w-3/5 flex flex-col min-h-0 overflow-y-auto p-6">
           {/* Loading State - Skeleton UI */}
           {showLoading && (
             <div className="space-y-6">
@@ -261,6 +302,8 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
                 selectedVersion={selectedVersion}
                 onVersionChange={handleVersionChange}
                 isViewingHistorical={isViewingHistorical}
+                onScrollToTop={handleScrollToTop}
+                versionRefreshKey={versionRefreshKey}
               />
             </div>
           )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, Lock } from "lucide-react";
@@ -17,6 +18,8 @@ interface ResearchDocumentProps {
   selectedVersion?: string | null;
   onVersionChange?: (versionKey: string | null) => void;
   isViewingHistorical?: boolean;
+  onScrollToTop?: () => void;
+  versionRefreshKey?: number;
 }
 
 export function ResearchDocument({
@@ -28,8 +31,43 @@ export function ResearchDocument({
   selectedVersion,
   onVersionChange,
   isViewingHistorical = false,
+  onScrollToTop,
+  versionRefreshKey = 0,
 }: ResearchDocumentProps) {
   const showVersionHistory = platform && marketId && onVersionChange;
+  const streamingRef = useRef<HTMLDivElement>(null);
+  const executiveSummaryRef = useRef<HTMLDivElement>(null);
+  const [flashKey, setFlashKey] = useState(0);
+  const [contentFlash, setContentFlash] = useState(false);
+
+  // Auto-scroll to streaming content when it appears and flash it
+  useEffect(() => {
+    if (streamingContent && streamingRef.current) {
+      streamingRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      setFlashKey((prev) => prev + 1);
+    }
+  }, [streamingContent]);
+
+  // Flash and scroll to top when streaming starts
+  useEffect(() => {
+    if (isStreaming && onScrollToTop) {
+      onScrollToTop();
+    }
+  }, [isStreaming, onScrollToTop]);
+
+  // Flash content when version refresh key changes (after chat triggers research)
+  useEffect(() => {
+    if (versionRefreshKey > 0) {
+      setContentFlash(true);
+      // Remove flash class after animation completes
+      const timer = setTimeout(() => setContentFlash(false), 1500);
+      // Scroll to executive summary
+      if (executiveSummaryRef.current) {
+        executiveSummaryRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      return () => clearTimeout(timer);
+    }
+  }, [versionRefreshKey]);
 
   return (
     <div className={cn("space-y-6", isStreaming && "animate-pulse-subtle")}>
@@ -42,6 +80,7 @@ export function ResearchDocument({
             selectedVersion={selectedVersion ?? null}
             onVersionChange={onVersionChange}
             disabled={isStreaming}
+            refreshKey={versionRefreshKey}
           />
           {isViewingHistorical && (
             <Badge variant="outline" className="flex items-center gap-1.5 text-amber-400 border-amber-500/30 bg-amber-500/10">
@@ -61,30 +100,34 @@ export function ResearchDocument({
 
       {/* Streaming content preview */}
       {streamingContent && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              New Research Content
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown>{streamingContent}</ReactMarkdown>
-          </CardContent>
-        </Card>
+        <div ref={streamingRef} key={flashKey} className="animate-content-flash">
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                New Research Content
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown>{streamingContent}</ReactMarkdown>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Executive Summary */}
-      <Card className="border-border/30">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Executive Summary</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-            {report.executive_summary}
-          </p>
-        </CardContent>
-      </Card>
+      <div ref={executiveSummaryRef} className={cn(contentFlash && "animate-content-flash")}>
+        <Card className="border-border/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Executive Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
+              {report.executive_summary}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Key Factors */}
       <Card className="border-border/30">
