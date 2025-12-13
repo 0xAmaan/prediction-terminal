@@ -531,6 +531,11 @@ const MarketPage = () => {
     return <ErrorState message={error?.message || "Market not found"} />;
   }
 
+  // Update document title with market name
+  if (typeof document !== "undefined" && market.title) {
+    document.title = `${market.title} | Prediction Terminal`;
+  }
+
   // Merge WebSocket data with REST data
   const mergedOrderBook = wsOrderBook
     ? {
