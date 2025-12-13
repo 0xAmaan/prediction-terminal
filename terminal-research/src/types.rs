@@ -296,3 +296,102 @@ pub struct OrderBookSummary {
     /// Total $ within 10% of best ask
     pub ask_depth_10pct: f64,
 }
+
+// ============================================================================
+// Trading Analysis Types
+// ============================================================================
+
+/// Trading-focused analysis that accompanies the research report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradingAnalysis {
+    /// Estimated fair probability range low bound (0.0 to 1.0)
+    pub fair_value_low: f64,
+    /// Estimated fair probability range high bound (0.0 to 1.0)
+    pub fair_value_high: f64,
+    /// Current market price for comparison (0.0 to 1.0)
+    pub current_price: f64,
+    /// Calculated edge: midpoint of fair value minus current price
+    /// Positive = market underpriced (buy signal), Negative = overpriced (sell signal)
+    pub implied_edge: f64,
+    /// How confident is the AI in this fair value estimate
+    pub estimate_confidence: EstimateConfidence,
+    /// Reasoning for the fair value estimate
+    pub fair_value_reasoning: String,
+    /// Upcoming events that could move the market
+    pub catalysts: Vec<Catalyst>,
+    /// Analysis of resolution rules and potential issues
+    pub resolution_analysis: ResolutionAnalysis,
+    /// The case against the current market consensus
+    pub contrarian_case: ContrarianAnalysis,
+}
+
+/// Confidence level for fair value estimates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EstimateConfidence {
+    /// Strong evidence, narrow range
+    High,
+    /// Decent evidence, moderate uncertainty
+    Medium,
+    /// Limited evidence, wide range, speculative
+    Low,
+}
+
+/// An upcoming event that could move the market
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Catalyst {
+    /// When the event occurs (if known)
+    pub date: Option<String>,
+    /// Description of the event
+    pub event: String,
+    /// How much could this move the market
+    pub expected_impact: CatalystImpact,
+    /// Which direction if the event is favorable
+    pub direction_if_positive: Option<Direction>,
+}
+
+/// Expected impact level of a catalyst
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalystImpact {
+    /// Could move market 10%+
+    High,
+    /// Could move market 5-10%
+    Medium,
+    /// Could move market 1-5%
+    Low,
+}
+
+/// Market direction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    Bullish,
+    Bearish,
+}
+
+/// Analysis of market resolution criteria
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolutionAnalysis {
+    /// Plain English summary of how this market resolves
+    pub resolution_summary: String,
+    /// The exact source/criteria used for resolution
+    pub resolution_source: Option<String>,
+    /// Potential ambiguities or edge cases
+    pub ambiguity_flags: Vec<String>,
+    /// Historical edge cases from similar markets (if any)
+    pub historical_edge_cases: Vec<String>,
+}
+
+/// Analysis of contrarian viewpoints
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContrarianAnalysis {
+    /// What the market consensus appears to be
+    pub consensus_view: String,
+    /// The case for why consensus might be wrong
+    pub contrarian_case: String,
+    /// Specific reasons the crowd could be mispricing
+    pub mispricing_reasons: Vec<String>,
+    /// What would need to happen for contrarian view to win
+    pub contrarian_triggers: Vec<String>,
+}
