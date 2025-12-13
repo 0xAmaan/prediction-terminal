@@ -1,6 +1,10 @@
 "use client";
 
-import { Newspaper, Sparkles, ExternalLink, Clock } from "lucide-react";
+import { Newspaper, ExternalLink, Clock } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import type { Platform, NewsItem as APINewsItem } from "@/lib/types";
+import { formatDistanceToNow } from "date-fns";
 
 // Fey color tokens
 const fey = {
@@ -20,149 +24,100 @@ const fey = {
   border: "rgba(255, 255, 255, 0.06)",
 };
 
-export interface NewsItem {
-  id: string;
-  title: string;
-  source: string;
-  timestamp: string;
-  url?: string;
-  sentiment?: "positive" | "negative" | "neutral";
-}
-
 interface NewsFeedCardProps {
+  platform: Platform;
+  marketId: string;
   marketTitle?: string;
-  items?: NewsItem[];
-  isPlaceholder?: boolean;
 }
 
-// Mock news items for demonstration
-const mockNewsItems: NewsItem[] = [
-  {
-    id: "1",
-    title: "Market activity surges as deadline approaches",
-    source: "Market Analysis",
-    timestamp: "2 hours ago",
-    sentiment: "neutral",
-  },
-  {
-    id: "2",
-    title: "New data suggests shifting probabilities",
-    source: "Research Digest",
-    timestamp: "5 hours ago",
-    sentiment: "positive",
-  },
-  {
-    id: "3",
-    title: "Expert commentary on resolution criteria",
-    source: "Industry Report",
-    timestamp: "1 day ago",
-    sentiment: "neutral",
-  },
-];
+const NewsItemRow = ({ item }: { item: APINewsItem }) => {
+  const timestamp = formatDistanceToNow(new Date(item.published_at), {
+    addSuffix: true,
+  });
 
-const getSentimentColor = (sentiment?: NewsItem["sentiment"]) => {
-  switch (sentiment) {
-    case "positive":
-      return fey.teal;
-    case "negative":
-      return fey.red;
-    default:
-      return fey.grey500;
-  }
-};
-
-const NewsItemRow = ({ item }: { item: NewsItem }) => (
-  <div
-    className="px-4 py-3 transition-colors hover:bg-white/[0.02] cursor-pointer"
-    style={{ borderBottom: `1px solid ${fey.border}` }}
-  >
-    <div className="flex items-start gap-3">
-      {/* Sentiment indicator */}
-      <div
-        className="w-1 h-full min-h-[40px] rounded-full flex-shrink-0 mt-0.5"
-        style={{ backgroundColor: getSentimentColor(item.sentiment) }}
-      />
-
-      <div className="flex-1 min-w-0">
-        {/* Title */}
-        <p
-          className="text-sm font-medium leading-snug mb-1 line-clamp-2"
-          style={{ color: fey.grey100 }}
-        >
-          {item.title}
-        </p>
-
-        {/* Meta */}
-        <div className="flex items-center gap-2 text-xs" style={{ color: fey.grey500 }}>
-          <span
-            className="px-1.5 py-0.5 rounded"
-            style={{ backgroundColor: `${fey.grey500}20` }}
+  return (
+    <a
+      href={item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="px-4 py-3 transition-colors hover:bg-white/[0.02] cursor-pointer block"
+      style={{ borderBottom: `1px solid ${fey.border}` }}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          {/* Title */}
+          <p
+            className="text-sm font-medium leading-snug mb-1 line-clamp-2"
+            style={{ color: fey.grey100 }}
           >
-            {item.source}
-          </span>
-          <span className="flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {item.timestamp}
-          </span>
-        </div>
-      </div>
+            {item.title}
+          </p>
 
-      {/* External link icon */}
-      {item.url && (
+          {/* Meta */}
+          <div className="flex items-center gap-2 text-xs" style={{ color: fey.grey500 }}>
+            <span
+              className="px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: `${fey.grey500}20` }}
+            >
+              {item.source.name}
+            </span>
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {timestamp}
+            </span>
+          </div>
+        </div>
+
+        {/* External link icon */}
         <ExternalLink
           className="h-4 w-4 flex-shrink-0 opacity-50 hover:opacity-100 transition-opacity"
           style={{ color: fey.grey500 }}
         />
-      )}
+      </div>
+    </a>
+  );
+};
+
+const LoadingState = () => (
+  <div className="p-8 text-center">
+    <div className="animate-pulse">
+      <div
+        className="h-12 w-12 rounded-full mx-auto mb-4"
+        style={{ backgroundColor: `${fey.grey500}20` }}
+      />
+      <div
+        className="h-4 w-32 rounded mx-auto mb-2"
+        style={{ backgroundColor: `${fey.grey500}20` }}
+      />
+      <div
+        className="h-3 w-48 rounded mx-auto"
+        style={{ backgroundColor: `${fey.grey500}20` }}
+      />
     </div>
   </div>
 );
 
-const PlaceholderState = () => (
+const EmptyState = () => (
   <div className="p-8 text-center">
-    <div
-      className="inline-flex items-center justify-center w-12 h-12 rounded-full mb-4"
-      style={{ backgroundColor: `${fey.purple}15` }}
-    >
-      <Sparkles className="h-6 w-6" style={{ color: fey.purple }} />
-    </div>
-
-    <h4
-      className="text-sm font-semibold mb-2"
-      style={{ color: fey.grey100 }}
-    >
-      AI-Powered News Aggregation
-    </h4>
-    <p
-      className="text-sm mb-4 max-w-[280px] mx-auto leading-relaxed"
-      style={{ color: fey.grey500 }}
-    >
-      This section will surface relevant news articles and events that may impact market outcomes.
+    <p className="text-sm" style={{ color: fey.grey500 }}>
+      No news articles found for this market.
     </p>
-
-    <div
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
-      style={{
-        backgroundColor: `${fey.skyBlue}15`,
-        color: fey.skyBlue,
-      }}
-    >
-      <div
-        className="w-1.5 h-1.5 rounded-full animate-pulse"
-        style={{ backgroundColor: fey.skyBlue }}
-      />
-      Coming Soon
-    </div>
   </div>
 );
 
 export const NewsFeedCard = ({
+  platform,
+  marketId,
   marketTitle,
-  items,
-  isPlaceholder = true,
 }: NewsFeedCardProps) => {
-  // Use mock items if no items provided and not in placeholder mode
-  const displayItems = items ?? (isPlaceholder ? [] : mockNewsItems);
+  // Fetch market-specific news
+  const { data: newsData, isLoading } = useQuery({
+    queryKey: ["market-news", platform, marketId],
+    queryFn: () => api.getMarketNews(platform, marketId, 5),
+    refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
+  });
+
+  const displayItems = newsData?.items ?? [];
 
   return (
     <div
@@ -192,32 +147,21 @@ export const NewsFeedCard = ({
               color: fey.grey500,
             }}
           >
-            {displayItems.length} articles
+            {displayItems.length}
           </span>
         )}
       </div>
 
       {/* Content */}
-      {isPlaceholder || displayItems.length === 0 ? (
-        <PlaceholderState />
+      {isLoading ? (
+        <LoadingState />
+      ) : displayItems.length === 0 ? (
+        <EmptyState />
       ) : (
         <div>
-          {displayItems.slice(0, 5).map((item) => (
+          {displayItems.map((item) => (
             <NewsItemRow key={item.id} item={item} />
           ))}
-
-          {/* View All Link */}
-          {displayItems.length > 5 && (
-            <div className="px-4 py-3">
-              <button
-                className="text-sm font-medium flex items-center gap-1 transition-colors hover:opacity-80"
-                style={{ color: fey.skyBlue }}
-              >
-                View all {displayItems.length} articles
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -281,9 +281,13 @@ export const MultiOutcomeOverviewView = ({
             />
           </motion.div>
 
-          {/* 7. News Feed (placeholder) */}
+          {/* 7. News Feed */}
           <motion.div variants={staggerItem}>
-            <NewsFeedCard marketTitle={market.title} isPlaceholder={true} />
+            <NewsFeedCard
+              platform={market.platform}
+              marketId={market.id}
+              marketTitle={market.title}
+            />
           </motion.div>
         </motion.div>
       </div>

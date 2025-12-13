@@ -272,11 +272,12 @@ export const OverviewView = ({
             />
           </motion.div>
 
-          {/* 6. News Feed (placeholder) */}
+          {/* 6. News Feed */}
           <motion.div variants={staggerItem}>
             <NewsFeedCard
+              platform={market.platform}
+              marketId={market.id}
               marketTitle={market.title}
-              isPlaceholder={true}
             />
           </motion.div>
         </motion.div>
