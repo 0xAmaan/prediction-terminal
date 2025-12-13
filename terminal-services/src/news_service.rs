@@ -495,7 +495,7 @@ impl NewsService {
 
                 // If Google News returned no results, try fallbacks
                 if filtered.is_empty() {
-                    info!("Google News returned 0 results, trying fallbacks...");
+                    info!("Google News returned 0 results after filtering, trying fallbacks...");
 
                     // Try Exa as fallback if configured
                     if self.exa.is_some() {
@@ -506,27 +506,22 @@ impl NewsService {
                         {
                             Ok(exa_results) if !exa_results.is_empty() => exa_results,
                             Ok(_) | Err(_) => {
-                                // Final fallback: RSS search
-                                info!("Final fallback: RSS search...");
-                                self.fallback_rss_search(
-                                    market_title,
-                                    market_id,
-                                    limit,
-                                    outcome_titles.as_ref(),
-                                )
-                                .await?
+                                // Don't use RSS fallback for market-specific news
+                                // General RSS feeds won't have specific market news
+                                info!(
+                                    "No results from Google News or Exa for '{}'. Skipping RSS fallback (not relevant for specific markets).",
+                                    market_title
+                                );
+                                vec![]
                             }
                         }
                     } else {
-                        // No Exa, go straight to RSS fallback
-                        info!("No Exa configured, using RSS fallback...");
-                        self.fallback_rss_search(
-                            market_title,
-                            market_id,
-                            limit,
-                            outcome_titles.as_ref(),
-                        )
-                        .await?
+                        // No Exa configured - don't use RSS fallback for market news
+                        info!(
+                            "No Exa configured and Google News returned 0 results for '{}'. Skipping RSS fallback (not relevant for specific markets).",
+                            market_title
+                        );
+                        vec![]
                     }
                 } else {
                     filtered
@@ -542,30 +537,32 @@ impl NewsService {
                         .try_exa_search(market_title, market_id, limit, outcome_titles.as_ref())
                         .await
                     {
-                        Ok(exa_results) => exa_results,
+                        Ok(exa_results) if !exa_results.is_empty() => exa_results,
+                        Ok(_) => {
+                            // Exa returned 0 results
+                            info!(
+                                "Exa.ai returned 0 results for '{}'. Skipping RSS fallback (not relevant for specific markets).",
+                                market_title
+                            );
+                            vec![]
+                        }
                         Err(exa_err) => {
                             info!("Exa.ai also failed: {}", exa_err);
-                            // Final fallback: RSS search
-                            info!("Final fallback: RSS search...");
-                            self.fallback_rss_search(
-                                market_title,
-                                market_id,
-                                limit,
-                                outcome_titles.as_ref(),
-                            )
-                            .await?
+                            // Don't use RSS fallback for market-specific news
+                            info!(
+                                "No results from Google News or Exa for '{}'. Skipping RSS fallback (not relevant for specific markets).",
+                                market_title
+                            );
+                            vec![]
                         }
                     }
                 } else {
-                    // No Exa, go straight to RSS fallback
-                    info!("No Exa configured, using RSS fallback...");
-                    self.fallback_rss_search(
-                        market_title,
-                        market_id,
-                        limit,
-                        outcome_titles.as_ref(),
-                    )
-                    .await?
+                    // No Exa, don't use RSS fallback for market news
+                    info!(
+                        "Google News failed and no Exa configured for '{}'. Skipping RSS fallback (not relevant for specific markets).",
+                        market_title
+                    );
+                    vec![]
                 }
             }
         };
