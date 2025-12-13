@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, ArrowLeft, CheckCircle, XCircle } from "lucide-react";
@@ -8,7 +8,8 @@ import Link from "next/link";
 import { useResearch } from "@/hooks/use-research";
 import { ResearchDocument } from "./research-document";
 import { ResearchChat } from "./research-chat";
-import type { PredictionMarket } from "@/lib/types";
+import { api } from "@/lib/api";
+import type { PredictionMarket, SynthesizedReport } from "@/lib/types";
 
 interface ResearchPageProps {
   platform: string;
@@ -26,12 +27,42 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
     startResearch,
   } = useResearch();
 
+  // Version state
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [historicalReport, setHistoricalReport] = useState<SynthesizedReport | null>(null);
+  const [isLoadingVersion, setIsLoadingVersion] = useState(false);
+
   // Start research on mount if no job exists
   useEffect(() => {
     if (!job && !isLoading && !error) {
       startResearch(platform, marketId);
     }
   }, [job, isLoading, error, platform, marketId, startResearch]);
+
+  // Handle version change
+  const handleVersionChange = useCallback(async (versionKey: string | null) => {
+    setSelectedVersion(versionKey);
+
+    if (versionKey === null) {
+      // Switching back to current version
+      setHistoricalReport(null);
+      return;
+    }
+
+    // Fetch historical version
+    setIsLoadingVersion(true);
+    try {
+      const versionData = await api.getVersion(platform, marketId, versionKey);
+      setHistoricalReport(versionData.report ?? null);
+    } catch (e) {
+      console.error("Failed to load version:", e);
+      // On error, reset to current
+      setSelectedVersion(null);
+      setHistoricalReport(null);
+    } finally {
+      setIsLoadingVersion(false);
+    }
+  }, [platform, marketId]);
 
   const progressPercent =
     job && job.progress.total_steps > 0
@@ -42,6 +73,10 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
   const isFailed = job?.status === "failed";
   const isRunning = job && !isComplete && !isFailed;
   const showLoading = !job && !error;
+
+  // Determine which report to display
+  const isViewingHistorical = selectedVersion !== null;
+  const displayReport = isViewingHistorical ? historicalReport : job?.report;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -80,6 +115,7 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
             platform={platform}
             marketId={marketId}
             isFollowUpInProgress={isFollowUpInProgress}
+            disabled={isViewingHistorical}
           />
         </div>
 
@@ -141,27 +177,42 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
             </div>
           )}
 
+          {/* Version Loading State */}
+          {isLoadingVersion && (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+                <p className="text-muted-foreground">Loading version...</p>
+              </div>
+            </div>
+          )}
+
           {/* Report Display */}
-          {isComplete && job?.report && (
+          {isComplete && displayReport && !isLoadingVersion && (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-5 w-5 text-green-500" />
                 <span className="text-sm font-medium text-green-400">Research Complete</span>
-                {job.cached && (
+                {job.cached && !isViewingHistorical && (
                   <Badge variant="outline" className="text-xs">
                     Cached
                   </Badge>
                 )}
-                {isFollowUpInProgress && (
+                {isFollowUpInProgress && !isViewingHistorical && (
                   <Badge variant="outline" className="text-xs text-primary border-primary/50">
                     Updating...
                   </Badge>
                 )}
               </div>
               <ResearchDocument
-                report={job.report}
-                isStreaming={isFollowUpInProgress}
-                streamingContent={streamingContent}
+                report={displayReport}
+                isStreaming={isFollowUpInProgress && !isViewingHistorical}
+                streamingContent={isViewingHistorical ? null : streamingContent}
+                platform={platform}
+                marketId={marketId}
+                selectedVersion={selectedVersion}
+                onVersionChange={handleVersionChange}
+                isViewingHistorical={isViewingHistorical}
               />
             </div>
           )}
