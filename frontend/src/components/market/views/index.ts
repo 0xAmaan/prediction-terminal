@@ -12,4 +12,4 @@ export {
 // Overview components (for direct access if needed)
 export { ResolutionStrategyCard } from "../overview/resolution-strategy-card";
 export { HistoricalAnalysisCard } from "../overview/historical-analysis-card";
-export { NewsFeedCard, type NewsItem } from "../overview/news-feed-card";
+export { NewsFeedCard } from "../overview/news-feed-card";

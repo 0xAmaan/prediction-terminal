@@ -9,6 +9,7 @@ authors = ["Amaan"]
 terminal-core = { workspace = true }
 terminal-kalshi = { workspace = true }
 terminal-polymarket = { workspace = true }
+terminal-news = { workspace = true }
 
 # Async
 tokio = { workspace = true, features = ["sync"] }

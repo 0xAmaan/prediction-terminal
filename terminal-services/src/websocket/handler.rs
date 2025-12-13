@@ -341,6 +341,39 @@ impl WebSocketState {
             },
         );
     }
+
+    /// Broadcast a global news item to all subscribed clients
+    pub fn broadcast_global_news(&self, news_item: terminal_core::NewsItem) {
+        // Global news doesn't have a specific market/platform key
+        // For now, we'll skip broadcasting global news via WebSocket
+        // It's primarily fetched via REST API
+        let _ = news_item; // Suppress unused variable warning
+    }
+
+    /// Broadcast market-specific news to subscribed clients
+    pub fn broadcast_market_news(
+        &self,
+        platform: terminal_core::Platform,
+        market_id: String,
+        news_item: terminal_core::NewsItem,
+    ) {
+        let key = SubscriptionKey {
+            platform,
+            market_id: market_id.clone(),
+            channel: terminal_core::SubscriptionChannel::News,
+        };
+
+        self.subscriptions.broadcast(
+            key,
+            ServerMessage::NewsUpdate {
+                feed: terminal_core::NewsFeed {
+                    items: vec![news_item],
+                    total_count: 1,
+                    next_cursor: None,
+                },
+            },
+        );
+    }
 }
 
 impl std::fmt::Debug for WebSocketState {

@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::{OrderBookLevel, Platform, Trade};
+use crate::{NewsFeed, OrderBookLevel, Platform, Trade};
 
 // ============================================================================
 // Client -> Server Messages
@@ -117,6 +117,10 @@ pub enum ServerMessage {
         market_id: String,
         trade: Trade,
     },
+    /// News update for a market
+    NewsUpdate {
+        feed: NewsFeed,
+    },
     /// Error message
     Error {
         code: ErrorCode,
@@ -196,6 +200,7 @@ pub enum SubscriptionChannel {
     Price,
     OrderBook,
     Trades,
+    News,
 }
 
 impl From<&SubscriptionType> for SubscriptionKey {

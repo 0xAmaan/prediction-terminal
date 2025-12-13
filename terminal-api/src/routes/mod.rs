@@ -2,6 +2,7 @@
 
 mod health;
 mod markets;
+mod news;
 pub mod ws;
 
 use axum::Router;
@@ -11,6 +12,7 @@ use crate::AppState;
 pub fn api_routes() -> Router<AppState> {
     Router::new()
         .merge(markets::routes())
+        .merge(news::routes())
         .merge(health::routes())
 }
 

@@ -31,6 +31,7 @@ pub struct AppState {
     pub trade_collector: Arc<TradeCollector>,
     pub aggregator: Arc<MarketDataAggregator>,
     pub market_stats_service: Arc<MarketStatsService>,
+    pub news_service: Option<Arc<terminal_services::NewsService>>,
 }
 
 #[tokio::main]
@@ -162,6 +163,15 @@ async fn main() -> anyhow::Result<()> {
         aggregator_for_events.process_subscription_events(subscription_rx).await;
     });
 
+    // Initialize news service
+    // EXA_API_KEY and FIRECRAWL_API_KEY are optional - RSS feeds work without them
+    let exa_api_key = std::env::var("EXA_API_KEY").ok();
+    let firecrawl_api_key = std::env::var("FIRECRAWL_API_KEY").ok();
+    let news_config = terminal_services::news_service::NewsServiceConfig::default();
+    let news_service = terminal_services::NewsService::new(exa_api_key, firecrawl_api_key, news_config);
+    let news_service = Some(Arc::new(news_service));
+    info!("News service initialized (RSS feeds + Google News)");
+
     // Create app state
     let state = AppState {
         market_cache,
@@ -172,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
         trade_collector,
         aggregator,
         market_stats_service,
+        news_service,
     };
 
     // Configure CORS for frontend

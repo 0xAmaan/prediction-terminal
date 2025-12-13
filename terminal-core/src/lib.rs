@@ -4,6 +4,7 @@
 //! including market representations, positions, and platform abstractions.
 
 pub mod market;
+pub mod news;
 pub mod platform;
 pub mod position;
 pub mod error;
@@ -13,6 +14,7 @@ pub use market::{
     MarketStatus, OrderBook, OrderBookLevel, PredictionMarket, PriceCandle, PriceHistory,
     PriceInterval, Trade, TradeHistory, TradeOutcome, TradeSide, UnifiedMarket,
 };
+pub use news::{MarketNewsContext, NewsFeed, NewsItem, NewsSearchParams, NewsSource};
 pub use platform::Platform;
 pub use position::{Balance, Portfolio, Position};
 pub use error::TerminalError;

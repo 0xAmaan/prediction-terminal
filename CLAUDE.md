@@ -55,9 +55,10 @@ The workspace contains two ecosystems:
 - `barter-integration/` - REST/WebSocket framework
 
 **Terminal Ecosystem** (prediction market app):
-- `terminal-core/` - Shared types (Platform, PredictionMarket, OrderBook, Trade, WebSocket messages)
+- `terminal-core/` - Shared types (Platform, PredictionMarket, OrderBook, Trade, News, WebSocket messages)
 - `terminal-kalshi/` - Kalshi API client (REST + WebSocket, RSA-PSS auth)
 - `terminal-polymarket/` - Polymarket API client (REST + WebSocket, HMAC auth)
+- `terminal-news/` - News aggregation (RSS feeds, Google News, Exa.ai, Firecrawl)
 - `terminal-services/` - Business logic layer:
   - `MarketService` - Unified market data access
   - `MarketDataAggregator` - WebSocket connections to exchanges, broadcasts to frontend
@@ -65,6 +66,7 @@ The workspace contains two ecosystems:
   - `TradeStorage` - SQLite persistence for trades
   - `CandleService` - Price history/candlestick generation
   - `MarketCache` - SQLite caching for market data
+  - `NewsService` - News aggregation with caching and relevance filtering
   - `WebSocketState` - Frontend client subscription management
 - `terminal-api/` - Axum HTTP server + WebSocket endpoint
 
@@ -74,6 +76,11 @@ The workspace contains two ecosystems:
 2. **WebSocket Real-time**:
    - Exchange WebSockets → `MarketDataAggregator` → `WebSocketState` → Frontend clients
    - Frontend subscribes via `/ws` endpoint with JSON messages
+3. **News Aggregation**:
+   - **Global news**: RSS feeds (25+ sources) with round-robin diversification
+   - **Market-specific news**: Google News RSS (primary) → Exa.ai (fallback) → RSS entity matching
+   - Caching: 60s for RSS, 5 min for good results, 1 min for empty results
+   - Relevance filtering: Geography-based + multi-term matching + title length validation
 
 ### Frontend Structure (Next.js 16 + React 19)
 
@@ -104,7 +111,9 @@ frontend/src/
 - `GET /api/markets/:platform/:id/orderbook` - Order book
 - `GET /api/markets/:platform/:id/trades` - Recent trades
 - `GET /api/markets/:platform/:id/history` - Price candles
-- `WS /ws` - Real-time subscriptions (orderbook, trades, market updates)
+- `GET /api/markets/:platform/:id/news` - Market-specific news (Google News + filtering)
+- `GET /api/news` - Global news feed (RSS with round-robin diversification)
+- `WS /ws` - Real-time subscriptions (orderbook, trades, market updates, news)
 
 ### WebSocket Protocol
 
