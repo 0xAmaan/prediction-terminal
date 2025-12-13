@@ -201,13 +201,23 @@ fn build_google_query(market_title: &str, outcome_titles: Option<&Vec<String>>) 
     terms.extend(title_terms);
 
     // Add key terms from outcomes (people names, companies, etc.)
+    // Skip price-based outcomes (e.g., "$7,000", "$10,000")
     if let Some(outcomes) = outcome_titles {
-        for outcome in outcomes.iter().take(5) {
-            let outcome_terms = extract_key_terms(outcome);
-            for term in outcome_terms {
-                // Avoid duplicates
-                if !terms.iter().any(|t| t.eq_ignore_ascii_case(&term)) {
-                    terms.push(term);
+        // Check if outcomes are price targets (most start with $ or are numbers)
+        let are_prices = outcomes.iter().take(5).all(|o| {
+            let trimmed = o.trim();
+            trimmed.starts_with('$') || trimmed.chars().all(|c| c.is_numeric() || c == ',' || c == '.')
+        });
+
+        // Only extract terms from non-price outcomes
+        if !are_prices {
+            for outcome in outcomes.iter().take(5) {
+                let outcome_terms = extract_key_terms(outcome);
+                for term in outcome_terms {
+                    // Avoid duplicates
+                    if !terms.iter().any(|t| t.eq_ignore_ascii_case(&term)) {
+                        terms.push(term);
+                    }
                 }
             }
         }

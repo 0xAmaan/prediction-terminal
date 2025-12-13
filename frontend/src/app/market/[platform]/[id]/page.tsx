@@ -10,7 +10,6 @@ import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/type
 
 // Existing components
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
-import { MarketNewsSection } from "@/components/news";
 import { RelatedMarkets } from "@/components/market/related-markets";
 import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
 import { OutcomeAccordion } from "@/components/market/outcome-accordion";
@@ -345,14 +344,15 @@ const MarketPageContent = ({
             transition={{ duration: 0.2 }}
             className="flex-1 flex flex-col min-h-0"
           >
-            {/* Market News Section */}
+            {/* Research tab content - reserved for future feature */}
             <div className="flex-1 overflow-auto">
               <div className="px-6 lg:px-8 py-8 pb-24">
                 <div className="max-w-4xl mx-auto">
-                  <MarketNewsSection
-                    platform={market.platform}
-                    marketId={market.id}
-                  />
+                  <div className="flex items-center justify-center h-64">
+                    <p style={{ color: fey.grey500 }}>
+                      Research features coming soon
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

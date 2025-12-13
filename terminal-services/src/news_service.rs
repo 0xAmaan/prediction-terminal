@@ -164,6 +164,91 @@ impl NewsService {
         markets
     }
 
+    /// Fetch dynamic Google News feeds for top trending markets
+    /// This makes the news feed PROACTIVE - hunting for news about what traders are betting on
+    /// Includes both regular news AND Twitter/X posts via Google News site search
+    async fn fetch_dynamic_market_feeds(
+        &self,
+        markets: &[PredictionMarket],
+        top_n: usize,
+    ) -> Vec<NewsItem> {
+        if markets.is_empty() {
+            return Vec::new();
+        }
+
+        let top_markets: Vec<&PredictionMarket> = markets.iter().take(top_n).collect();
+        info!(
+            "Generating dynamic Google News feeds (news + Twitter) for {} trending markets",
+            top_markets.len()
+        );
+
+        let mut all_items = Vec::new();
+
+        for market in &top_markets {
+            // Extract keywords from market title (using simplified extraction)
+            let keywords = extract_dynamic_feed_keywords(&market.title);
+
+            if keywords.is_empty() {
+                debug!("No keywords extracted from market: {}", market.title);
+                continue;
+            }
+
+            info!(
+                "Dynamic feed for '{}' -> keywords: {}",
+                market.title, keywords
+            );
+
+            // PHASE 1: Fetch regular Google News (3 articles per market)
+            match self
+                .google_news
+                .search_market_news(&keywords, None, 3)
+                .await
+            {
+                Ok(items) => {
+                    info!(
+                        "✓ Regular news for '{}' returned {} articles",
+                        keywords,
+                        items.len()
+                    );
+                    all_items.extend(items);
+                }
+                Err(e) => {
+                    debug!("Failed to fetch regular news for '{}': {}", keywords, e);
+                }
+            }
+
+            // PHASE 2: Fetch Twitter/X posts via Google News site search (2 articles per market)
+            // Google only indexes high-engagement tweets (10k+ impressions)
+            // These are the tweets that move prediction markets
+            let twitter_query = format!("site:x.com OR site:twitter.com {}", keywords);
+            match self
+                .google_news
+                .search_market_news(&twitter_query, None, 2)
+                .await
+            {
+                Ok(items) => {
+                    info!(
+                        "✓ Twitter feed for '{}' returned {} posts",
+                        keywords,
+                        items.len()
+                    );
+                    all_items.extend(items);
+                }
+                Err(e) => {
+                    debug!("Failed to fetch Twitter feed for '{}': {}", keywords, e);
+                }
+            }
+        }
+
+        info!(
+            "Total items from {} dynamic feeds (news + Twitter): {}",
+            top_markets.len(),
+            all_items.len()
+        );
+
+        all_items
+    }
+
     /// Get cached RSS items or fetch fresh ones
     async fn get_rss_items(&self) -> Result<Vec<NewsItem>, NewsError> {
         // Check cache first
@@ -196,6 +281,7 @@ impl NewsService {
 
     /// Search for global news relevant to prediction markets
     /// Uses STRICT entity matching - only shows news that mentions trending market topics
+    /// DYNAMIC: Generates Google News RSS feeds for top trending markets on-the-fly
     #[instrument(skip(self))]
     pub async fn search_global_news(
         &self,
@@ -213,9 +299,27 @@ impl NewsService {
             }
         }
 
-        // Get RSS items and TRENDING markets only
-        let all_items = self.get_rss_items().await.map_err(NewsServiceError::Rss)?;
+        // Get TRENDING markets to drive dynamic feed generation
         let markets = self.get_trending_markets().await;
+
+        // PHASE 1: Fetch static RSS feeds (baseline coverage)
+        let static_rss_items = self.get_rss_items().await.map_err(NewsServiceError::Rss)?;
+        info!(
+            "Fetched {} items from static RSS feeds",
+            static_rss_items.len()
+        );
+
+        // PHASE 2: Generate dynamic Google News feeds for top 5 trending markets
+        let dynamic_items = self.fetch_dynamic_market_feeds(&markets, 5).await;
+        info!(
+            "Fetched {} items from dynamic Google News feeds for {} markets",
+            dynamic_items.len(),
+            std::cmp::min(5, markets.len())
+        );
+
+        // Combine static and dynamic items
+        let mut all_items = static_rss_items;
+        all_items.extend(dynamic_items);
 
         // Filter for recent articles only (last 30 days)
         let now = chrono::Utc::now();
@@ -301,9 +405,13 @@ impl NewsService {
                 .collect()
         };
 
+        // Sort by published_at descending (newest first)
+        let mut sorted_items = items;
+        sorted_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+
         let feed = NewsFeed {
-            total_count: items.len(),
-            items,
+            total_count: sorted_items.len(),
+            items: sorted_items,
             next_cursor: None,
         };
 
@@ -375,10 +483,21 @@ impl NewsService {
             market_title, must_match_terms
         );
 
+        // Determine fetch multiplier based on market type
+        // Sports markets need more raw results due to strict filtering
+        let is_sports_market = market_title.to_lowercase().contains("mvp") ||
+            market_title.to_lowercase().contains("nfl") ||
+            market_title.to_lowercase().contains("nba") ||
+            market_title.to_lowercase().contains("mlb") ||
+            market_title.to_lowercase().contains("nhl") ||
+            market_title.to_lowercase().contains("championship");
+
+        let fetch_multiplier = if is_sports_market { 5 } else { 3 };
+
         // Try Google News RSS first (primary source - free, fast, current)
         let items = match self
             .google_news
-            .search_market_news(market_title, outcome_titles.as_ref(), limit * 3)
+            .search_market_news(market_title, outcome_titles.as_ref(), limit * fetch_multiplier)
             .await
         {
             Ok(results) => {
@@ -389,9 +508,55 @@ impl NewsService {
                 );
 
                 // Filter for relevance and tag items with market context
+                // First pass: try with 30-day limit
+                let filtered_30d: Vec<NewsItem> = results
+                    .iter()
+                    .cloned()
+                    .filter(|item| {
+                        // Filter out articles older than 30 days (first pass)
+                        let now = chrono::Utc::now();
+                        let age_days = (now - item.published_at).num_days();
+                        age_days <= 30
+                    })
+                    .collect();
+
+                // Adaptive age window: expand if we got very few results
+                let max_age_days = if filtered_30d.len() == 0 {
+                    // No results in 30 days: try 180 days (6 months)
+                    info!(
+                        "0 articles in last 30 days, expanding to 180 days for market '{}'",
+                        market_title
+                    );
+                    180
+                } else if filtered_30d.len() < 3 {
+                    // Few results: try 90 days (3 months)
+                    info!(
+                        "Only {} articles in last 30 days, expanding to 90 days for market '{}'",
+                        filtered_30d.len(),
+                        market_title
+                    );
+                    90
+                } else {
+                    30
+                };
+
+                // Apply actual filtering with age limit
                 let filtered: Vec<NewsItem> = results
                     .into_iter()
                     .filter(|item| {
+                        // Filter out articles older than max_age_days
+                        let now = chrono::Utc::now();
+                        let age_days = (now - item.published_at).num_days();
+                        if age_days > max_age_days {
+                            info!(
+                                "✗ FILTERED OUT (too old): '{}' - {} days old (limit: {} days)",
+                                item.title,
+                                age_days,
+                                max_age_days
+                            );
+                            return false;
+                        }
+
                         // Filter out articles with suspiciously short titles (parsing errors)
                         if item.title.len() < 15 {
                             info!(
@@ -446,6 +611,17 @@ impl NewsService {
                         ];
                         let has_league_keyword = league_keywords.iter().any(|kw| text.contains(kw));
 
+                        // Check for crypto keywords (Bitcoin markets should accept general crypto news)
+                        let crypto_keywords = [
+                            "bitcoin", "btc", "crypto", "cryptocurrency", "blockchain",
+                            "ethereum", "solana", "binance", "coinbase"
+                        ];
+                        let is_crypto_market = market_lower.contains("bitcoin") ||
+                            market_lower.contains("btc") ||
+                            market_lower.contains("crypto") ||
+                            market_lower.contains("ethereum");
+                        let has_crypto_keyword = crypto_keywords.iter().any(|kw| text.contains(kw));
+
                         // Count how many key terms match
                         let match_count = must_match_terms
                             .iter()
@@ -455,22 +631,40 @@ impl NewsService {
                         // Determine if this is a multi-outcome market (many options like sports teams)
                         let is_multi_outcome = outcome_titles.as_ref().map_or(false, |outcomes| outcomes.len() > 10);
 
-                        // Smart matching thresholds
-                        let required_matches = if has_league_keyword && is_multi_outcome {
-                            // Sports/championship articles are always relevant if they mention the event
+                        // Check if this is a sports market (NFL, NBA, MLB, etc.)
+                        let is_sports_market = has_league_keyword ||
+                            market_lower.contains("mvp") ||
+                            market_lower.contains("player") ||
+                            market_lower.contains("team") ||
+                            market_lower.contains("championship");
+
+                        // Smart matching thresholds - VERY LENIENT for sports and crypto
+                        let required_matches = if is_sports_market {
+                            // Sports markets: accept if it mentions the league/event at all
+                            // "NFL" articles are relevant for "NFL MVP" markets
+                            if has_league_keyword { 0 } else { 1 }
+                        } else if is_crypto_market && has_crypto_keyword {
+                            // Crypto markets: accept any article with crypto keywords
+                            // "Crypto Black Friday" is relevant for "Bitcoin $100k" markets
+                            0
+                        } else if has_league_keyword && is_multi_outcome {
+                            // Championship articles are always relevant if they mention the event
                             0
                         } else if is_multi_outcome {
-                            // Multi-outcome markets (sports, elections): very lenient
+                            // Multi-outcome markets (elections): very lenient
                             1
                         } else if must_match_terms.len() <= 2 {
                             // Few terms: just need 1
                             1
+                        } else if must_match_terms.len() == 0 {
+                            // No required terms extracted (e.g., all were prices): accept all
+                            0
                         } else if has_required_geography && must_match_terms.len() >= 3 {
                             // Geography verified: lenient
                             if must_match_terms.len() >= 5 { 2 } else { 1 }
                         } else {
-                            // Default: need 2 matches
-                            2
+                            // Default: need 1 match (was 2, relaxed)
+                            1
                         };
 
                         let is_relevant = match_count >= required_matches;
@@ -495,7 +689,6 @@ impl NewsService {
 
                         is_relevant
                     })
-                    .take(limit)
                     .map(|mut item| {
                         if !item.related_market_ids.contains(&market_id.to_string()) {
                             item.related_market_ids.push(market_id.to_string());
@@ -504,6 +697,68 @@ impl NewsService {
                         item
                     })
                     .collect();
+
+                // For multi-outcome markets (e.g., "Which movie will win?"), ensure diversity
+                // Don't show 5 articles all about the same outcome
+                let filtered: Vec<NewsItem> = if let Some(outcomes) = outcome_titles.as_ref() {
+                    if outcomes.len() > 3 {
+                        // Determine diversity limit based on market type
+                        // Sports markets (many players): allow 3-4 articles per player
+                        // Other multi-outcome markets: limit to 2 per outcome
+                        let per_outcome_limit = if outcomes.len() > 10 {
+                            // Large sports markets (NFL MVP, NBA Champion, etc.): 3 per player
+                            3
+                        } else if outcomes.len() > 5 {
+                            // Medium markets: 2 per outcome
+                            2
+                        } else {
+                            // Small markets: 2 per outcome
+                            2
+                        };
+
+                        // Multi-outcome market: limit articles per outcome for diversity
+                        let mut outcome_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                        let mut diversified: Vec<NewsItem> = Vec::new();
+
+                        for item in filtered {
+                            // Check which outcome this article mentions
+                            let title_lower = item.title.to_lowercase();
+                            let summary_lower = item.summary.to_lowercase();
+                            let text = format!("{} {}", title_lower, summary_lower);
+
+                            let mut matched_outcome: Option<String> = None;
+                            for outcome in outcomes {
+                                let outcome_lower = outcome.to_lowercase();
+                                if text.contains(&outcome_lower) {
+                                    matched_outcome = Some(outcome.clone());
+                                    break;
+                                }
+                            }
+
+                            // Count articles per outcome and limit based on market type
+                            if let Some(outcome) = matched_outcome {
+                                let count = outcome_counts.entry(outcome.clone()).or_insert(0);
+                                if *count < per_outcome_limit {
+                                    *count += 1;
+                                    diversified.push(item);
+                                } else {
+                                    info!("✗ DIVERSITY FILTER: Skipping '{}' - already have {} articles about '{}'", item.title, per_outcome_limit, outcome);
+                                }
+                            } else {
+                                // Article doesn't clearly match any outcome, include it (general league news)
+                                diversified.push(item);
+                            }
+                        }
+
+                        diversified.into_iter().take(limit).collect()
+                    } else {
+                        // Binary or small market: just take the limit
+                        filtered.into_iter().take(limit).collect()
+                    }
+                } else {
+                    // No outcomes provided: just take the limit
+                    filtered.into_iter().take(limit).collect()
+                };
 
                 info!(
                     "After relevance filtering: {} results for '{}'",
@@ -585,9 +840,13 @@ impl NewsService {
             }
         };
 
+        // Sort by published_at descending (newest first)
+        let mut sorted_items = items;
+        sorted_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+
         let feed = NewsFeed {
-            total_count: items.len(),
-            items,
+            total_count: sorted_items.len(),
+            items: sorted_items,
             next_cursor: None,
         };
 
@@ -629,7 +888,7 @@ impl NewsService {
         let params = NewsSearchParams {
             query: Some(search_query),
             limit: limit * 4,
-            time_range: Some("7d".to_string()),
+            time_range: Some("30d".to_string()),
             market_id: Some(market_id.to_string()),
         };
 
@@ -644,6 +903,13 @@ impl NewsService {
         let filtered: Vec<NewsItem> = results
             .into_iter()
             .filter(|item| {
+                // Filter out articles older than 30 days
+                let now = chrono::Utc::now();
+                let age_days = (now - item.published_at).num_days();
+                if age_days > 30 {
+                    return false;
+                }
+
                 if must_match_terms.is_empty() {
                     return true;
                 }
@@ -893,6 +1159,46 @@ fn extract_must_match_terms(
         "days",
         "time",
         "times",
+        "today",
+        "tomorrow",
+        "yesterday",
+        "tonight",
+        // Month names (temporal context, not topic-specific)
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
+        // Seasons
+        "spring",
+        "summer",
+        "fall",
+        "autumn",
+        "winter",
+        // Year references
+        "2024",
+        "2025",
+        "2026",
+        "2027",
         // Market/prediction specific
         "market",
         "prediction",
@@ -999,6 +1305,17 @@ fn extract_must_match_terms(
         "gdp",
         "trillionaire",
         "billionaire",
+        "fed",
+        "federal",
+        "reserve",
+        "treasury",
+        "dollar",
+        "interest",
+        "rates",
+        "fomc",
+        "powell",
+        "economy",
+        "economic",
         // Health
         "pandemic",
         "virus",
@@ -1043,7 +1360,7 @@ fn extract_must_match_terms(
     .into_iter()
     .collect();
 
-    for word in market_title.split(|c: char| !c.is_alphanumeric()) {
+    for word in market_title.split(|c: char| !c.is_alphanumeric() && c != '$') {
         if word.len() < 3 {
             continue;
         }
@@ -1051,6 +1368,12 @@ fn extract_must_match_terms(
 
         // Skip stop words
         if stop_words.contains(lower.as_str()) {
+            continue;
+        }
+
+        // Skip price targets and numbers (too specific for news search)
+        // Examples: "$100k", "100k", "$80k", "1000"
+        if word.starts_with('$') || word.chars().all(|c| c.is_numeric() || c == 'k' || c == 'm') {
             continue;
         }
 
@@ -1116,6 +1439,13 @@ fn extract_must_match_terms(
                 if !terms.iter().any(|t: &String| t.to_lowercase() == lower) {
                     terms.push(word.to_string());
                 }
+            }
+        }
+        // Extract any other meaningful content word (e.g., "gold", "oil", "stock")
+        // This catches important keywords that aren't capitalized or in topic_words
+        else if word.len() >= 4 {
+            if !terms.iter().any(|t: &String| t.to_lowercase() == lower) {
+                terms.push(word.to_string());
             }
         }
     }
@@ -1212,6 +1542,17 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
     .into_iter()
     .collect();
 
+    // Direct country names to look for
+    let country_names: std::collections::HashSet<&str> = [
+        "russia", "ukraine", "china", "usa", "turkey", "israel", "iran", "syria",
+        "north korea", "south korea", "taiwan", "india", "pakistan", "afghanistan",
+        "iraq", "yemen", "lebanon", "gaza", "palestine", "france", "germany",
+        "united kingdom", "britain", "spain", "italy", "poland", "japan",
+        "brazil", "mexico", "canada", "australia", "venezuela", "argentina"
+    ]
+    .into_iter()
+    .collect();
+
     let generic_words: std::collections::HashSet<&str> = [
         "will", "what", "who", "which", "when", "how", "the", "be", "is", "are", "next", "first",
         "win", "become", "meet", "reach", "hit", "before", "after", "its", "their", "price",
@@ -1221,19 +1562,47 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
     .collect();
 
     let mut primary_entity: Option<String> = None;
+    let mut found_countries: Vec<String> = Vec::new();
     let mut secondary_terms: Vec<String> = Vec::new();
+    let title_lower = market_title.to_lowercase();
 
     // First pass: find the PRIMARY entity (country or major proper noun)
-    for word in market_title.split(|c: char| !c.is_alphanumeric()) {
-        if word.len() < 3 {
-            continue;
+    // Check for direct country names first (handles multi-word like "North Korea")
+    for country in &country_names {
+        if title_lower.contains(country) {
+            // Capitalize first letter of each word
+            let capitalized = country
+                .split_whitespace()
+                .map(|w| {
+                    let mut chars = w.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            found_countries.push(capitalized);
         }
-        let lower = word.to_lowercase();
+    }
 
-        // Country adjective -> use country name as primary entity
-        if let Some(country) = country_adjectives.get(lower.as_str()) {
-            if primary_entity.is_none() {
+    // If we found countries, combine them (e.g., "Russia Ukraine" for "Russia x Ukraine ceasefire")
+    if !found_countries.is_empty() {
+        primary_entity = Some(found_countries.join(" "));
+    }
+
+    // If no direct country name found, check for country adjectives
+    if primary_entity.is_none() {
+        for word in market_title.split(|c: char| !c.is_alphanumeric()) {
+            if word.len() < 3 {
+                continue;
+            }
+            let lower = word.to_lowercase();
+
+            // Country adjective -> use country name as primary entity
+            if let Some(country) = country_adjectives.get(lower.as_str()) {
                 primary_entity = Some(country.to_string());
+                break;
             }
         }
     }
@@ -1250,7 +1619,7 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
                         .map(|c| c.is_uppercase())
                         .unwrap_or(false)
                     && !generic_words.contains(clean.to_lowercase().as_str())
-                    && !["Will", "The", "Be", "Is", "Are", "Other", "Who"].contains(&clean.as_str())
+                    && !["Will", "The", "Be", "Is", "Are", "Other", "Who", "Yes", "No", "None", "Maybe"].contains(&clean.as_str())
                 {
                     if !secondary_terms
                         .iter()
@@ -1444,6 +1813,70 @@ fn extract_market_entities(markets: &[PredictionMarket]) -> Vec<String> {
     let mut result: Vec<String> = entities.into_iter().collect();
     result.sort_by(|a, b| b.len().cmp(&a.len()));
     result
+}
+
+/// Extract keywords from market title for dynamic Google News feed generation
+/// Simplified keyword extraction focused on proper nouns and key entities
+fn extract_dynamic_feed_keywords(market_title: &str) -> String {
+    let stop_words: std::collections::HashSet<&str> = [
+        "will", "what", "who", "which", "when", "where", "how", "why", "the", "a", "an", "in",
+        "on", "at", "to", "for", "of", "with", "by", "from", "be", "is", "are", "was", "were",
+        "been", "being", "have", "has", "had", "do", "does", "did", "would", "could", "should",
+        "may", "might", "can", "must", "win", "lose", "become", "next", "first", "before",
+        "after", "market", "prediction", "hit", "reach", "price", "value", "year", "years",
+        "month", "months", "2024", "2025", "2026", "2027", "january", "february", "march",
+        "april", "may", "june", "july", "august", "september", "october", "november", "december",
+    ]
+    .into_iter()
+    .collect();
+
+    let high_value_terms: std::collections::HashSet<&str> = [
+        "bitcoin", "crypto", "ethereum", "ai", "president", "election", "championship", "super",
+        "bowl", "olympics", "war", "peace", "ceasefire", "fed", "nba", "nfl", "mlb", "ipo",
+        "trillionaire", "billionaire",
+    ]
+    .into_iter()
+    .collect();
+
+    let mut keywords = Vec::new();
+
+    for word in market_title.split(|c: char| !c.is_alphanumeric()) {
+        if word.len() < 3 {
+            continue;
+        }
+
+        let lower = word.to_lowercase();
+
+        // Skip stop words
+        if stop_words.contains(lower.as_str()) {
+            continue;
+        }
+
+        // Include high-value terms
+        if high_value_terms.contains(lower.as_str()) {
+            if !keywords.iter().any(|k: &String| k.eq_ignore_ascii_case(&word)) {
+                keywords.push(word.to_string());
+            }
+            continue;
+        }
+
+        // Include proper nouns (capitalized words)
+        if word.len() >= 4
+            && word
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+        {
+            if !keywords.iter().any(|k: &String| k.eq_ignore_ascii_case(&word)) {
+                keywords.push(word.to_string());
+            }
+        }
+    }
+
+    // Limit to top 5 keywords for focused search
+    keywords.truncate(5);
+    keywords.join(" ")
 }
 
 /// Errors that can occur in NewsService
