@@ -509,6 +509,13 @@ impl RssClient {
                     return None;
                 }
 
+                // Also filter by title patterns (may use redirect URLs)
+                if title.contains("Predict...")
+                    || title.contains("Predictions & Odds")
+                    || title.contains("Prediction & Odds") {
+                    return None;
+                }
+
                 // Parse publication date - try multiple formats
                 let published_at = item
                     .pub_date()
@@ -638,6 +645,13 @@ impl RssClient {
 
                 // Skip Polymarket URLs (these are market links, not news articles)
                 if url.contains("polymarket.com") || url.contains("kalshi.com") {
+                    return None;
+                }
+
+                // Also filter by title patterns (may use redirect URLs)
+                if title.contains("Predict...")
+                    || title.contains("Predictions & Odds")
+                    || title.contains("Prediction & Odds") {
                     return None;
                 }
 

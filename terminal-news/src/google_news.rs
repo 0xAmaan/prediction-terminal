@@ -548,6 +548,15 @@ fn parse_google_news_channel(channel: &rss::Channel, _feed: &RssFeed) -> Vec<New
                 return None;
             }
 
+            // Also filter by title patterns (Google News may use redirect URLs)
+            // Polymarket titles end with "Predict..." or contain "Predictions & Odds"
+            if title.contains("Predict...")
+                || title.contains("Predictions & Odds")
+                || title.contains("Prediction & Odds")
+                || (title.contains("polymarket.com") || title.contains("kalshi.com")) {
+                return None;
+            }
+
             // Parse publication date - try multiple formats
             let published_at = item
                 .pub_date()
