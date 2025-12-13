@@ -36,7 +36,7 @@ pub fn routes() -> Router<AppState> {
         .route("/news", get(get_global_news))
         .route("/news/search", get(search_news))
         .route("/news/article", get(get_article_content))
-        .route("/markets/:platform/:id/news", get(get_market_news))
+        .route("/markets/{platform}/{id}/news", get(get_market_news))
 }
 
 /// GET /api/news - Get latest global prediction market news from RSS feeds
