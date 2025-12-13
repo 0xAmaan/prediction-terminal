@@ -237,3 +237,62 @@ pub enum DocumentEditOperation {
     /// Insert a new section at the index
     Insert,
 }
+
+// ============================================================================
+// Market Context Types (for AI research)
+// ============================================================================
+
+/// Context about a market's current state for AI research
+///
+/// Provides real-time market data (price, volume, trades, order book) so the AI
+/// has accurate context when generating research.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketContext {
+    /// Market title
+    pub title: String,
+    /// Market description
+    pub description: Option<String>,
+    /// Current probability/price (0.0 to 1.0)
+    pub current_price: Option<f64>,
+    /// Price 24 hours ago (for calculating change)
+    pub price_24h_ago: Option<f64>,
+    /// 24-hour trading volume in dollars
+    pub volume_24h: Option<f64>,
+    /// Lifetime total volume
+    pub total_volume: Option<f64>,
+    /// Number of unique traders
+    pub num_traders: Option<u64>,
+    /// Recent trades (last ~10)
+    #[serde(default)]
+    pub recent_trades: Vec<RecentTrade>,
+    /// Order book summary
+    pub order_book_summary: Option<OrderBookSummary>,
+}
+
+/// A recent trade for market context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentTrade {
+    /// Price (0.0 to 1.0)
+    pub price: f64,
+    /// Trade size in dollars
+    pub size: f64,
+    /// Trade side: "buy" or "sell"
+    pub side: String,
+    /// ISO 8601 timestamp
+    pub timestamp: String,
+}
+
+/// Summary of order book depth
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderBookSummary {
+    /// Best bid price
+    pub best_bid: Option<f64>,
+    /// Best ask price
+    pub best_ask: Option<f64>,
+    /// Spread (ask - bid)
+    pub spread: Option<f64>,
+    /// Total $ within 10% of best bid
+    pub bid_depth_10pct: f64,
+    /// Total $ within 10% of best ask
+    pub ask_depth_10pct: f64,
+}

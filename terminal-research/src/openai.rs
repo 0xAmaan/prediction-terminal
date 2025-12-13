@@ -11,6 +11,7 @@ use terminal_core::TerminalError;
 use tracing::instrument;
 
 use crate::exa::ExaSearchResult;
+use crate::types::{MarketContext, OrderBookSummary, RecentTrade};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIClient {
@@ -71,14 +72,22 @@ impl OpenAIClient {
         self
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, context))]
     pub async fn decompose_question(
         &self,
-        market_title: &str,
-        market_description: &str,
+        context: &MarketContext,
     ) -> Result<DecomposedQuestions, TerminalError> {
         let system_prompt = r#"You are a research analyst specializing in prediction markets.
 Your task is to decompose a market question into sub-questions that will help gather comprehensive information.
+
+You will receive:
+1. Market title and description
+2. Current market data (price, volume, recent trades)
+
+Use the market data to inform your sub-questions. For example:
+- If price recently moved significantly, ask "What caused the recent price movement?"
+- If volume is high, consider what's driving interest
+- Look at trade flow to understand market sentiment
 
 For each sub-question, assign a category:
 - "news": Recent news and developments
@@ -101,8 +110,27 @@ Respond with valid JSON in this exact format:
 Generate 4-6 diverse sub-questions covering different angles."#;
 
         let user_prompt = format!(
-            "Market Title: {}\n\nDescription: {}\n\nDecompose this into research sub-questions.",
-            market_title, market_description
+            r#"## Market
+Title: {}
+Description: {}
+
+## Current Market Data
+- Current Price: {}
+- 24h Change: {}
+- 24h Volume: {}
+- Total Volume: {}
+{}
+{}
+
+Decompose this into research sub-questions that account for the current market state."#,
+            context.title,
+            context.description.as_deref().unwrap_or("No description"),
+            format_price(context.current_price),
+            format_price_change(context.current_price, context.price_24h_ago),
+            format_volume(context.volume_24h),
+            format_volume(context.total_volume),
+            format_recent_trades(&context.recent_trades),
+            format_order_book(&context.order_book_summary),
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -143,17 +171,23 @@ Generate 4-6 diverse sub-questions covering different angles."#;
             .map_err(|e| TerminalError::parse(format!("Failed to parse decomposition: {}", e)))
     }
 
-    #[instrument(skip(self, search_results))]
+    #[instrument(skip(self, context, search_results))]
     pub async fn synthesize_report(
         &self,
-        market_title: &str,
-        market_description: &str,
+        context: &MarketContext,
         questions: &DecomposedQuestions,
         search_results: &[(SubQuestion, Vec<ExaSearchResult>)],
     ) -> Result<SynthesizedReport, TerminalError> {
         let system_prompt = r#"You are a research analyst creating comprehensive reports for prediction market traders.
 
 Synthesize the provided search results into a detailed research report. Be objective and balanced.
+
+You have access to:
+1. Market title and description
+2. Current market data (price, volume, recent trades, order book)
+3. Research findings from web searches
+
+Use the market data to contextualize your analysis. Reference the current probability and recent price movements in your executive summary and confidence assessment.
 
 Respond with valid JSON in this exact format:
 {
@@ -178,34 +212,55 @@ Respond with valid JSON in this exact format:
 
 Include 4-6 sections covering different aspects. Use markdown formatting in content."#;
 
-        // Build context from search results
-        let mut context = String::new();
+        // Build research context from search results
+        let mut research_data = String::new();
         for (question, results) in search_results {
-            context.push_str(&format!("\n## {}\n", question.question));
+            research_data.push_str(&format!("\n## {}\n", question.question));
             for result in results.iter().take(5) {
                 if let Some(title) = &result.title {
-                    context.push_str(&format!("\n### {}\n", title));
+                    research_data.push_str(&format!("\n### {}\n", title));
                 }
-                context.push_str(&format!("URL: {}\n", result.url));
+                research_data.push_str(&format!("URL: {}\n", result.url));
                 if let Some(date) = &result.published_date {
-                    context.push_str(&format!("Date: {}\n", date));
+                    research_data.push_str(&format!("Date: {}\n", date));
                 }
                 if let Some(highlights) = &result.highlights {
                     for highlight in highlights {
-                        context.push_str(&format!("- {}\n", highlight));
+                        research_data.push_str(&format!("- {}\n", highlight));
                     }
                 }
                 if let Some(text) = &result.text {
                     // Truncate text to avoid token limits
                     let truncated: String = text.chars().take(1500).collect();
-                    context.push_str(&format!("\n{}\n", truncated));
+                    research_data.push_str(&format!("\n{}\n", truncated));
                 }
             }
         }
 
         let user_prompt = format!(
-            "Market: {}\n\nDescription: {}\n\n## Research Data\n{}",
-            market_title, market_description, context
+            r#"## Market
+Title: {}
+Description: {}
+
+## Current Market Data
+- Current Price: {}
+- 24h Change: {}
+- 24h Volume: {}
+- Total Volume: {}
+{}
+{}
+
+## Research Data
+{}"#,
+            context.title,
+            context.description.as_deref().unwrap_or("No description"),
+            format_price(context.current_price),
+            format_price_change(context.current_price, context.price_24h_ago),
+            format_volume(context.volume_24h),
+            format_volume(context.total_volume),
+            format_recent_trades(&context.recent_trades),
+            format_order_book(&context.order_book_summary),
+            research_data
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -699,4 +754,107 @@ fn extract_json(content: &str) -> Result<String, TerminalError> {
     }
 
     Err(TerminalError::parse("No JSON found in response"))
+}
+
+// ============================================================================
+// Market Context Formatting Helpers
+// ============================================================================
+
+/// Format a price as percentage
+fn format_price(price: Option<f64>) -> String {
+    price
+        .map(|p| format!("{:.1}%", p * 100.0))
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Format the price change between current and previous
+fn format_price_change(current: Option<f64>, previous: Option<f64>) -> String {
+    match (current, previous) {
+        (Some(c), Some(p)) => {
+            let change = (c - p) * 100.0;
+            if change >= 0.0 {
+                format!("+{:.1}%", change)
+            } else {
+                format!("{:.1}%", change)
+            }
+        }
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Format volume with appropriate units (K, M)
+fn format_volume(volume: Option<f64>) -> String {
+    volume
+        .map(|v| {
+            if v >= 1_000_000.0 {
+                format!("${:.1}M", v / 1_000_000.0)
+            } else if v >= 1_000.0 {
+                format!("${:.1}K", v / 1_000.0)
+            } else {
+                format!("${:.0}", v)
+            }
+        })
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Format recent trades for the prompt
+fn format_recent_trades(trades: &[RecentTrade]) -> String {
+    if trades.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::from("\n## Recent Trades\n");
+    for trade in trades.iter().take(10) {
+        output.push_str(&format!(
+            "- {} {:.1}% (${:.0}) at {}\n",
+            trade.side.to_uppercase(),
+            trade.price * 100.0,
+            trade.size,
+            trade.timestamp
+        ));
+    }
+    output
+}
+
+/// Format order book summary for the prompt
+fn format_order_book(summary: &Option<OrderBookSummary>) -> String {
+    match summary {
+        Some(ob) => format!(
+            "\n## Order Book\n- Best Bid: {}\n- Best Ask: {}\n- Spread: {}\n- Bid Depth (10%): ${:.0}\n- Ask Depth (10%): ${:.0}",
+            format_price(ob.best_bid),
+            format_price(ob.best_ask),
+            ob.spread
+                .map(|s| format!("{:.1}%", s * 100.0))
+                .unwrap_or_else(|| "Unknown".to_string()),
+            ob.bid_depth_10pct,
+            ob.ask_depth_10pct,
+        ),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_price() {
+        assert_eq!(format_price(Some(0.73)), "73.0%");
+        assert_eq!(format_price(None), "Unknown");
+    }
+
+    #[test]
+    fn test_format_price_change() {
+        assert_eq!(format_price_change(Some(0.75), Some(0.70)), "+5.0%");
+        assert_eq!(format_price_change(Some(0.65), Some(0.70)), "-5.0%");
+        assert_eq!(format_price_change(None, Some(0.70)), "Unknown");
+    }
+
+    #[test]
+    fn test_format_volume() {
+        assert_eq!(format_volume(Some(1_500_000.0)), "$1.5M");
+        assert_eq!(format_volume(Some(50_000.0)), "$50.0K");
+        assert_eq!(format_volume(Some(500.0)), "$500");
+        assert_eq!(format_volume(None), "Unknown");
+    }
 }
