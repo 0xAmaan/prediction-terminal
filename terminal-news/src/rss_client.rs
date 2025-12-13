@@ -504,6 +504,11 @@ impl RssClient {
                 let title = item.title()?.to_string();
                 let url = item.link()?.to_string();
 
+                // Skip Polymarket URLs (these are market links, not news articles)
+                if url.contains("polymarket.com") || url.contains("kalshi.com") {
+                    return None;
+                }
+
                 // Parse publication date - try multiple formats
                 let published_at = item
                     .pub_date()
@@ -524,12 +529,41 @@ impl RssClient {
                                     .ok()
                                     .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
                             })
-                    })
-                    .or_else(|| {
-                        // Try extracting from URL
-                        extract_date_from_url(&url)
-                    })
-                    .unwrap_or_else(Utc::now);
+                    });
+
+                // Check for updated date in Dublin Core extensions (dc:date)
+                // Many RSS feeds use this for last-modified dates
+                let updated_at = item
+                    .dublin_core_ext()
+                    .and_then(|dc| dc.dates().first())
+                    .and_then(|d| {
+                        DateTime::parse_from_rfc3339(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                DateTime::parse_from_rfc2822(d)
+                                    .ok()
+                                    .map(|dt| dt.with_timezone(&Utc))
+                            })
+                    });
+
+                // Use the most recent date (prefer updated over published)
+                let published_at = match (published_at, updated_at) {
+                    (Some(pub_date), Some(upd_date)) => {
+                        // Use whichever is more recent
+                        if upd_date > pub_date {
+                            upd_date
+                        } else {
+                            pub_date
+                        }
+                    }
+                    (Some(pub_date), None) => pub_date,
+                    (None, Some(upd_date)) => upd_date,
+                    (None, None) => {
+                        // Try extracting from URL as last resort
+                        extract_date_from_url(&url).unwrap_or_else(Utc::now)
+                    }
+                };
 
                 // Skip old articles (older than 7 days)
                 let age = Utc::now() - published_at;
@@ -602,13 +636,26 @@ impl RssClient {
                     return None;
                 }
 
-                // Parse publication date
-                let published_at = entry
-                    .published()
-                    .or_else(|| Some(entry.updated()))
-                    .map(|d| d.with_timezone(&Utc))
-                    .or_else(|| extract_date_from_url(&url))
-                    .unwrap_or_else(Utc::now);
+                // Skip Polymarket URLs (these are market links, not news articles)
+                if url.contains("polymarket.com") || url.contains("kalshi.com") {
+                    return None;
+                }
+
+                // Parse publication date - prefer updated date over published
+                let published = entry.published().map(|d| d.with_timezone(&Utc));
+                let updated = entry.updated().with_timezone(&Utc);
+
+                // Use whichever is more recent
+                let published_at = match published {
+                    Some(pub_date) => {
+                        if updated > pub_date {
+                            updated
+                        } else {
+                            pub_date
+                        }
+                    }
+                    None => updated,
+                };
 
                 // Skip old articles
                 let age = Utc::now() - published_at;

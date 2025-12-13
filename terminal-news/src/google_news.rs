@@ -543,12 +543,53 @@ fn parse_google_news_channel(channel: &rss::Channel, _feed: &RssFeed) -> Vec<New
             let title = item.title()?.to_string();
             let url = item.link()?.to_string();
 
-            // Parse publication date
+            // Skip Polymarket URLs (these are market links, not news articles)
+            if url.contains("polymarket.com") || url.contains("kalshi.com") {
+                return None;
+            }
+
+            // Parse publication date - try multiple formats
             let published_at = item
                 .pub_date()
-                .and_then(|d| DateTime::parse_from_rfc2822(d).ok())
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
+                .and_then(|d| {
+                    DateTime::parse_from_rfc2822(d)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .or_else(|| {
+                            DateTime::parse_from_rfc3339(d)
+                                .ok()
+                                .map(|dt| dt.with_timezone(&Utc))
+                        })
+                });
+
+            // Check for updated date in Dublin Core extensions
+            let updated_at = item
+                .dublin_core_ext()
+                .and_then(|dc| dc.dates().first())
+                .and_then(|d| {
+                    DateTime::parse_from_rfc3339(d)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .or_else(|| {
+                            DateTime::parse_from_rfc2822(d)
+                                .ok()
+                                .map(|dt| dt.with_timezone(&Utc))
+                        })
+                });
+
+            // Use the most recent date (prefer updated over published)
+            let published_at = match (published_at, updated_at) {
+                (Some(pub_date), Some(upd_date)) => {
+                    if upd_date > pub_date {
+                        upd_date
+                    } else {
+                        pub_date
+                    }
+                }
+                (Some(pub_date), None) => pub_date,
+                (None, Some(upd_date)) => upd_date,
+                (None, None) => Utc::now(),
+            };
 
             // Generate ID from URL
             let id = {
