@@ -611,6 +611,74 @@ Respond with valid JSON in the same format as the original report:
         serde_json::from_str(&json_str)
             .map_err(|e| TerminalError::parse(format!("Failed to parse updated report: {}", e)))
     }
+
+    /// Generate a brief summary of the changes made during follow-up research
+    ///
+    /// Returns a concise, formatted summary suitable for chat display.
+    #[instrument(skip(self, existing_report, updated_report))]
+    pub async fn summarize_followup_changes(
+        &self,
+        question: &str,
+        existing_report: &SynthesizedReport,
+        updated_report: &SynthesizedReport,
+    ) -> Result<String, TerminalError> {
+        let system_prompt = r#"You are a research assistant summarizing changes made to a report.
+
+Generate a brief, readable summary of the NEW information that was added to answer the user's question.
+
+Guidelines:
+- Be concise - 2-4 bullet points maximum
+- Use markdown formatting with bullet points (- )
+- Each bullet should be 1-2 sentences max
+- Focus on the key NEW findings, not everything in the report
+- If a specific topic was requested (like a time period), highlight findings about that topic
+
+Format your response as:
+- First key finding
+- Second key finding
+- Third key finding (if applicable)"#;
+
+        let user_prompt = format!(
+            "User's question: {}\n\nOriginal executive summary:\n{}\n\nUpdated executive summary:\n{}\n\nWhat are the key NEW findings added to answer this question?",
+            question,
+            existing_report.executive_summary,
+            updated_report.executive_summary
+        );
+
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(&self.model)
+            .messages([
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(user_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+            ])
+            .temperature(0.3)
+            .max_tokens(300u32)
+            .build()
+            .map_err(|e| TerminalError::internal(e.to_string()))?;
+
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| TerminalError::api(format!("OpenAI API error: {}", e)))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_ref())
+            .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
+
+        Ok(content.trim().to_string())
+    }
 }
 
 /// Extract JSON from a string that might contain markdown code blocks
