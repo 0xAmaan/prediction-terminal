@@ -154,11 +154,11 @@ export const marketBarVariants: Variants = {
 // ============================================================================
 
 export const priceFlash: Variants = {
-  initial: { backgroundColor: "transparent" },
+  initial: { backgroundColor: "rgba(0, 0, 0, 0)" },
   flash: (isPositive: boolean) => ({
     backgroundColor: isPositive
-      ? ["transparent", "rgba(77, 190, 149, 0.2)", "transparent"]
-      : ["transparent", "rgba(216, 79, 104, 0.2)", "transparent"],
+      ? ["rgba(0, 0, 0, 0)", "rgba(77, 190, 149, 0.2)", "rgba(0, 0, 0, 0)"]
+      : ["rgba(0, 0, 0, 0)", "rgba(216, 79, 104, 0.2)", "rgba(0, 0, 0, 0)"],
     transition: { duration: 0.6, times: [0, 0.3, 1] },
   }),
 };

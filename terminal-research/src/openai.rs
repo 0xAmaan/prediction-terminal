@@ -9,8 +9,10 @@ use async_openai::{
 use serde::{Deserialize, Serialize};
 use terminal_core::TerminalError;
 use tracing::instrument;
+use url::Url;
 
 use crate::exa::ExaSearchResult;
+use crate::types::{MarketContext, OrderBookSummary, RecentTrade};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIClient {
@@ -29,6 +31,57 @@ pub struct SubQuestion {
     pub question: String,
     pub category: String, // "news", "analysis", "historical", "expert_opinion"
     pub search_query: String,
+    /// Purpose of this question for trading analysis
+    #[serde(default)]
+    pub purpose: Option<String>, // "base_rate", "market_pricing", "catalyst", "contrarian", "resolution", "information_asymmetry"
+}
+
+/// Rich source information with metadata for inline citations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceInfo {
+    /// 1-indexed ID for citation references in content
+    pub id: usize,
+    /// The source URL
+    pub url: String,
+    /// Page title (e.g., "Energy Drink Facts | Caffeine, Ingredients & More")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Site/publisher name (e.g., "American Beverage Association")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_name: Option<String>,
+    /// Favicon URL (uses Google's service as fallback)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favicon_url: Option<String>,
+}
+
+impl SourceInfo {
+    /// Create from URL with auto-generated metadata
+    pub fn new(id: usize, url: String, title: Option<String>) -> Self {
+        let favicon_url = Self::get_favicon_url(&url);
+        let site_name = Self::extract_site_name(&url);
+        Self {
+            id,
+            url,
+            title,
+            site_name,
+            favicon_url,
+        }
+    }
+
+    /// Extract domain as site name
+    pub fn extract_site_name(url: &str) -> Option<String> {
+        Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.replace("www.", "")))
+    }
+
+    /// Get favicon using Google's favicon service
+    pub fn get_favicon_url(url: &str) -> Option<String> {
+        Url::parse(url).ok().and_then(|u| {
+            u.host_str()
+                .map(|h| format!("https://www.google.com/s2/favicons?domain={}&sz=32", h))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +91,14 @@ pub struct SynthesizedReport {
     pub sections: Vec<ReportSection>,
     pub key_factors: Vec<KeyFactor>,
     pub confidence_assessment: String,
-    pub sources: Vec<String>,
+    /// Rich source info for inline citations
+    pub sources: Vec<SourceInfo>,
+    /// Sources that aren't cited inline but are still relevant (for backward compat)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub general_sources: Vec<String>,
+    /// Trading-specific analysis (fair value, catalysts, resolution, contrarian view)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trading_analysis: Option<crate::types::TradingAnalysis>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,38 +131,84 @@ impl OpenAIClient {
         self
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, context))]
     pub async fn decompose_question(
         &self,
-        market_title: &str,
-        market_description: &str,
+        context: &MarketContext,
     ) -> Result<DecomposedQuestions, TerminalError> {
-        let system_prompt = r#"You are a research analyst specializing in prediction markets.
-Your task is to decompose a market question into sub-questions that will help gather comprehensive information.
+        let system_prompt = r#"You are a quantitative prediction market analyst. Your job is to find EDGE—where the market price might be wrong.
 
-For each sub-question, assign a category:
-- "news": Recent news and developments
-- "analysis": Expert analysis and opinions
-- "historical": Historical precedents and data
-- "expert_opinion": Domain expert perspectives
+You will receive a market question with current price and trading data. Decompose it into 5-6 sub-questions designed to find trading edge, NOT just general information.
+
+REQUIRED sub-question types (include at least one of each):
+
+1. BASE RATE: "What is the historical frequency of [this type of event]?"
+   - Category: "historical"
+   - Purpose: "base_rate"
+   - Example: "What percentage of incumbent presidents win re-election historically?"
+
+2. MARKET PRICING: "What assumptions is the market making at [current price]?"
+   - Category: "analysis"
+   - Purpose: "market_pricing"
+   - Helps understand what's priced in
+
+3. CATALYSTS: "What upcoming events could move this market significantly?"
+   - Category: "news"
+   - Purpose: "catalyst"
+   - Focus on dated, scheduled events
+
+4. CONTRARIAN: "What's the case against the current market consensus?"
+   - Category: "analysis"
+   - Purpose: "contrarian"
+   - If market is high, search for bear case; if low, search for bull case
+
+5. RESOLUTION: "How exactly does this market resolve and what are edge cases?"
+   - Category: "analysis"
+   - Purpose: "resolution"
+   - Focus on the specific resolution criteria
+
+6. INFORMATION ASYMMETRY: "What might informed traders know that isn't public?"
+   - Category: "news"
+   - Purpose: "information_asymmetry"
+   - Recent insider activity, smart money movements
 
 Respond with valid JSON in this exact format:
 {
-  "main_question": "The original question",
+  "main_question": "The original market question",
   "sub_questions": [
     {
-      "question": "A specific sub-question",
-      "category": "news",
-      "search_query": "Optimized search query for this question"
+      "question": "Specific sub-question",
+      "category": "news|analysis|historical|expert_opinion",
+      "search_query": "Optimized search query for this question",
+      "purpose": "base_rate|market_pricing|catalyst|contrarian|resolution|information_asymmetry"
     }
   ]
 }
 
-Generate 4-6 diverse sub-questions covering different angles."#;
+Generate exactly 6 sub-questions, one for each purpose."#;
 
         let user_prompt = format!(
-            "Market Title: {}\n\nDescription: {}\n\nDecompose this into research sub-questions.",
-            market_title, market_description
+            r#"## Market
+Title: {}
+Description: {}
+
+## Current Market Data
+- Current Price: {}
+- 24h Change: {}
+- 24h Volume: {}
+- Total Volume: {}
+{}
+{}
+
+Decompose this into research sub-questions that account for the current market state."#,
+            context.title,
+            context.description.as_deref().unwrap_or("No description"),
+            format_price(context.current_price),
+            format_price_change(context.current_price, context.price_24h_ago),
+            format_volume(context.volume_24h),
+            format_volume(context.total_volume),
+            format_recent_trades(&context.recent_trades),
+            format_order_book(&context.order_book_summary),
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -143,11 +249,10 @@ Generate 4-6 diverse sub-questions covering different angles."#;
             .map_err(|e| TerminalError::parse(format!("Failed to parse decomposition: {}", e)))
     }
 
-    #[instrument(skip(self, search_results))]
+    #[instrument(skip(self, context, search_results))]
     pub async fn synthesize_report(
         &self,
-        market_title: &str,
-        market_description: &str,
+        context: &MarketContext,
         questions: &DecomposedQuestions,
         search_results: &[(SubQuestion, Vec<ExaSearchResult>)],
     ) -> Result<SynthesizedReport, TerminalError> {
@@ -155,14 +260,43 @@ Generate 4-6 diverse sub-questions covering different angles."#;
 
 Synthesize the provided search results into a detailed research report. Be objective and balanced.
 
+You have access to:
+1. Market title and description
+2. Current market data (price, volume, recent trades, order book)
+3. Research findings from web searches with numbered source IDs
+
+Use the market data to contextualize your analysis. Reference the current probability and recent price movements in your executive summary and confidence assessment.
+
+## Citation Format
+
+You MUST include inline citations for factual claims. Use this exact format:
+[cite:1,2,3:Topic Summary]
+
+Where:
+- Numbers reference source IDs (1-indexed, matching the sources list provided)
+- Topic Summary is a 2-4 word description of what the sources cover
+- Multiple source IDs are comma-separated
+
+Examples:
+- "The FDA recommends 400mg daily limit [cite:1,2:FDA Guidelines]"
+- "Studies show 160-200mg per serving [cite:3,4,5:Caffeine Content]"
+- "Market analysts predict growth [cite:7:Market Analysis]"
+
+Rules:
+1. Cite specific facts, statistics, dates, and quotes
+2. Don't cite common knowledge or your own analysis
+3. Group related sources under one citation when they support the same point
+4. Use descriptive topic summaries (not generic like "Sources" or "References")
+5. Every source should be cited at least once if it contains relevant information
+
 Respond with valid JSON in this exact format:
 {
   "title": "Report title",
-  "executive_summary": "2-3 paragraph summary of key findings",
+  "executive_summary": "2-3 paragraph summary of key findings with inline citations",
   "sections": [
     {
       "heading": "Section heading",
-      "content": "Detailed markdown content with analysis"
+      "content": "Detailed markdown content with analysis and [cite:X:Topic] citations"
     }
   ],
   "key_factors": [
@@ -173,39 +307,80 @@ Respond with valid JSON in this exact format:
     }
   ],
   "confidence_assessment": "Overall assessment of information quality and gaps",
-  "sources": ["url1", "url2"]
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://example.com/article",
+      "title": "Page title if available"
+    }
+  ]
 }
 
 Include 4-6 sections covering different aspects. Use markdown formatting in content."#;
 
-        // Build context from search results
-        let mut context = String::new();
+        // Build sources list with IDs for the AI to reference
+        let mut source_id: usize = 0;
+        let mut sources_list = String::from("## Available Sources (use these IDs in citations)\n\n");
+        let mut research_data = String::new();
+
         for (question, results) in search_results {
-            context.push_str(&format!("\n## {}\n", question.question));
+            research_data.push_str(&format!("\n## {}\n", question.question));
             for result in results.iter().take(5) {
-                if let Some(title) = &result.title {
-                    context.push_str(&format!("\n### {}\n", title));
-                }
-                context.push_str(&format!("URL: {}\n", result.url));
+                source_id += 1;
+                let title = result.title.as_deref().unwrap_or("Untitled");
+
+                // Add to sources list with ID
+                sources_list.push_str(&format!(
+                    "[{}] {} - {}\n",
+                    source_id, result.url, title
+                ));
+
+                // Add to research data with ID reference
+                research_data.push_str(&format!("\n### [Source {}] {}\n", source_id, title));
+                research_data.push_str(&format!("URL: {}\n", result.url));
                 if let Some(date) = &result.published_date {
-                    context.push_str(&format!("Date: {}\n", date));
+                    research_data.push_str(&format!("Date: {}\n", date));
                 }
                 if let Some(highlights) = &result.highlights {
                     for highlight in highlights {
-                        context.push_str(&format!("- {}\n", highlight));
+                        research_data.push_str(&format!("- {}\n", highlight));
                     }
                 }
                 if let Some(text) = &result.text {
                     // Truncate text to avoid token limits
                     let truncated: String = text.chars().take(1500).collect();
-                    context.push_str(&format!("\n{}\n", truncated));
+                    research_data.push_str(&format!("\n{}\n", truncated));
                 }
             }
         }
 
         let user_prompt = format!(
-            "Market: {}\n\nDescription: {}\n\n## Research Data\n{}",
-            market_title, market_description, context
+            r#"## Market
+Title: {}
+Description: {}
+
+## Current Market Data
+- Current Price: {}
+- 24h Change: {}
+- 24h Volume: {}
+- Total Volume: {}
+{}
+{}
+
+{}
+
+## Research Data
+{}"#,
+            context.title,
+            context.description.as_deref().unwrap_or("No description"),
+            format_price(context.current_price),
+            format_price_change(context.current_price, context.price_24h_ago),
+            format_volume(context.volume_24h),
+            format_volume(context.total_volume),
+            format_recent_trades(&context.recent_trades),
+            format_order_book(&context.order_book_summary),
+            sources_list,
+            research_data
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -242,8 +417,20 @@ Include 4-6 sections covering different aspects. Use markdown formatting in cont
 
         let json_str = extract_json(content)?;
 
-        serde_json::from_str(&json_str)
-            .map_err(|e| TerminalError::parse(format!("Failed to parse report: {}", e)))
+        let mut report: SynthesizedReport = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse report: {}", e)))?;
+
+        // Post-process sources to fill in site_name and favicon_url
+        for source in &mut report.sources {
+            if source.site_name.is_none() {
+                source.site_name = SourceInfo::extract_site_name(&source.url);
+            }
+            if source.favicon_url.is_none() {
+                source.favicon_url = SourceInfo::get_favicon_url(&source.url);
+            }
+        }
+
+        Ok(report)
     }
 }
 
@@ -530,26 +717,51 @@ Guidelines:
 - Update the executive summary if significant new findings are added
 - Add any new key factors discovered
 - Update confidence assessment if new information changes certainty
-- Add new sources from the search results
+- Preserve existing source IDs and add new sources with IDs starting from the next available number
 
-Respond with valid JSON in the same format as the original report:
+## Citation Format
+
+You MUST include inline citations for factual claims. Use this exact format:
+[cite:1,2,3:Topic Summary]
+
+Where:
+- Numbers reference source IDs (matching the sources list)
+- Topic Summary is a 2-4 word description
+- Multiple source IDs are comma-separated
+
+Preserve existing citations and add new ones for new information.
+
+Respond with valid JSON in the same format:
 {
   "title": "Same title as original",
-  "executive_summary": "Updated summary incorporating new findings",
+  "executive_summary": "Updated summary with [cite:X:Topic] citations",
   "sections": [...],
   "key_factors": [...],
   "confidence_assessment": "Updated assessment",
-  "sources": ["all sources including new ones"]
+  "sources": [{"id": 1, "url": "...", "title": "..."}]
 }"#;
 
-        // Build context from new search results
+        // Find the max existing source ID
+        let max_existing_id = existing_report.sources.iter().map(|s| s.id).max().unwrap_or(0);
+
+        // Build new sources list with IDs starting from max + 1
+        let mut new_source_id = max_existing_id;
+        let mut new_sources_list = String::from("## New Sources (use these IDs for new citations)\n\n");
         let mut new_context = String::new();
+
         for (query, results) in new_findings {
             new_context.push_str(&format!("\n## Search: {}\n", query));
             for result in results.iter().take(5) {
-                if let Some(title) = &result.title {
-                    new_context.push_str(&format!("\n### {}\n", title));
-                }
+                new_source_id += 1;
+                let title = result.title.as_deref().unwrap_or("Untitled");
+
+                // Add to new sources list
+                new_sources_list.push_str(&format!(
+                    "[{}] {} - {}\n",
+                    new_source_id, result.url, title
+                ));
+
+                new_context.push_str(&format!("\n### [Source {}] {}\n", new_source_id, title));
                 new_context.push_str(&format!("URL: {}\n", result.url));
                 if let Some(date) = &result.published_date {
                     new_context.push_str(&format!("Date: {}\n", date));
@@ -566,12 +778,20 @@ Respond with valid JSON in the same format as the original report:
             }
         }
 
+        // Format existing sources for context
+        let existing_sources_context = existing_report
+            .sources
+            .iter()
+            .map(|s| format!("[{}] {} - {}", s.id, s.url, s.title.as_deref().unwrap_or("Untitled")))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let existing_report_json = serde_json::to_string_pretty(existing_report)
             .map_err(|e| TerminalError::internal(format!("Failed to serialize report: {}", e)))?;
 
         let user_prompt = format!(
-            "## User's Follow-up Question\n{}\n\n## Existing Report (JSON)\n```json\n{}\n```\n\n## New Research Findings\n{}",
-            question, existing_report_json, new_context
+            "## User's Follow-up Question\n{}\n\n## Existing Sources (preserve these)\n{}\n\n{}\n\n## Existing Report (JSON)\n```json\n{}\n```\n\n## New Research Findings\n{}",
+            question, existing_sources_context, new_sources_list, existing_report_json, new_context
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -608,8 +828,20 @@ Respond with valid JSON in the same format as the original report:
 
         let json_str = extract_json(content)?;
 
-        serde_json::from_str(&json_str)
-            .map_err(|e| TerminalError::parse(format!("Failed to parse updated report: {}", e)))
+        let mut report: SynthesizedReport = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse updated report: {}", e)))?;
+
+        // Post-process sources to fill in site_name and favicon_url
+        for source in &mut report.sources {
+            if source.site_name.is_none() {
+                source.site_name = SourceInfo::extract_site_name(&source.url);
+            }
+            if source.favicon_url.is_none() {
+                source.favicon_url = SourceInfo::get_favicon_url(&source.url);
+            }
+        }
+
+        Ok(report)
     }
 
     /// Generate a brief summary of the changes made during follow-up research
@@ -679,6 +911,222 @@ Format your response as:
 
         Ok(content.trim().to_string())
     }
+
+    /// Generate trading-focused analysis from research results
+    ///
+    /// Takes the market context, synthesized report, and search results to produce
+    /// actionable trading intelligence including fair value estimates, catalysts,
+    /// resolution analysis, and contrarian viewpoints.
+    #[instrument(skip(self, context, report, search_results))]
+    pub async fn generate_trading_analysis(
+        &self,
+        context: &MarketContext,
+        report: &SynthesizedReport,
+        search_results: &[(SubQuestion, Vec<crate::exa::ExaSearchResult>)],
+    ) -> Result<crate::types::TradingAnalysis, TerminalError> {
+        let system_prompt = r#"You are a quantitative trading analyst for prediction markets.
+Your job is to translate research into actionable trading intelligence.
+
+You will receive:
+1. Market context (current price, volume, order flow)
+2. A research report with findings
+3. Raw search results
+
+Your task is to produce a TradingAnalysis with:
+
+1. FAIR VALUE ESTIMATE
+   - Estimate a probability RANGE (not a point estimate)
+   - Be specific: "0.52 to 0.58" not "around 0.55"
+   - Consider base rates, current evidence, and uncertainty
+   - Compare to current market price to identify edge
+   - If genuinely uncertain, use a wide range (e.g., 0.40 to 0.60)
+
+2. CATALYSTS
+   - List specific upcoming events with dates when known
+   - Estimate impact level (high/medium/low)
+   - Indicate likely direction if event is favorable
+
+3. RESOLUTION ANALYSIS
+   - Summarize EXACTLY how this market resolves
+   - Flag ANY ambiguities in resolution criteria
+   - Note historical edge cases from similar markets
+
+4. CONTRARIAN ANALYSIS
+   - State what the market consensus appears to be
+   - Make the strongest case AGAINST that consensus
+   - List specific reasons the crowd might be wrong
+   - What would need to happen for the contrarian view to win
+
+Be intellectually honest. If there's no edge, say so. If uncertainty is high, reflect that in a wide fair value range.
+
+Respond with valid JSON matching this exact schema:
+{
+  "fair_value_low": 0.52,
+  "fair_value_high": 0.58,
+  "current_price": 0.55,
+  "implied_edge": 0.0,
+  "estimate_confidence": "high|medium|low",
+  "fair_value_reasoning": "Explanation of fair value estimate",
+  "catalysts": [
+    {
+      "date": "2025-01-15 or null if unknown",
+      "event": "Description of the event",
+      "expected_impact": "high|medium|low",
+      "direction_if_positive": "bullish|bearish or null"
+    }
+  ],
+  "resolution_analysis": {
+    "resolution_summary": "Plain English summary of how this market resolves",
+    "resolution_source": "The exact source used for resolution or null",
+    "ambiguity_flags": ["List of potential ambiguities"],
+    "historical_edge_cases": ["Historical edge cases from similar markets"]
+  },
+  "contrarian_case": {
+    "consensus_view": "What the market consensus appears to be",
+    "contrarian_case": "The case for why consensus might be wrong",
+    "mispricing_reasons": ["Specific reasons the crowd could be wrong"],
+    "contrarian_triggers": ["What would need to happen for contrarian view to win"]
+  }
+}"#;
+
+        // Build search findings summary
+        let search_findings = search_results
+            .iter()
+            .take(10)
+            .map(|(q, results)| {
+                let findings: String = results
+                    .iter()
+                    .take(2)
+                    .filter_map(|r| r.text.as_ref())
+                    .map(|t| {
+                        if t.len() > 200 {
+                            format!("{}...", &t[..200])
+                        } else {
+                            t.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                format!("Q: {}\nFindings: {}", q.question, findings)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Format key factors
+        let key_factors_str = report
+            .key_factors
+            .iter()
+            .map(|f| format!("- {} ({}, {} confidence)", f.factor, f.impact, f.confidence))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Format trade flow summary
+        let trade_flow = if context.recent_trades.is_empty() {
+            "No recent trades".to_string()
+        } else {
+            let buys: Vec<_> = context
+                .recent_trades
+                .iter()
+                .filter(|t| t.side == "buy")
+                .collect();
+            let sells: Vec<_> = context
+                .recent_trades
+                .iter()
+                .filter(|t| t.side == "sell")
+                .collect();
+            let buy_volume: f64 = buys.iter().map(|t| t.size).sum();
+            let sell_volume: f64 = sells.iter().map(|t| t.size).sum();
+            let flow_direction = if buy_volume > sell_volume * 1.5 {
+                "bullish flow"
+            } else if sell_volume > buy_volume * 1.5 {
+                "bearish flow"
+            } else {
+                "balanced"
+            };
+            format!(
+                "{} buys (${:.0}), {} sells (${:.0}) - {}",
+                buys.len(),
+                buy_volume,
+                sells.len(),
+                sell_volume,
+                flow_direction
+            )
+        };
+
+        let user_prompt = format!(
+            r#"## Market
+Title: {title}
+Current Price: {price}
+
+## Market Data
+- 24h Volume: {volume}
+- Recent Trade Flow: {trade_flow}
+- Order Book: {orderbook}
+
+## Research Report Summary
+{executive_summary}
+
+## Key Factors Found
+{key_factors}
+
+## Raw Search Findings
+{search_findings}
+
+Generate a TradingAnalysis for this market."#,
+            title = context.title,
+            price = format_price(context.current_price),
+            volume = format_volume(context.volume_24h),
+            trade_flow = trade_flow,
+            orderbook = format_order_book(&context.order_book_summary),
+            executive_summary = report.executive_summary,
+            key_factors = key_factors_str,
+            search_findings = search_findings,
+        );
+
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(&self.model)
+            .messages([
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(user_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+            ])
+            .temperature(0.4)
+            .max_tokens(2000u32)
+            .build()
+            .map_err(|e| TerminalError::internal(e.to_string()))?;
+
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| TerminalError::api(format!("OpenAI API error: {}", e)))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_ref())
+            .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
+
+        let json_str = extract_json(content)?;
+
+        let mut analysis: crate::types::TradingAnalysis = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse trading analysis: {}", e)))?;
+
+        // Calculate implied edge and set current price
+        let fair_value_midpoint = (analysis.fair_value_low + analysis.fair_value_high) / 2.0;
+        analysis.current_price = context.current_price.unwrap_or(0.0);
+        analysis.implied_edge = fair_value_midpoint - analysis.current_price;
+
+        Ok(analysis)
+    }
 }
 
 /// Extract JSON from a string that might contain markdown code blocks
@@ -699,4 +1147,107 @@ fn extract_json(content: &str) -> Result<String, TerminalError> {
     }
 
     Err(TerminalError::parse("No JSON found in response"))
+}
+
+// ============================================================================
+// Market Context Formatting Helpers
+// ============================================================================
+
+/// Format a price as percentage
+fn format_price(price: Option<f64>) -> String {
+    price
+        .map(|p| format!("{:.1}%", p * 100.0))
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Format the price change between current and previous
+fn format_price_change(current: Option<f64>, previous: Option<f64>) -> String {
+    match (current, previous) {
+        (Some(c), Some(p)) => {
+            let change = (c - p) * 100.0;
+            if change >= 0.0 {
+                format!("+{:.1}%", change)
+            } else {
+                format!("{:.1}%", change)
+            }
+        }
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Format volume with appropriate units (K, M)
+fn format_volume(volume: Option<f64>) -> String {
+    volume
+        .map(|v| {
+            if v >= 1_000_000.0 {
+                format!("${:.1}M", v / 1_000_000.0)
+            } else if v >= 1_000.0 {
+                format!("${:.1}K", v / 1_000.0)
+            } else {
+                format!("${:.0}", v)
+            }
+        })
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Format recent trades for the prompt
+fn format_recent_trades(trades: &[RecentTrade]) -> String {
+    if trades.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::from("\n## Recent Trades\n");
+    for trade in trades.iter().take(10) {
+        output.push_str(&format!(
+            "- {} {:.1}% (${:.0}) at {}\n",
+            trade.side.to_uppercase(),
+            trade.price * 100.0,
+            trade.size,
+            trade.timestamp
+        ));
+    }
+    output
+}
+
+/// Format order book summary for the prompt
+fn format_order_book(summary: &Option<OrderBookSummary>) -> String {
+    match summary {
+        Some(ob) => format!(
+            "\n## Order Book\n- Best Bid: {}\n- Best Ask: {}\n- Spread: {}\n- Bid Depth (10%): ${:.0}\n- Ask Depth (10%): ${:.0}",
+            format_price(ob.best_bid),
+            format_price(ob.best_ask),
+            ob.spread
+                .map(|s| format!("{:.1}%", s * 100.0))
+                .unwrap_or_else(|| "Unknown".to_string()),
+            ob.bid_depth_10pct,
+            ob.ask_depth_10pct,
+        ),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_price() {
+        assert_eq!(format_price(Some(0.73)), "73.0%");
+        assert_eq!(format_price(None), "Unknown");
+    }
+
+    #[test]
+    fn test_format_price_change() {
+        assert_eq!(format_price_change(Some(0.75), Some(0.70)), "+5.0%");
+        assert_eq!(format_price_change(Some(0.65), Some(0.70)), "-5.0%");
+        assert_eq!(format_price_change(None, Some(0.70)), "Unknown");
+    }
+
+    #[test]
+    fn test_format_volume() {
+        assert_eq!(format_volume(Some(1_500_000.0)), "$1.5M");
+        assert_eq!(format_volume(Some(50_000.0)), "$50.0K");
+        assert_eq!(format_volume(Some(500.0)), "$500");
+        assert_eq!(format_volume(None), "Unknown");
+    }
 }
