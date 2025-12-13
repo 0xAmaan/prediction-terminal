@@ -166,7 +166,7 @@ impl ResearchService {
         // Step 1: Decompose question (with market context)
         self.update_status(job_id, ResearchStatus::Decomposing)
             .await;
-        self.update_progress(job_id, "Analyzing market question...", 1, 4, None)
+        self.update_progress(job_id, "Analyzing market question...", 1, 5, None)
             .await;
 
         let questions = self.openai_client.decompose_question(&context).await?;
@@ -194,7 +194,7 @@ impl ResearchService {
                 job_id,
                 &format!("Searching: {}", question.category),
                 2,
-                4,
+                5,
                 Some(&question.search_query),
             )
             .await;
@@ -220,19 +220,32 @@ impl ResearchService {
 
         // Step 3: Analyze (included in synthesis)
         self.update_status(job_id, ResearchStatus::Analyzing).await;
-        self.update_progress(job_id, "Analyzing search results...", 3, 4, None)
+        self.update_progress(job_id, "Analyzing search results...", 3, 5, None)
             .await;
 
         // Step 4: Synthesize report (with market context)
         self.update_status(job_id, ResearchStatus::Synthesizing)
             .await;
-        self.update_progress(job_id, "Generating research report...", 4, 4, None)
+        self.update_progress(job_id, "Generating research report...", 4, 5, None)
             .await;
 
-        let report = self
+        let mut report = self
             .openai_client
             .synthesize_report(&context, &questions, &search_results)
             .await?;
+
+        // Step 5: Generate trading analysis
+        self.update_progress(job_id, "Generating trading analysis...", 5, 5, None)
+            .await;
+
+        let trading_analysis = self
+            .openai_client
+            .generate_trading_analysis(&context, &report, &search_results)
+            .await
+            .ok(); // Don't fail the whole job if trading analysis fails
+
+        // Attach trading analysis to report
+        report.trading_analysis = trading_analysis;
 
         Ok(report)
     }
@@ -707,10 +720,15 @@ impl ResearchService {
         }
 
         // Update the report with new findings
-        let updated_report = self
+        let mut updated_report = self
             .openai_client
             .update_report(existing_report, &search_results, question)
             .await?;
+
+        // Preserve trading_analysis from existing report (it's not regenerated during follow-up)
+        if updated_report.trading_analysis.is_none() {
+            updated_report.trading_analysis = existing_report.trading_analysis.clone();
+        }
 
         // Generate a concise summary of the changes for the chat
         let summary = self
