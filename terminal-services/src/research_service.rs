@@ -177,12 +177,19 @@ impl ResearchService {
         );
 
         // Step 2: Execute searches
+        // Note: Exa API has a 5 requests/second rate limit. We add delays between
+        // requests to stay well under this limit and avoid 429 errors.
         self.update_status(job_id, ResearchStatus::Searching).await;
         let total_searches = questions.sub_questions.len() as u32;
 
         let mut search_results: Vec<(SubQuestion, Vec<ExaSearchResult>)> = Vec::new();
 
         for (i, question) in questions.sub_questions.iter().enumerate() {
+            // Rate limit: Wait 250ms between Exa API calls (max 4 req/sec, well under 5 req/sec limit)
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+
             self.update_progress(
                 job_id,
                 &format!("Searching: {}", question.category),
@@ -688,9 +695,13 @@ impl ResearchService {
             market_id
         );
 
-        // Execute searches
+        // Execute searches with rate limiting (Exa API: 5 req/sec limit)
         let mut search_results: Vec<(String, Vec<ExaSearchResult>)> = Vec::new();
-        for query in &search_queries {
+        for (i, query) in search_queries.iter().enumerate() {
+            // Rate limit: Wait 250ms between Exa API calls
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
             let results = self.exa_client.search_news(query, 7, 5).await?;
             search_results.push((query.clone(), results.results));
         }
