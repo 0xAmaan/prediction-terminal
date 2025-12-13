@@ -16,6 +16,7 @@ import type {
   ResearchJob,
   ChatHistory,
   ChatMessage,
+  ResearchVersionList,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -470,5 +471,40 @@ export const api = {
 
     const data = await response.json();
     return data.message;
+  },
+
+  // ========================================================================
+  // Version History Methods
+  // ========================================================================
+
+  async getVersions(
+    platform: string,
+    marketId: string,
+  ): Promise<ResearchVersionList> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}/versions`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get versions: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async getVersion(
+    platform: string,
+    marketId: string,
+    versionKey: string,
+  ): Promise<ResearchJob> {
+    const response = await fetch(
+      `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}/versions/${encodeURIComponent(versionKey)}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get version: ${response.statusText}`);
+    }
+
+    return response.json();
   },
 };

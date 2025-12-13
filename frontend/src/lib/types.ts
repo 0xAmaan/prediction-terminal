@@ -330,3 +330,17 @@ export interface ChatMessage {
 export interface ChatHistory {
   messages: ChatMessage[];
 }
+
+// ============================================================================
+// Version History Types
+// ============================================================================
+
+export interface ResearchVersion {
+  key: string;
+  created_at: string;
+  version_number: number;
+}
+
+export interface ResearchVersionList {
+  versions: ResearchVersion[];
+}
