@@ -9,6 +9,7 @@ use async_openai::{
 use serde::{Deserialize, Serialize};
 use terminal_core::TerminalError;
 use tracing::instrument;
+use url::Url;
 
 use crate::exa::ExaSearchResult;
 use crate::types::{MarketContext, OrderBookSummary, RecentTrade};
@@ -35,6 +36,54 @@ pub struct SubQuestion {
     pub purpose: Option<String>, // "base_rate", "market_pricing", "catalyst", "contrarian", "resolution", "information_asymmetry"
 }
 
+/// Rich source information with metadata for inline citations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceInfo {
+    /// 1-indexed ID for citation references in content
+    pub id: usize,
+    /// The source URL
+    pub url: String,
+    /// Page title (e.g., "Energy Drink Facts | Caffeine, Ingredients & More")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Site/publisher name (e.g., "American Beverage Association")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_name: Option<String>,
+    /// Favicon URL (uses Google's service as fallback)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favicon_url: Option<String>,
+}
+
+impl SourceInfo {
+    /// Create from URL with auto-generated metadata
+    pub fn new(id: usize, url: String, title: Option<String>) -> Self {
+        let favicon_url = Self::get_favicon_url(&url);
+        let site_name = Self::extract_site_name(&url);
+        Self {
+            id,
+            url,
+            title,
+            site_name,
+            favicon_url,
+        }
+    }
+
+    /// Extract domain as site name
+    pub fn extract_site_name(url: &str) -> Option<String> {
+        Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.replace("www.", "")))
+    }
+
+    /// Get favicon using Google's favicon service
+    pub fn get_favicon_url(url: &str) -> Option<String> {
+        Url::parse(url).ok().and_then(|u| {
+            u.host_str()
+                .map(|h| format!("https://www.google.com/s2/favicons?domain={}&sz=32", h))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SynthesizedReport {
     pub title: String,
@@ -42,7 +91,11 @@ pub struct SynthesizedReport {
     pub sections: Vec<ReportSection>,
     pub key_factors: Vec<KeyFactor>,
     pub confidence_assessment: String,
-    pub sources: Vec<String>,
+    /// Rich source info for inline citations
+    pub sources: Vec<SourceInfo>,
+    /// Sources that aren't cited inline but are still relevant (for backward compat)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub general_sources: Vec<String>,
     /// Trading-specific analysis (fair value, catalysts, resolution, contrarian view)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trading_analysis: Option<crate::types::TradingAnalysis>,
@@ -210,18 +263,40 @@ Synthesize the provided search results into a detailed research report. Be objec
 You have access to:
 1. Market title and description
 2. Current market data (price, volume, recent trades, order book)
-3. Research findings from web searches
+3. Research findings from web searches with numbered source IDs
 
 Use the market data to contextualize your analysis. Reference the current probability and recent price movements in your executive summary and confidence assessment.
+
+## Citation Format
+
+You MUST include inline citations for factual claims. Use this exact format:
+[cite:1,2,3:Topic Summary]
+
+Where:
+- Numbers reference source IDs (1-indexed, matching the sources list provided)
+- Topic Summary is a 2-4 word description of what the sources cover
+- Multiple source IDs are comma-separated
+
+Examples:
+- "The FDA recommends 400mg daily limit [cite:1,2:FDA Guidelines]"
+- "Studies show 160-200mg per serving [cite:3,4,5:Caffeine Content]"
+- "Market analysts predict growth [cite:7:Market Analysis]"
+
+Rules:
+1. Cite specific facts, statistics, dates, and quotes
+2. Don't cite common knowledge or your own analysis
+3. Group related sources under one citation when they support the same point
+4. Use descriptive topic summaries (not generic like "Sources" or "References")
+5. Every source should be cited at least once if it contains relevant information
 
 Respond with valid JSON in this exact format:
 {
   "title": "Report title",
-  "executive_summary": "2-3 paragraph summary of key findings",
+  "executive_summary": "2-3 paragraph summary of key findings with inline citations",
   "sections": [
     {
       "heading": "Section heading",
-      "content": "Detailed markdown content with analysis"
+      "content": "Detailed markdown content with analysis and [cite:X:Topic] citations"
     }
   ],
   "key_factors": [
@@ -232,19 +307,36 @@ Respond with valid JSON in this exact format:
     }
   ],
   "confidence_assessment": "Overall assessment of information quality and gaps",
-  "sources": ["url1", "url2"]
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://example.com/article",
+      "title": "Page title if available"
+    }
+  ]
 }
 
 Include 4-6 sections covering different aspects. Use markdown formatting in content."#;
 
-        // Build research context from search results
+        // Build sources list with IDs for the AI to reference
+        let mut source_id: usize = 0;
+        let mut sources_list = String::from("## Available Sources (use these IDs in citations)\n\n");
         let mut research_data = String::new();
+
         for (question, results) in search_results {
             research_data.push_str(&format!("\n## {}\n", question.question));
             for result in results.iter().take(5) {
-                if let Some(title) = &result.title {
-                    research_data.push_str(&format!("\n### {}\n", title));
-                }
+                source_id += 1;
+                let title = result.title.as_deref().unwrap_or("Untitled");
+
+                // Add to sources list with ID
+                sources_list.push_str(&format!(
+                    "[{}] {} - {}\n",
+                    source_id, result.url, title
+                ));
+
+                // Add to research data with ID reference
+                research_data.push_str(&format!("\n### [Source {}] {}\n", source_id, title));
                 research_data.push_str(&format!("URL: {}\n", result.url));
                 if let Some(date) = &result.published_date {
                     research_data.push_str(&format!("Date: {}\n", date));
@@ -275,6 +367,8 @@ Description: {}
 {}
 {}
 
+{}
+
 ## Research Data
 {}"#,
             context.title,
@@ -285,6 +379,7 @@ Description: {}
             format_volume(context.total_volume),
             format_recent_trades(&context.recent_trades),
             format_order_book(&context.order_book_summary),
+            sources_list,
             research_data
         );
 
@@ -322,8 +417,20 @@ Description: {}
 
         let json_str = extract_json(content)?;
 
-        serde_json::from_str(&json_str)
-            .map_err(|e| TerminalError::parse(format!("Failed to parse report: {}", e)))
+        let mut report: SynthesizedReport = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse report: {}", e)))?;
+
+        // Post-process sources to fill in site_name and favicon_url
+        for source in &mut report.sources {
+            if source.site_name.is_none() {
+                source.site_name = SourceInfo::extract_site_name(&source.url);
+            }
+            if source.favicon_url.is_none() {
+                source.favicon_url = SourceInfo::get_favicon_url(&source.url);
+            }
+        }
+
+        Ok(report)
     }
 }
 
@@ -610,26 +717,51 @@ Guidelines:
 - Update the executive summary if significant new findings are added
 - Add any new key factors discovered
 - Update confidence assessment if new information changes certainty
-- Add new sources from the search results
+- Preserve existing source IDs and add new sources with IDs starting from the next available number
 
-Respond with valid JSON in the same format as the original report:
+## Citation Format
+
+You MUST include inline citations for factual claims. Use this exact format:
+[cite:1,2,3:Topic Summary]
+
+Where:
+- Numbers reference source IDs (matching the sources list)
+- Topic Summary is a 2-4 word description
+- Multiple source IDs are comma-separated
+
+Preserve existing citations and add new ones for new information.
+
+Respond with valid JSON in the same format:
 {
   "title": "Same title as original",
-  "executive_summary": "Updated summary incorporating new findings",
+  "executive_summary": "Updated summary with [cite:X:Topic] citations",
   "sections": [...],
   "key_factors": [...],
   "confidence_assessment": "Updated assessment",
-  "sources": ["all sources including new ones"]
+  "sources": [{"id": 1, "url": "...", "title": "..."}]
 }"#;
 
-        // Build context from new search results
+        // Find the max existing source ID
+        let max_existing_id = existing_report.sources.iter().map(|s| s.id).max().unwrap_or(0);
+
+        // Build new sources list with IDs starting from max + 1
+        let mut new_source_id = max_existing_id;
+        let mut new_sources_list = String::from("## New Sources (use these IDs for new citations)\n\n");
         let mut new_context = String::new();
+
         for (query, results) in new_findings {
             new_context.push_str(&format!("\n## Search: {}\n", query));
             for result in results.iter().take(5) {
-                if let Some(title) = &result.title {
-                    new_context.push_str(&format!("\n### {}\n", title));
-                }
+                new_source_id += 1;
+                let title = result.title.as_deref().unwrap_or("Untitled");
+
+                // Add to new sources list
+                new_sources_list.push_str(&format!(
+                    "[{}] {} - {}\n",
+                    new_source_id, result.url, title
+                ));
+
+                new_context.push_str(&format!("\n### [Source {}] {}\n", new_source_id, title));
                 new_context.push_str(&format!("URL: {}\n", result.url));
                 if let Some(date) = &result.published_date {
                     new_context.push_str(&format!("Date: {}\n", date));
@@ -646,12 +778,20 @@ Respond with valid JSON in the same format as the original report:
             }
         }
 
+        // Format existing sources for context
+        let existing_sources_context = existing_report
+            .sources
+            .iter()
+            .map(|s| format!("[{}] {} - {}", s.id, s.url, s.title.as_deref().unwrap_or("Untitled")))
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let existing_report_json = serde_json::to_string_pretty(existing_report)
             .map_err(|e| TerminalError::internal(format!("Failed to serialize report: {}", e)))?;
 
         let user_prompt = format!(
-            "## User's Follow-up Question\n{}\n\n## Existing Report (JSON)\n```json\n{}\n```\n\n## New Research Findings\n{}",
-            question, existing_report_json, new_context
+            "## User's Follow-up Question\n{}\n\n## Existing Sources (preserve these)\n{}\n\n{}\n\n## Existing Report (JSON)\n```json\n{}\n```\n\n## New Research Findings\n{}",
+            question, existing_sources_context, new_sources_list, existing_report_json, new_context
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -688,8 +828,20 @@ Respond with valid JSON in the same format as the original report:
 
         let json_str = extract_json(content)?;
 
-        serde_json::from_str(&json_str)
-            .map_err(|e| TerminalError::parse(format!("Failed to parse updated report: {}", e)))
+        let mut report: SynthesizedReport = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse updated report: {}", e)))?;
+
+        // Post-process sources to fill in site_name and favicon_url
+        for source in &mut report.sources {
+            if source.site_name.is_none() {
+                source.site_name = SourceInfo::extract_site_name(&source.url);
+            }
+            if source.favicon_url.is_none() {
+                source.favicon_url = SourceInfo::get_favicon_url(&source.url);
+            }
+        }
+
+        Ok(report)
     }
 
     /// Generate a brief summary of the changes made during follow-up research
