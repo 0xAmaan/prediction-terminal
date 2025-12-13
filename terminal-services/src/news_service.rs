@@ -648,61 +648,6 @@ impl NewsService {
         Ok(filtered)
     }
 
-    /// Fallback RSS-based search when Exa is not available
-    async fn fallback_rss_search(
-        &self,
-        market_title: &str,
-        market_id: &str,
-        limit: usize,
-        outcome_titles: Option<&Vec<String>>,
-    ) -> Result<Vec<NewsItem>, NewsServiceError> {
-        let all_items = self.get_rss_items().await.map_err(NewsServiceError::Rss)?;
-
-        // Use must-match terms for strict filtering (same as Exa post-filter)
-        let must_match_terms = extract_must_match_terms(market_title, outcome_titles);
-
-        info!(
-            "RSS fallback for '{}' with must-match terms: {:?}",
-            market_title, must_match_terms
-        );
-
-        // Filter for recent articles (last 30 days) and matching terms
-        let now = chrono::Utc::now();
-        let thirty_days_ago = now - chrono::Duration::days(30);
-
-        let mut matched: Vec<NewsItem> = all_items
-            .into_iter()
-            .filter(|item| {
-                // Filter out articles older than 30 days
-                if item.published_at < thirty_days_ago {
-                    return false;
-                }
-
-                // Require at least one must-match term to be present
-                if must_match_terms.is_empty() {
-                    return true;
-                }
-                let text = format!("{} {}", item.title, item.summary).to_lowercase();
-                must_match_terms
-                    .iter()
-                    .any(|term| text.contains(&term.to_lowercase()))
-            })
-            .map(|mut item| {
-                item.related_market_ids.push(market_id.to_string());
-                item.search_query = Some(market_title.to_string());
-                item
-            })
-            .collect();
-
-        // Sort by recency (newest first)
-        matched.sort_by(|a, b| b.published_at.cmp(&a.published_at));
-
-        // Take only the requested number
-        matched.truncate(limit);
-
-        Ok(matched)
-    }
-
     /// Get full article content via Firecrawl (if configured)
     #[instrument(skip(self))]
     pub async fn get_article_content(&self, url: &str) -> Result<ArticleContent, NewsServiceError> {
