@@ -442,6 +442,11 @@ export const api = {
       `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}/chat`,
     );
 
+    // 404 means no chat history exists yet - return empty history
+    if (response.status === 404) {
+      return { messages: [] };
+    }
+
     if (!response.ok) {
       throw new Error(`Failed to get chat history: ${response.statusText}`);
     }
