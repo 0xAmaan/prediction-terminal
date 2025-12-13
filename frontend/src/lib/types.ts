@@ -131,6 +131,10 @@ export interface PriceCandle {
   low: string;
   close: string;
   volume: string;
+  /** Buy volume during the period (taker buys) */
+  buy_volume: string;
+  /** Sell volume during the period (taker sells) */
+  sell_volume: string;
 }
 
 export interface PriceHistory {
@@ -304,7 +308,14 @@ export interface KeyFactor {
 }
 
 export interface ResearchUpdate {
-  type: "status_changed" | "progress_update" | "completed" | "failed" | "followup_started" | "document_editing" | "followup_completed";
+  type:
+    | "status_changed"
+    | "progress_update"
+    | "completed"
+    | "failed"
+    | "followup_started"
+    | "document_editing"
+    | "followup_completed";
   job_id: string;
   status?: ResearchStatus;
   progress?: ResearchProgress;

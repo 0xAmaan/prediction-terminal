@@ -35,6 +35,8 @@ pub struct AppState {
     pub news_service: Option<Arc<terminal_services::NewsService>>,
     /// Research service (optional - requires EXA_API_KEY and OPENAI_API_KEY)
     pub research_service: Option<Arc<ResearchService>>,
+    /// Trading state (optional - requires TRADING_PRIVATE_KEY)
+    pub trading_state: Option<routes::SharedTradingState>,
 }
 
 #[tokio::main]
@@ -204,6 +206,15 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Initialize trading state (optional - requires TRADING_PRIVATE_KEY)
+    let trading_state = if std::env::var("TRADING_PRIVATE_KEY").is_ok() {
+        info!("Trading private key found - trading endpoints will be available");
+        Some(routes::create_trading_state())
+    } else {
+        info!("No TRADING_PRIVATE_KEY found - trading endpoints disabled");
+        None
+    };
+
     // Create app state
     let state = AppState {
         market_cache,
@@ -216,12 +227,13 @@ async fn main() -> anyhow::Result<()> {
         market_stats_service,
         news_service,
         research_service,
+        trading_state,
     };
 
     // Configure CORS for frontend
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     // Build router

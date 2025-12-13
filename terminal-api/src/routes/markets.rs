@@ -12,7 +12,7 @@ use futures_util::future::join_all;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use terminal_core::{Platform, PredictionMarket, PriceInterval};
+use terminal_core::{Platform, PredictionMarket};
 use terminal_services::{MarketStats, Timeframe};
 use tracing::{debug, error, info, warn};
 
@@ -549,6 +549,9 @@ async fn get_related_markets(
 }
 
 /// Get price history (candles) for a market
+///
+/// Uses a hybrid approach: fetches native price history from the platform API
+/// (complete coverage) and enriches with buy/sell volume from stored trades.
 async fn get_price_history(
     State(state): State<AppState>,
     Path((platform_str, id)): Path<(String, String)>,
@@ -569,67 +572,77 @@ async fn get_price_history(
         }
     };
 
-    // Check if we have any trades for this market
+    // Start tracking this market for trade collection (for volume data)
+    state.trade_collector.track_market(platform, id.clone()).await;
+
+    // Trigger background backfill for trade volume data
     let trade_count = state.trade_storage.get_trade_count(platform, &id).unwrap_or(0);
-
-    // If no trades, do an immediate backfill and start tracking
     if trade_count == 0 {
-        info!("No trades found for {:?}/{}, initiating backfill", platform, id);
-
-        // Start tracking for future updates
-        state.trade_collector.track_market(platform, id.clone()).await;
-
-        // Do immediate backfill (fetch up to 5 pages of historical trades)
-        if let Err(e) = state.trade_collector.backfill_market(platform, &id, 5).await {
-            error!("Failed to backfill trades: {}", e);
-            // Continue anyway - we'll return empty data
-        }
+        debug!("No trades found for {:?}/{}, initiating backfill", platform, id);
+        let _ = state.trade_collector.backfill_market(platform, &id, 5).await;
     }
 
-    // If timeframe is provided, use the convenience method
-    if let Some(timeframe) = params.timeframe {
-        match state.candle_service.get_candles_for_timeframe(platform, &id, &timeframe) {
-            Ok(mut history) => {
-                state.candle_service.fill_gaps(&mut history);
-                return (StatusCode::OK, Json(history)).into_response();
-            }
-            Err(e) => {
-                error!("Failed to fetch price history: {}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: e.to_string(),
-                    }),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    // Otherwise use interval with default time range
-    let interval = params
-        .interval
-        .as_deref()
-        .and_then(PriceInterval::from_str)
-        .unwrap_or_default();
-
+    // Determine the timeframe and corresponding Polymarket interval/fidelity
+    // Each timeframe maps to:
+    // - poly_interval: what to request from Polymarket API
+    // - fidelity: data granularity in minutes (lower = more points)
+    // - from_filter: how far back to show data (None = all)
+    let timeframe = params.timeframe.as_deref().unwrap_or("24H");
     let now = Utc::now();
-    let from = now - Duration::hours(24); // Default to 24h
+    let (poly_interval, fidelity, from_filter) = match timeframe.to_uppercase().as_str() {
+        "1H" => ("1h", Some(1_u32), Some(now - Duration::hours(1))),
+        "24H" => ("1d", Some(15_u32), Some(now - Duration::hours(24))),
+        "7D" => ("1w", Some(60_u32), Some(now - Duration::days(7))),
+        "30D" => ("max", Some(240_u32), Some(now - Duration::days(30))), // KEY FIX: 4-hour fidelity, filtered to 30 days
+        "ALL" | _ => ("max", Some(1440_u32), None), // Full history, daily fidelity
+    };
 
-    match state.candle_service.build_candles(platform, &id, interval, from, now) {
-        Ok(mut history) => {
-            state.candle_service.fill_gaps(&mut history);
-            (StatusCode::OK, Json(history)).into_response()
+    // Fetch native price history from the platform API (complete coverage)
+    match state.market_service.get_native_price_history(platform, &id, poly_interval, fidelity).await {
+        Ok(prices) => {
+            // Build hybrid candles: native prices + trade volumes, with time filtering
+            match state.candle_service.get_hybrid_candles_for_timeframe(
+                platform,
+                &id,
+                prices,
+                timeframe,
+                from_filter,
+            ) {
+                Ok(mut history) => {
+                    state.candle_service.fill_gaps(&mut history);
+                    (StatusCode::OK, Json(history)).into_response()
+                }
+                Err(e) => {
+                    error!("Failed to build hybrid candles: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: e.to_string(),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
         }
         Err(e) => {
-            error!("Failed to fetch price history: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            )
-                .into_response()
+            // Fallback to trade-only approach if native API fails
+            warn!("Native price history failed, falling back to trade-based: {}", e);
+            match state.candle_service.get_candles_for_timeframe(platform, &id, timeframe) {
+                Ok(mut history) => {
+                    state.candle_service.fill_gaps(&mut history);
+                    (StatusCode::OK, Json(history)).into_response()
+                }
+                Err(e) => {
+                    error!("Failed to fetch price history: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: e.to_string(),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
         }
     }
 }

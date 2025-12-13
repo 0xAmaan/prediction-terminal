@@ -500,14 +500,25 @@ pub struct PriceCandle {
     pub low: Decimal,
     /// Closing price
     pub close: Decimal,
-    /// Trading volume during the period
+    /// Trading volume during the period (total)
     pub volume: Decimal,
+    /// Buy volume during the period (taker buys)
+    #[serde(default)]
+    pub buy_volume: Decimal,
+    /// Sell volume during the period (taker sells)
+    #[serde(default)]
+    pub sell_volume: Decimal,
 }
 
 impl PriceCandle {
     /// Check if this is a bullish candle (close > open)
     pub fn is_bullish(&self) -> bool {
         self.close > self.open
+    }
+
+    /// Check if this candle has net buying pressure (buy_volume >= sell_volume)
+    pub fn is_buy_pressure(&self) -> bool {
+        self.buy_volume >= self.sell_volume
     }
 
     /// Get the candle body size (absolute difference between open and close)

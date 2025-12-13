@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, type IChartApi, ColorType, LineSeries, type UTCTimestamp } from "lightweight-charts";
+import {
+  createChart,
+  type IChartApi,
+  type ISeriesApi,
+  ColorType,
+  LineSeries,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -18,6 +25,22 @@ const fey = {
 };
 
 type TimeFrame = "1H" | "24H" | "7D" | "30D" | "ALL";
+
+// Types for crosshair labels
+interface SeriesInfo {
+  series: ISeriesApi<"Line">;
+  name: string;
+  color: string;
+  marketId: string;
+  data: { time: number; value: number }[]; // Store data for interpolation
+}
+
+interface LabelData {
+  name: string;
+  color: string;
+  value: number;
+  y: number;
+}
 
 const TIMEFRAME_TO_INTERVAL: Record<TimeFrame, string> = {
   "1H": "1h",
@@ -44,7 +67,10 @@ export const MultiOutcomeChart = ({
 }: MultiOutcomeChartProps) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesMapRef = useRef<Map<string, SeriesInfo>>(new Map());
   const [timeframe, setTimeframe] = useState<TimeFrame>("7D");
+  const [labels, setLabels] = useState<LabelData[]>([]);
+  const [crosshairX, setCrosshairX] = useState<number | null>(null);
 
   const { data: outcomes, isLoading, error } = useQuery({
     queryKey: ["multi-outcome-prices", platform, marketId, timeframe, top],
@@ -59,11 +85,14 @@ export const MultiOutcomeChart = ({
   useEffect(() => {
     if (!chartContainerRef.current || !outcomes || outcomes.length === 0) return;
 
-    // Clean up previous chart
+    // Clean up previous chart and series map
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
     }
+    seriesMapRef.current.clear();
+    setLabels([]);
+    setCrosshairX(null);
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -110,7 +139,7 @@ export const MultiOutcomeChart = ({
       const series = chart.addSeries(LineSeries, {
         color: outcome.color,
         lineWidth: 2,
-        title: outcome.name.substring(0, 20), // Truncate long names
+        title: "", // Hide Y-axis labels - we have the legend + floating labels
         priceFormat: {
           type: "custom",
           formatter: (price: number) => `${(price * 100).toFixed(0)}%`,
@@ -126,6 +155,15 @@ export const MultiOutcomeChart = ({
       if (chartData.length > 0) {
         series.setData(chartData);
       }
+
+      // Store series info for crosshair labels (including data for interpolation)
+      seriesMapRef.current.set(outcome.market_id, {
+        series,
+        name: outcome.name,
+        color: outcome.color,
+        marketId: outcome.market_id,
+        data: chartData.map((d) => ({ time: d.time as number, value: d.value })),
+      });
     });
 
     chart.timeScale().fitContent();
@@ -140,6 +178,87 @@ export const MultiOutcomeChart = ({
     };
 
     window.addEventListener("resize", handleResize);
+
+    // Helper to find value at timestamp (exact match or interpolate)
+    const findValueAtTime = (
+      data: { time: number; value: number }[],
+      targetTime: number
+    ): number | null => {
+      if (data.length === 0) return null;
+
+      // Binary search for closest point
+      let left = 0;
+      let right = data.length - 1;
+
+      // Handle edge cases
+      if (targetTime <= data[0].time) return data[0].value;
+      if (targetTime >= data[right].time) return data[right].value;
+
+      while (left < right - 1) {
+        const mid = Math.floor((left + right) / 2);
+        if (data[mid].time === targetTime) return data[mid].value;
+        if (data[mid].time < targetTime) left = mid;
+        else right = mid;
+      }
+
+      // Interpolate between left and right
+      const t1 = data[left].time;
+      const t2 = data[right].time;
+      const v1 = data[left].value;
+      const v2 = data[right].value;
+      const ratio = (targetTime - t1) / (t2 - t1);
+      return v1 + (v2 - v1) * ratio;
+    };
+
+    // Subscribe to crosshair move for floating labels
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
+        setLabels([]);
+        setCrosshairX(null);
+        return;
+      }
+
+      setCrosshairX(param.point.x);
+      const newLabels: LabelData[] = [];
+      const targetTime = param.time as number;
+
+      seriesMapRef.current.forEach((info) => {
+        // First try exact match from param.seriesData
+        const exactData = param.seriesData.get(info.series);
+        let value: number | null = null;
+
+        if (exactData && "value" in exactData) {
+          value = exactData.value;
+        } else {
+          // Fall back to interpolation
+          value = findValueAtTime(info.data, targetTime);
+        }
+
+        if (value !== null) {
+          const y = info.series.priceToCoordinate(value);
+          if (y !== null) {
+            newLabels.push({
+              name: info.name,
+              color: info.color,
+              value,
+              y,
+            });
+          }
+        }
+      });
+
+      // Sort by Y position and add spacing to prevent overlap
+      newLabels.sort((a, b) => a.y - b.y);
+      const minSpacing = 24;
+      for (let i = 1; i < newLabels.length; i++) {
+        const prevY = newLabels[i - 1].y;
+        if (newLabels[i].y - prevY < minSpacing) {
+          newLabels[i].y = prevY + minSpacing;
+        }
+      }
+
+      setLabels(newLabels);
+    });
 
     return () => {
       window.removeEventListener("resize", handleResize);
@@ -236,7 +355,27 @@ export const MultiOutcomeChart = ({
             No price history available
           </div>
         ) : (
-          <div ref={chartContainerRef} className="w-full" style={{ height }} />
+          <div className="relative">
+            <div ref={chartContainerRef} className="w-full" style={{ height }} />
+            {/* Floating crosshair labels */}
+            {crosshairX !== null &&
+              labels.map((label, i) => (
+                <div
+                  key={i}
+                  className="absolute pointer-events-none px-2 py-1 rounded text-xs font-semibold text-white whitespace-nowrap shadow-lg"
+                  style={{
+                    left: Math.min(crosshairX + 8, (chartContainerRef.current?.clientWidth ?? 300) - 150),
+                    top: Math.max(4, Math.min(label.y, height - 24)),
+                    transform: "translateY(-50%)",
+                    backgroundColor: label.color,
+                    zIndex: 10,
+                  }}
+                >
+                  {label.name.length > 18 ? `${label.name.substring(0, 18)}…` : label.name}{" "}
+                  {(label.value * 100).toFixed(1)}%
+                </div>
+              ))}
+          </div>
         )}
       </div>
     </div>

@@ -1,0 +1,491 @@
+//! Authenticated CLOB API client for Polymarket
+
+use hmac::{Hmac, Mac};
+use reqwest::header::{HeaderMap, HeaderValue};
+use sha2::Sha256;
+use tracing::{debug, error, info, warn};
+
+use crate::eip712::{current_timestamp, generate_nonce};
+use crate::order::{OrderBuilder, OrderType};
+use crate::types::{
+    ApiCredentials, ApiKeyResponse, OpenOrder, OrderResponse, PostOrderRequest, Result,
+    SignedOrder, TradingError, UserTrade,
+};
+use crate::wallet::TradingWallet;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const CLOB_BASE_URL: &str = "https://clob.polymarket.com";
+
+// Header names
+const HEADER_ADDRESS: &str = "POLY_ADDRESS";
+const HEADER_SIGNATURE: &str = "POLY_SIGNATURE";
+const HEADER_TIMESTAMP: &str = "POLY_TIMESTAMP";
+const HEADER_NONCE: &str = "POLY_NONCE";
+const HEADER_API_KEY: &str = "POLY_API_KEY";
+const HEADER_PASSPHRASE: &str = "POLY_PASSPHRASE";
+
+type HmacSha256 = Hmac<Sha256>;
+
+// ============================================================================
+// CLOB Client
+// ============================================================================
+
+/// Authenticated client for Polymarket CLOB API
+pub struct ClobClient {
+    wallet: TradingWallet,
+    http_client: reqwest::Client,
+    base_url: String,
+}
+
+impl ClobClient {
+    /// Create a new CLOB client with the given wallet
+    pub fn new(wallet: TradingWallet) -> Self {
+        Self {
+            wallet,
+            http_client: reqwest::Client::new(),
+            base_url: CLOB_BASE_URL.to_string(),
+        }
+    }
+
+    /// Create a new CLOB client from environment
+    pub fn from_env() -> Result<Self> {
+        let wallet = TradingWallet::from_env()?;
+        Ok(Self::new(wallet))
+    }
+
+    /// Get the wallet address
+    pub fn address(&self) -> String {
+        self.wallet.address_string()
+    }
+
+    /// Get a reference to the wallet
+    pub fn wallet(&self) -> &TradingWallet {
+        &self.wallet
+    }
+
+    /// Get a mutable reference to the wallet
+    pub fn wallet_mut(&mut self) -> &mut TradingWallet {
+        &mut self.wallet
+    }
+
+    // ========================================================================
+    // L1 Authentication (EIP-712 signing for API key management)
+    // ========================================================================
+
+    /// Build L1 authentication headers
+    async fn build_l1_headers(&self) -> Result<HeaderMap> {
+        let timestamp = current_timestamp();
+        let nonce = generate_nonce();
+
+        let signature = self.wallet.sign_l1_auth(timestamp, nonce).await?;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HEADER_ADDRESS,
+            HeaderValue::from_str(&self.wallet.address_string())
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_SIGNATURE,
+            HeaderValue::from_str(&signature)
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_TIMESTAMP,
+            HeaderValue::from_str(&timestamp.to_string())
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_NONCE,
+            HeaderValue::from_str(&nonce.to_string())
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+
+        Ok(headers)
+    }
+
+    /// Create new API credentials (L1 auth)
+    pub async fn create_api_key(&mut self) -> Result<ApiCredentials> {
+        info!("Creating new API key for wallet {}", self.wallet.address_string());
+
+        let headers = self.build_l1_headers().await?;
+        let url = format!("{}/auth/api-key", self.base_url);
+
+        let response = self
+            .http_client
+            .post(&url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Failed to create API key: {} - {}", status, body);
+            return Err(TradingError::Api(format!(
+                "Failed to create API key: {} - {}",
+                status, body
+            )));
+        }
+
+        let api_key_response: ApiKeyResponse = response.json().await?;
+
+        let credentials = ApiCredentials {
+            api_key: api_key_response.api_key,
+            secret: api_key_response.secret,
+            passphrase: api_key_response.passphrase,
+        };
+
+        self.wallet.set_api_credentials(credentials.clone());
+        info!("API key created successfully");
+
+        Ok(credentials)
+    }
+
+    /// Derive existing API credentials (L1 auth)
+    pub async fn derive_api_key(&mut self) -> Result<ApiCredentials> {
+        info!(
+            "Deriving API key for wallet {}",
+            self.wallet.address_string()
+        );
+
+        let headers = self.build_l1_headers().await?;
+        let url = format!("{}/auth/derive-api-key", self.base_url);
+
+        let response = self.http_client.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            warn!("Failed to derive API key: {} - {}", status, body);
+
+            // If derivation fails, try creating a new one
+            if status == 404 || body.contains("not found") {
+                info!("No existing API key found, creating new one");
+                return self.create_api_key().await;
+            }
+
+            return Err(TradingError::Api(format!(
+                "Failed to derive API key: {} - {}",
+                status, body
+            )));
+        }
+
+        let api_key_response: ApiKeyResponse = response.json().await?;
+
+        let credentials = ApiCredentials {
+            api_key: api_key_response.api_key,
+            secret: api_key_response.secret,
+            passphrase: api_key_response.passphrase,
+        };
+
+        self.wallet.set_api_credentials(credentials.clone());
+        info!("API key derived successfully");
+
+        Ok(credentials)
+    }
+
+    /// Ensure we have API credentials, deriving them if necessary
+    pub async fn ensure_api_key(&mut self) -> Result<()> {
+        if self.wallet.has_api_credentials() {
+            return Ok(());
+        }
+
+        // Try to derive first, then create if that fails
+        self.derive_api_key().await?;
+        Ok(())
+    }
+
+    // ========================================================================
+    // L2 Authentication (HMAC signing for trading operations)
+    // ========================================================================
+
+    /// Build HMAC signature for L2 auth
+    fn build_hmac_signature(
+        &self,
+        secret: &str,
+        timestamp: &str,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> Result<String> {
+        let message = format!("{}{}{}{}", timestamp, method, path, body);
+
+        let secret_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            secret,
+        )
+        .map_err(|e| TradingError::Signing(format!("Invalid secret encoding: {}", e)))?;
+
+        let mut mac = HmacSha256::new_from_slice(&secret_bytes)
+            .map_err(|e| TradingError::Signing(format!("Failed to create HMAC: {}", e)))?;
+
+        mac.update(message.as_bytes());
+        let result = mac.finalize();
+
+        Ok(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            result.into_bytes(),
+        ))
+    }
+
+    /// Build L2 authentication headers
+    fn build_l2_headers(
+        &self,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> Result<HeaderMap> {
+        let credentials = self
+            .wallet
+            .api_credentials()
+            .ok_or_else(|| TradingError::MissingCredentials("API credentials not set".to_string()))?;
+
+        let timestamp = current_timestamp().to_string();
+        let signature = self.build_hmac_signature(
+            &credentials.secret,
+            &timestamp,
+            method,
+            path,
+            body,
+        )?;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HEADER_ADDRESS,
+            HeaderValue::from_str(&self.wallet.address_string())
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_SIGNATURE,
+            HeaderValue::from_str(&signature)
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_TIMESTAMP,
+            HeaderValue::from_str(&timestamp)
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_API_KEY,
+            HeaderValue::from_str(&credentials.api_key)
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+        headers.insert(
+            HEADER_PASSPHRASE,
+            HeaderValue::from_str(&credentials.passphrase)
+                .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
+        );
+
+        Ok(headers)
+    }
+
+    // ========================================================================
+    // Trading Operations (L2 authenticated)
+    // ========================================================================
+
+    /// Submit a signed order to the CLOB
+    pub async fn post_order(
+        &self,
+        signed_order: SignedOrder,
+        order_type: OrderType,
+    ) -> Result<OrderResponse> {
+        debug!("Submitting order: {:?}", signed_order);
+
+        let path = "/order";
+        let request = PostOrderRequest {
+            order: signed_order,
+            owner: self.wallet.address_string(),
+            order_type: order_type.as_str().to_string(),
+        };
+
+        let body = serde_json::to_string(&request)?;
+        let headers = self.build_l2_headers("POST", path, &body)?;
+
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .http_client
+            .post(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Order submission failed: {} - {}", status, body);
+            return Err(TradingError::OrderRejected(format!(
+                "{} - {}",
+                status, body
+            )));
+        }
+
+        let order_response: OrderResponse = response.json().await?;
+
+        if !order_response.success {
+            return Err(TradingError::OrderRejected(
+                order_response.error_msg.unwrap_or_else(|| "Unknown error".to_string()),
+            ));
+        }
+
+        info!(
+            "Order submitted successfully: {:?}",
+            order_response.order_id
+        );
+        Ok(order_response)
+    }
+
+    /// Create and submit an order in one call
+    pub async fn submit_order(
+        &self,
+        token_id: &str,
+        price: f64,
+        size: f64,
+        side: crate::types::Side,
+        order_type: OrderType,
+    ) -> Result<OrderResponse> {
+        let builder = OrderBuilder::new(token_id, price, size, side);
+        let signed_order = builder.build_and_sign(&self.wallet).await?;
+        self.post_order(signed_order, order_type).await
+    }
+
+    /// Cancel an order by ID
+    pub async fn cancel_order(&self, order_id: &str) -> Result<()> {
+        info!("Cancelling order: {}", order_id);
+
+        let path = "/order";
+        let body = serde_json::json!({ "orderID": order_id }).to_string();
+        let headers = self.build_l2_headers("DELETE", path, &body)?;
+
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .http_client
+            .delete(&url)
+            .headers(headers)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Cancel order failed: {} - {}", status, body);
+            return Err(TradingError::Api(format!(
+                "Failed to cancel order: {} - {}",
+                status, body
+            )));
+        }
+
+        info!("Order cancelled successfully: {}", order_id);
+        Ok(())
+    }
+
+    /// Cancel all orders
+    pub async fn cancel_all_orders(&self) -> Result<()> {
+        info!("Cancelling all orders");
+
+        let path = "/cancel-all";
+        let headers = self.build_l2_headers("DELETE", path, "")?;
+
+        let url = format!("{}{}", self.base_url, path);
+        let response = self
+            .http_client
+            .delete(&url)
+            .headers(headers)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Cancel all orders failed: {} - {}", status, body);
+            return Err(TradingError::Api(format!(
+                "Failed to cancel all orders: {} - {}",
+                status, body
+            )));
+        }
+
+        info!("All orders cancelled successfully");
+        Ok(())
+    }
+
+    /// Get open orders
+    pub async fn get_open_orders(&self) -> Result<Vec<OpenOrder>> {
+        debug!("Fetching open orders");
+
+        let path = "/data/orders";
+        let headers = self.build_l2_headers("GET", path, "")?;
+
+        let url = format!("{}{}", self.base_url, path);
+        let response = self.http_client.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TradingError::Api(format!(
+                "Failed to get orders: {} - {}",
+                status, body
+            )));
+        }
+
+        let orders: Vec<OpenOrder> = response.json().await?;
+        Ok(orders)
+    }
+
+    /// Get user's trades
+    pub async fn get_trades(&self) -> Result<Vec<UserTrade>> {
+        debug!("Fetching trades");
+
+        let path = "/data/trades";
+        let headers = self.build_l2_headers("GET", path, "")?;
+
+        let url = format!("{}{}", self.base_url, path);
+        let response = self.http_client.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TradingError::Api(format!(
+                "Failed to get trades: {} - {}",
+                status, body
+            )));
+        }
+
+        let trades: Vec<UserTrade> = response.json().await?;
+        Ok(trades)
+    }
+
+    /// Get USDC balance and allowance for the wallet
+    pub async fn get_balance(&self) -> Result<crate::types::Balance> {
+        let address = self.wallet.address_string();
+
+        let usdc_balance = crate::balance::get_usdc_balance(&address).await?;
+        let usdc_allowance = crate::balance::get_usdc_allowance(&address).await?;
+
+        Ok(crate::types::Balance {
+            usdc_balance,
+            usdc_allowance,
+        })
+    }
+
+    /// Get current positions from trade history
+    pub async fn get_positions(&self) -> Result<Vec<crate::types::Position>> {
+        let trades = self.get_trades().await?;
+        Ok(crate::positions::calculate_positions(&trades))
+    }
+}
+
+impl std::fmt::Debug for ClobClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClobClient")
+            .field("wallet", &self.wallet)
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
