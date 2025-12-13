@@ -711,10 +711,10 @@ impl KalshiClient {
         // Map interval to period (in minutes) and time range
         let (period_interval, duration_secs): (i32, i64) = match interval {
             "1h" => (60, 3600),           // 1 hour periods, 1 hour of data
-            "1d" => (60, 86400),           // 1 hour periods, 24 hours of data
-            "1w" => (1440, 604800),        // 1 day periods, 7 days of data
-            "max" => (1440, 365 * 86400),  // 1 day periods, 1 year of data
-            _ => (1440, 604800),           // Default to 1 week
+            "1d" => (60, 86400),          // 1 hour periods, 24 hours of data
+            "1w" => (1440, 604800),       // 1 day periods, 7 days of data
+            "max" => (1440, 365 * 86400), // 1 day periods, 1 year of data
+            _ => (1440, 604800),          // Default to 1 week
         };
 
         let now = chrono::Utc::now().timestamp();
@@ -727,12 +727,10 @@ impl KalshiClient {
 
         debug!("Fetching candlesticks for {}: {}", market_ticker, url);
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| TerminalError::network(format!("Failed to fetch candlesticks: {}", e)))?;
+        let response =
+            self.client.get(&url).send().await.map_err(|e| {
+                TerminalError::network(format!("Failed to fetch candlesticks: {}", e))
+            })?;
 
         if response.status().as_u16() == 404 {
             return Err(TerminalError::not_found(format!(
@@ -762,7 +760,9 @@ impl KalshiClient {
             .into_iter()
             .filter_map(|c| {
                 // Get price from yes_ask.close (in cents, convert to 0.0-1.0)
-                let price = c.yes_ask.as_ref()
+                let price = c
+                    .yes_ask
+                    .as_ref()
                     .and_then(|ask| ask.close)
                     .map(|cents| cents as f64 / 100.0)?;
 

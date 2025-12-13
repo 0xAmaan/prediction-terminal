@@ -3,8 +3,8 @@
 //! This module provides WebSocket server functionality for streaming
 //! market data to connected clients.
 
-mod subscription;
 mod handler;
+mod subscription;
 
-pub use subscription::SubscriptionManager;
 pub use handler::{SubscriptionEvent, WebSocketState};
+pub use subscription::SubscriptionManager;

@@ -104,10 +104,22 @@ pub fn routes() -> Router<AppState> {
         .route("/markets/:platform/:id/history", get(get_price_history))
         .route("/markets/:platform/:id/related", get(get_related_markets))
         // Multi-outcome / outcome-specific routes
-        .route("/markets/:platform/:id/prices-history", get(get_multi_outcome_prices))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/orderbook", get(get_outcome_orderbook))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/trades", get(get_outcome_trades))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/prices-history", get(get_outcome_prices))
+        .route(
+            "/markets/:platform/:id/prices-history",
+            get(get_multi_outcome_prices),
+        )
+        .route(
+            "/markets/:platform/:id/outcomes/:outcome_id/orderbook",
+            get(get_outcome_orderbook),
+        )
+        .route(
+            "/markets/:platform/:id/outcomes/:outcome_id/trades",
+            get(get_outcome_trades),
+        )
+        .route(
+            "/markets/:platform/:id/outcomes/:outcome_id/prices-history",
+            get(get_outcome_prices),
+        )
 }
 
 /// List markets with optional filtering
@@ -118,14 +130,16 @@ async fn list_markets(
     info!("Listing markets with params: {:?}", params);
 
     // Parse platform filter
-    let platform_filter: Option<Platform> = params.platform.as_ref().and_then(|p| {
-        match p.to_lowercase().as_str() {
-            "kalshi" | "k" => Some(Platform::Kalshi),
-            "polymarket" | "poly" | "p" => Some(Platform::Polymarket),
-            "all" | "" => None,
-            _ => None,
-        }
-    });
+    let platform_filter: Option<Platform> =
+        params
+            .platform
+            .as_ref()
+            .and_then(|p| match p.to_lowercase().as_str() {
+                "kalshi" | "k" => Some(Platform::Kalshi),
+                "polymarket" | "poly" | "p" => Some(Platform::Polymarket),
+                "all" | "" => None,
+                _ => None,
+            });
 
     // Fetch markets
     let result = if let Some(query) = &params.search {
@@ -149,11 +163,7 @@ async fn list_markets(
         Ok(markets) => {
             let count = markets.len();
             info!("Returning {} markets", count);
-            (
-                StatusCode::OK,
-                Json(MarketsResponse { markets, count }),
-            )
-                .into_response()
+            (StatusCode::OK, Json(MarketsResponse { markets, count })).into_response()
         }
         Err(e) => {
             error!("Failed to fetch markets: {}", e);
@@ -289,7 +299,10 @@ async fn get_trades(
     };
 
     // Start tracking this market for ongoing collection
-    state.trade_collector.track_market(platform, id.clone()).await;
+    state
+        .trade_collector
+        .track_market(platform, id.clone())
+        .await;
 
     match state
         .market_service
@@ -397,17 +410,30 @@ async fn get_price_history(
     };
 
     // Check if we have any trades for this market
-    let trade_count = state.trade_storage.get_trade_count(platform, &id).unwrap_or(0);
+    let trade_count = state
+        .trade_storage
+        .get_trade_count(platform, &id)
+        .unwrap_or(0);
 
     // If no trades, do an immediate backfill and start tracking
     if trade_count == 0 {
-        info!("No trades found for {:?}/{}, initiating backfill", platform, id);
+        info!(
+            "No trades found for {:?}/{}, initiating backfill",
+            platform, id
+        );
 
         // Start tracking for future updates
-        state.trade_collector.track_market(platform, id.clone()).await;
+        state
+            .trade_collector
+            .track_market(platform, id.clone())
+            .await;
 
         // Do immediate backfill (fetch up to 5 pages of historical trades)
-        if let Err(e) = state.trade_collector.backfill_market(platform, &id, 5).await {
+        if let Err(e) = state
+            .trade_collector
+            .backfill_market(platform, &id, 5)
+            .await
+        {
             error!("Failed to backfill trades: {}", e);
             // Continue anyway - we'll return empty data
         }
@@ -415,7 +441,10 @@ async fn get_price_history(
 
     // If timeframe is provided, use the convenience method
     if let Some(timeframe) = params.timeframe {
-        match state.candle_service.get_candles_for_timeframe(platform, &id, &timeframe) {
+        match state
+            .candle_service
+            .get_candles_for_timeframe(platform, &id, &timeframe)
+        {
             Ok(mut history) => {
                 state.candle_service.fill_gaps(&mut history);
                 return (StatusCode::OK, Json(history)).into_response();
@@ -443,7 +472,10 @@ async fn get_price_history(
     let now = Utc::now();
     let from = now - Duration::hours(24); // Default to 24h
 
-    match state.candle_service.build_candles(platform, &id, interval, from, now) {
+    match state
+        .candle_service
+        .build_candles(platform, &id, interval, from, now)
+    {
         Ok(mut history) => {
             state.candle_service.fill_gaps(&mut history);
             (StatusCode::OK, Json(history)).into_response()
@@ -471,7 +503,10 @@ async fn get_multi_outcome_prices(
     Path((platform_str, id)): Path<(String, String)>,
     Query(params): Query<MultiOutcomePricesQuery>,
 ) -> impl IntoResponse {
-    info!("Getting multi-outcome prices for {} on {}", id, platform_str);
+    info!(
+        "Getting multi-outcome prices for {} on {}",
+        id, platform_str
+    );
 
     let platform = match parse_platform(&platform_str) {
         Some(p) => p,

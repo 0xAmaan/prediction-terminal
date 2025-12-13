@@ -3,9 +3,9 @@
 //! Handles individual WebSocket connections, message parsing,
 //! and subscription management.
 
-use std::sync::Arc;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Arc;
 use terminal_core::{
     ClientMessage, ErrorCode, MarketNewsContext, NewsItem, Platform, ServerMessage,
     SubscriptionChannel, SubscriptionKey,
@@ -58,7 +58,10 @@ impl WebSocketState {
     }
 
     /// Get a subscription event receiver
-    pub fn create_subscription_event_channel() -> (mpsc::Sender<SubscriptionEvent>, mpsc::Receiver<SubscriptionEvent>) {
+    pub fn create_subscription_event_channel() -> (
+        mpsc::Sender<SubscriptionEvent>,
+        mpsc::Receiver<SubscriptionEvent>,
+    ) {
         mpsc::channel(256)
     }
 
@@ -68,9 +71,15 @@ impl WebSocketState {
     /// It spawns tasks to handle incoming messages and broadcast outgoing messages.
     pub async fn handle_connection<S>(&self, socket: S)
     where
-        S: futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
-            + futures_util::Sink<tokio_tungstenite::tungstenite::Message, Error = tokio_tungstenite::tungstenite::Error>
-            + Send
+        S: futures_util::Stream<
+                Item = Result<
+                    tokio_tungstenite::tungstenite::Message,
+                    tokio_tungstenite::tungstenite::Error,
+                >,
+            > + futures_util::Sink<
+                tokio_tungstenite::tungstenite::Message,
+                Error = tokio_tungstenite::tungstenite::Error,
+            > + Send
             + 'static,
     {
         let client_id = self.subscriptions.new_client_id();
@@ -184,8 +193,8 @@ impl WebSocketState {
 
         match msg {
             Message::Text(text) => {
-                let client_msg: ClientMessage = serde_json::from_str(&text)
-                    .map_err(|e| format!("Invalid JSON: {}", e))?;
+                let client_msg: ClientMessage =
+                    serde_json::from_str(&text).map_err(|e| format!("Invalid JSON: {}", e))?;
 
                 match client_msg {
                     ClientMessage::Subscribe { subscription } => {
@@ -382,7 +391,10 @@ impl WebSocketState {
             key,
             ServerMessage::NewsUpdate {
                 item,
-                market_context: Some(MarketNewsContext { platform, market_id }),
+                market_context: Some(MarketNewsContext {
+                    platform,
+                    market_id,
+                }),
             },
         );
     }

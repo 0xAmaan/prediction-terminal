@@ -11,7 +11,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
 use terminal_core::{NewsFeed, NewsItem, NewsSearchParams, PredictionMarket};
-use terminal_news::{ArticleContent, ExaClient, FirecrawlClient, NewsError, RssClient};
+use terminal_news::{
+    ArticleContent, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError, RssClient,
+};
 
 use crate::market_service::MarketService;
 
@@ -50,9 +52,9 @@ pub struct NewsServiceConfig {
 impl Default for NewsServiceConfig {
     fn default() -> Self {
         Self {
-            rss_cache_ttl_secs: 60,      // RSS feeds don't update faster than this
-            market_cache_ttl_secs: 120,  // Refresh market list every 2 minutes
-            min_relevance_score: 0.35,   // Minimum relevance to show article (raised from 0.15)
+            rss_cache_ttl_secs: 60,     // RSS feeds don't update faster than this
+            market_cache_ttl_secs: 120, // Refresh market list every 2 minutes
+            min_relevance_score: 0.35,  // Minimum relevance to show article (raised from 0.15)
             max_cache_entries: 100,
         }
     }
@@ -61,7 +63,9 @@ impl Default for NewsServiceConfig {
 /// News service for fetching market-relevant news
 pub struct NewsService {
     rss: RssClient,
-    /// Exa.ai client for semantic search (market-specific news)
+    /// Google News client for market-specific search (primary for markets)
+    google_news: GoogleNewsClient,
+    /// Exa.ai client for semantic search (market-specific news, optional fallback)
     exa: Option<ExaClient>,
     firecrawl: Option<FirecrawlClient>,
     market_service: Option<Arc<MarketService>>,
@@ -84,12 +88,13 @@ impl NewsService {
         config: NewsServiceConfig,
     ) -> Self {
         info!(
-            "Initializing NewsService (Exa: {}, Firecrawl: {})",
+            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {})",
             exa_api_key.is_some(),
             firecrawl_api_key.is_some()
         );
         Self {
             rss: RssClient::new(),
+            google_news: GoogleNewsClient::new(),
             exa: exa_api_key.map(ExaClient::new),
             firecrawl: firecrawl_api_key.map(FirecrawlClient::new),
             market_service: None,
@@ -126,11 +131,16 @@ impl NewsService {
                 Ok(mut markets) => {
                     // Sort by volume (highest first) to get truly trending markets
                     markets.sort_by(|a, b| {
-                        b.volume.partial_cmp(&a.volume).unwrap_or(std::cmp::Ordering::Equal)
+                        b.volume
+                            .partial_cmp(&a.volume)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     });
                     // Take top 30 trending markets
                     markets.truncate(30);
-                    info!("Using {} trending markets for news relevance scoring", markets.len());
+                    info!(
+                        "Using {} trending markets for news relevance scoring",
+                        markets.len()
+                    );
                     markets
                 }
                 Err(e) => {
@@ -288,14 +298,18 @@ impl NewsService {
             if cache.len() >= self.config.max_cache_entries {
                 cache.retain(|_, entry| !entry.is_expired());
             }
-            cache.insert(cache_key, CacheEntry::new(feed.clone(), Duration::from_secs(5)));
+            cache.insert(
+                cache_key,
+                CacheEntry::new(feed.clone(), Duration::from_secs(5)),
+            );
         }
 
         Ok(feed)
     }
 
-    /// Get contextual news for a specific market using SEMANTIC SEARCH
-    /// Uses Exa.ai for neural/semantic matching - works for ANY market topic
+    /// Get contextual news for a specific market using Google News RSS
+    /// Primary: Google News RSS with dynamic queries (free, unlimited, very current)
+    /// Fallback: Exa.ai semantic search (optional, if API key configured)
     ///
     /// `outcome_titles` - For multi-outcome markets, the titles of each outcome
     #[instrument(skip(self, outcome_titles))]
@@ -308,7 +322,7 @@ impl NewsService {
     ) -> Result<NewsFeed, NewsServiceError> {
         let cache_key = format!("market:{}:{}", market_id, limit);
 
-        // Check cache first (longer TTL for semantic search to reduce API calls)
+        // Check cache first (10 minute TTL to minimize redundant requests)
         {
             let cache = self.news_cache.read().await;
             if let Some(entry) = cache.get(&cache_key) {
@@ -322,95 +336,186 @@ impl NewsService {
                 }
             }
         }
-        info!("Cache MISS for market news '{}', fetching fresh...", market_id);
-
-        // Build search query from market title and outcomes
-        let search_query = build_semantic_query(market_title, outcome_titles.as_ref());
-
         info!(
-            "=== NEWS SEARCH === market='{}' query='{}' exa_configured={}",
-            market_title, search_query, self.exa.is_some()
+            "Cache MISS for market news '{}', fetching fresh...",
+            market_id
         );
 
-        // Extract key terms that MUST appear in results (for post-filtering)
-        // Use both market title AND outcome names for better filtering
+        info!(
+            "=== MARKET NEWS SEARCH === market='{}' outcomes={:?}",
+            market_title,
+            outcome_titles.as_ref().map(|o| o.len()).unwrap_or(0)
+        );
+
+        // Log the query that will be sent to Google News
+        info!(
+            "Market: '{}' | Outcomes: {:?}",
+            market_title, outcome_titles
+        );
+
+        // Extract key terms for relevance filtering
         let must_match_terms = extract_must_match_terms(market_title, outcome_titles.as_ref());
         info!(
-            "Must-match terms for '{}': {:?}",
-            market_title,
-            must_match_terms
+            "Relevance filter terms for '{}': {:?}",
+            market_title, must_match_terms
         );
 
-        // Try Exa semantic search first (scalable solution)
-        let items = if let Some(exa) = &self.exa {
-            let params = NewsSearchParams {
-                query: Some(search_query.clone()),
-                limit: limit * 4, // Request more because we'll filter
-                time_range: Some("7d".to_string()),
-                market_id: Some(market_id.to_string()),
-            };
+        // Try Google News RSS first (primary source - free, fast, current)
+        let items = match self
+            .google_news
+            .search_market_news(market_title, outcome_titles.as_ref(), limit * 3)
+            .await
+        {
+            Ok(results) => {
+                info!(
+                    "✓ Google News returned {} raw results for market '{}'",
+                    results.len(),
+                    market_title
+                );
 
-            match exa.search_news(&params).await {
-                Ok(results) => {
-                    info!(
-                        "Exa returned {} raw results for market '{}'",
-                        results.len(),
-                        market_title
-                    );
+                // Filter for relevance and tag items with market context
+                let filtered: Vec<NewsItem> = results
+                    .into_iter()
+                    .filter(|item| {
+                        // Filter out articles with suspiciously short titles (parsing errors)
+                        if item.title.len() < 15 {
+                            info!(
+                                "✗ FILTERED OUT (title too short): '{}' (only {} chars)",
+                                item.title,
+                                item.title.len()
+                            );
+                            return false;
+                        }
 
-                    // POST-FILTER: Only keep results that mention at least one must-match term
-                    let filtered: Vec<NewsItem> = results
-                        .into_iter()
-                        .filter(|item| {
-                            if must_match_terms.is_empty() {
-                                info!("No must-match terms, accepting: {}", item.title);
-                                return true;
-                            }
-                            let text = format!("{} {}", item.title, item.summary).to_lowercase();
-                            let matches = must_match_terms.iter().any(|term| {
-                                let term_lower = term.to_lowercase();
-                                text.contains(&term_lower)
-                            });
-                            if matches {
-                                info!("PASS filter: '{}'", item.title);
-                            } else {
-                                info!(
-                                    "REJECT (need {:?}): '{}'",
-                                    must_match_terms, item.title
-                                );
-                            }
-                            matches
-                        })
-                        .take(limit)
-                        .map(|mut item| {
-                            if !item.related_market_ids.contains(&market_id.to_string()) {
-                                item.related_market_ids.push(market_id.to_string());
-                            }
-                            item.search_query = Some(market_title.to_string());
-                            item
-                        })
-                        .collect();
+                        // If no must-match terms, accept all (let Google's relevance stand)
+                        if must_match_terms.is_empty() {
+                            return true;
+                        }
 
-                    info!(
-                        "After filtering: {} results for market '{}'",
-                        filtered.len(),
-                        market_title
-                    );
+                        let text = format!("{} {}", item.title, item.summary).to_lowercase();
 
-                    filtered
-                }
-                Err(e) => {
-                    info!("Exa search FAILED for '{}': {}", market_title, e);
-                    info!("Falling back to RSS search...");
-                    self.fallback_rss_search(market_title, market_id, limit, outcome_titles.as_ref())
-                        .await?
+                        // STRICTER FILTERING: Check for geography + topic relevance
+                        // For location-specific markets (US, China, etc.), require the location
+                        let market_lower = market_title.to_lowercase();
+                        let has_required_geography = if market_lower.contains("us ")
+                            || market_lower.contains(" us")
+                            || market_lower.starts_with("us ") {
+                            // Market is about US - require US/United States/America in article
+                            text.contains("united states")
+                                || text.contains(" us ")
+                                || text.contains("u.s.")
+                                || text.contains("america")
+                                || text.contains("american")
+                        } else if market_lower.contains("china") {
+                            // Market is about China - require China in article
+                            text.contains("china") || text.contains("chinese")
+                        } else if market_lower.contains("europe") {
+                            text.contains("europe") || text.contains("european") || text.contains("eu ")
+                        } else {
+                            // No specific geography requirement
+                            true
+                        };
+
+                        if !has_required_geography {
+                            info!(
+                                "✗ FILTERED OUT (wrong geography): '{}' - doesn't mention required location",
+                                item.title
+                            );
+                            return false;
+                        }
+
+                        // Count how many key terms match
+                        let match_count = must_match_terms
+                            .iter()
+                            .filter(|term| text.contains(&term.to_lowercase()))
+                            .count();
+
+                        // More lenient matching: require fewer matches if we already verified geography
+                        let required_matches = if must_match_terms.len() <= 2 {
+                            1 // For markets with few terms, just need 1
+                        } else if has_required_geography && must_match_terms.len() >= 3 {
+                            // If geography is correct, be more lenient (1-2 terms)
+                            if must_match_terms.len() >= 5 { 2 } else { 1 }
+                        } else {
+                            2 // Default: need 2 matches
+                        };
+
+                        let is_relevant = match_count >= required_matches;
+
+                        if !is_relevant {
+                            info!(
+                                "✗ FILTERED OUT (not enough matches): '{}' - only {}/{} terms matched (need {}): {:?}",
+                                item.title,
+                                match_count,
+                                must_match_terms.len(),
+                                required_matches,
+                                must_match_terms
+                            );
+                        } else {
+                            info!(
+                                "✓ ACCEPTED: '{}' - {}/{} terms matched",
+                                item.title,
+                                match_count,
+                                must_match_terms.len()
+                            );
+                        }
+
+                        is_relevant
+                    })
+                    .take(limit)
+                    .map(|mut item| {
+                        if !item.related_market_ids.contains(&market_id.to_string()) {
+                            item.related_market_ids.push(market_id.to_string());
+                        }
+                        item.search_query = Some(market_title.to_string());
+                        item
+                    })
+                    .collect();
+
+                info!(
+                    "After relevance filtering: {} results for '{}'",
+                    filtered.len(),
+                    market_title
+                );
+
+                filtered
+            }
+            Err(e) => {
+                info!("✗ Google News search failed for '{}': {}", market_title, e);
+
+                // Try Exa as fallback if configured
+                if self.exa.is_some() {
+                    info!("Trying Exa.ai as fallback...");
+                    match self
+                        .try_exa_search(market_title, market_id, limit, outcome_titles.as_ref())
+                        .await
+                    {
+                        Ok(exa_results) => exa_results,
+                        Err(exa_err) => {
+                            info!("Exa.ai also failed: {}", exa_err);
+                            // Final fallback: RSS search
+                            info!("Final fallback: RSS search...");
+                            self.fallback_rss_search(
+                                market_title,
+                                market_id,
+                                limit,
+                                outcome_titles.as_ref(),
+                            )
+                            .await?
+                        }
+                    }
+                } else {
+                    // No Exa, go straight to RSS fallback
+                    info!("No Exa configured, using RSS fallback...");
+                    self.fallback_rss_search(
+                        market_title,
+                        market_id,
+                        limit,
+                        outcome_titles.as_ref(),
+                    )
+                    .await?
                 }
             }
-        } else {
-            // No Exa configured, use RSS fallback
-            info!("NO EXA API KEY - using RSS fallback for market news");
-            self.fallback_rss_search(market_title, market_id, limit, outcome_titles.as_ref())
-                .await?
         };
 
         let feed = NewsFeed {
@@ -419,19 +524,79 @@ impl NewsService {
             next_cursor: None,
         };
 
-        // Cache results (10 seconds for faster iteration during testing)
+        // Cache results (5 minute TTL for market news - faster recovery from bad results)
+        // Don't cache empty results as long - they might be due to overly strict filtering
+        let cache_ttl = if feed.items.is_empty() {
+            Duration::from_secs(60) // 1 minute for empty results
+        } else {
+            Duration::from_secs(300) // 5 minutes for good results
+        };
+
         {
             let mut cache = self.news_cache.write().await;
             if cache.len() >= self.config.max_cache_entries {
                 cache.retain(|_, entry| !entry.is_expired());
             }
-            cache.insert(
-                cache_key,
-                CacheEntry::new(feed.clone(), Duration::from_secs(10)),
-            );
+            cache.insert(cache_key, CacheEntry::new(feed.clone(), cache_ttl));
         }
 
         Ok(feed)
+    }
+
+    /// Try Exa.ai semantic search (optional fallback)
+    async fn try_exa_search(
+        &self,
+        market_title: &str,
+        market_id: &str,
+        limit: usize,
+        outcome_titles: Option<&Vec<String>>,
+    ) -> Result<Vec<NewsItem>, NewsServiceError> {
+        let exa = self
+            .exa
+            .as_ref()
+            .ok_or_else(|| NewsServiceError::NotConfigured("Exa not configured".to_string()))?;
+
+        let search_query = build_semantic_query(market_title, outcome_titles);
+        let must_match_terms = extract_must_match_terms(market_title, outcome_titles);
+
+        let params = NewsSearchParams {
+            query: Some(search_query),
+            limit: limit * 4,
+            time_range: Some("7d".to_string()),
+            market_id: Some(market_id.to_string()),
+        };
+
+        let results = exa
+            .search_news(&params)
+            .await
+            .map_err(NewsServiceError::Rss)?;
+
+        info!("Exa returned {} raw results", results.len());
+
+        // Filter and tag
+        let filtered: Vec<NewsItem> = results
+            .into_iter()
+            .filter(|item| {
+                if must_match_terms.is_empty() {
+                    return true;
+                }
+                let text = format!("{} {}", item.title, item.summary).to_lowercase();
+                must_match_terms
+                    .iter()
+                    .any(|term| text.contains(&term.to_lowercase()))
+            })
+            .take(limit)
+            .map(|mut item| {
+                if !item.related_market_ids.contains(&market_id.to_string()) {
+                    item.related_market_ids.push(market_id.to_string());
+                }
+                item.search_query = Some(market_title.to_string());
+                item
+            })
+            .collect();
+
+        info!("After Exa filtering: {} results", filtered.len());
+        Ok(filtered)
     }
 
     /// Fallback RSS-based search when Exa is not available
@@ -449,8 +614,7 @@ impl NewsService {
 
         info!(
             "RSS fallback for '{}' with must-match terms: {:?}",
-            market_title,
-            must_match_terms
+            market_title, must_match_terms
         );
 
         // Require at least one must-match term to be present
@@ -540,7 +704,10 @@ impl NewsService {
             cache.retain(|_, entry| !entry.is_expired());
             let after = cache.len();
             if before != after {
-                debug!("Cleaned up {} expired article cache entries", before - after);
+                debug!(
+                    "Cleaned up {} expired article cache entries",
+                    before - after
+                );
             }
         }
     }
@@ -549,52 +716,227 @@ impl NewsService {
 /// Extract terms that MUST appear in news results for relevance
 /// Only extracts HIGH-VALUE terms: proper nouns, locations, key topics
 /// Also extracts names from outcome titles when available
-fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<String>>) -> Vec<String> {
+fn extract_must_match_terms(
+    market_title: &str,
+    outcome_titles: Option<&Vec<String>>,
+) -> Vec<String> {
     let mut terms = Vec::new();
 
     // Extensive stop word list - common words that don't indicate topic
     let stop_words: std::collections::HashSet<&str> = [
         // Question words
-        "will", "what", "who", "which", "when", "where", "how", "why",
+        "will",
+        "what",
+        "who",
+        "which",
+        "when",
+        "where",
+        "how",
+        "why",
         // Common verbs
-        "be", "is", "are", "was", "were", "been", "being", "have", "has", "had",
-        "do", "does", "did", "will", "would", "could", "should", "may", "might",
-        "can", "must", "shall", "win", "lose", "become", "meet", "reach", "hit",
-        "make", "take", "get", "give", "find", "think", "say", "said", "go", "come",
+        "be",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "can",
+        "must",
+        "shall",
+        "win",
+        "lose",
+        "become",
+        "meet",
+        "reach",
+        "hit",
+        "make",
+        "take",
+        "get",
+        "give",
+        "find",
+        "think",
+        "say",
+        "said",
+        "go",
+        "come",
         // Articles and prepositions
-        "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by", "from",
-        "up", "down", "out", "off", "over", "under", "again", "further", "then", "once",
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "up",
+        "down",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
         // Common adjectives/adverbs
-        "there", "here", "this", "that", "these", "those", "such", "other", "another",
-        "more", "most", "some", "any", "no", "not", "only", "own", "same", "than",
-        "too", "very", "just", "also", "now", "even", "still", "already", "always",
-        "never", "ever", "often", "sometimes", "usually", "really", "actually",
-        "first", "last", "next", "new", "old", "good", "bad", "great", "little", "big",
-        "high", "low", "long", "short", "early", "late", "least", "less", "many", "much",
+        "there",
+        "here",
+        "this",
+        "that",
+        "these",
+        "those",
+        "such",
+        "other",
+        "another",
+        "more",
+        "most",
+        "some",
+        "any",
+        "no",
+        "not",
+        "only",
+        "own",
+        "same",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
+        "now",
+        "even",
+        "still",
+        "already",
+        "always",
+        "never",
+        "ever",
+        "often",
+        "sometimes",
+        "usually",
+        "really",
+        "actually",
+        "first",
+        "last",
+        "next",
+        "new",
+        "old",
+        "good",
+        "bad",
+        "great",
+        "little",
+        "big",
+        "high",
+        "low",
+        "long",
+        "short",
+        "early",
+        "late",
+        "least",
+        "less",
+        "many",
+        "much",
         // Time words
-        "before", "after", "during", "while", "until", "since", "year", "years",
-        "month", "months", "week", "weeks", "day", "days", "time", "times",
+        "before",
+        "after",
+        "during",
+        "while",
+        "until",
+        "since",
+        "year",
+        "years",
+        "month",
+        "months",
+        "week",
+        "weeks",
+        "day",
+        "days",
+        "time",
+        "times",
         // Market/prediction specific
-        "market", "prediction", "price", "value", "rate", "percent", "percentage",
-        "election", "presidential", "champion", "winner", "championship", "title",
-        "goal", "goals", "point", "points", "score", "game", "match", "season",
-        "country", "world", "worlds", "global", "national", "international",
+        "market",
+        "prediction",
+        "price",
+        "value",
+        "rate",
+        "percent",
+        "percentage",
+        "election",
+        "presidential",
+        "champion",
+        "winner",
+        "championship",
+        "title",
+        "goal",
+        "goals",
+        "point",
+        "points",
+        "score",
+        "game",
+        "match",
+        "season",
+        "country",
+        "world",
+        "worlds",
+        "global",
+        "national",
+        "international",
         // Numbers as words
-        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "hundred", "thousand", "million", "billion",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "hundred",
+        "thousand",
+        "million",
+        "billion",
     ]
     .into_iter()
     .collect();
 
     // Country adjective -> country name mappings
     let country_mappings: std::collections::HashMap<&str, &str> = [
-        ("turkish", "turkey"), ("american", "america"), ("british", "britain"),
-        ("french", "france"), ("german", "germany"), ("chinese", "china"),
-        ("russian", "russia"), ("ukrainian", "ukraine"), ("israeli", "israel"),
-        ("iranian", "iran"), ("brazilian", "brazil"), ("mexican", "mexico"),
-        ("canadian", "canada"), ("japanese", "japan"), ("korean", "korea"),
-        ("indian", "india"), ("chilean", "chile"), ("portuguese", "portugal"),
-        ("honduran", "honduras"), ("venezuelan", "venezuela"),
+        ("turkish", "turkey"),
+        ("american", "america"),
+        ("british", "britain"),
+        ("french", "france"),
+        ("german", "germany"),
+        ("chinese", "china"),
+        ("russian", "russia"),
+        ("ukrainian", "ukraine"),
+        ("israeli", "israel"),
+        ("iranian", "iran"),
+        ("brazilian", "brazil"),
+        ("mexican", "mexico"),
+        ("canadian", "canada"),
+        ("japanese", "japan"),
+        ("korean", "korea"),
+        ("indian", "india"),
+        ("chilean", "chile"),
+        ("portuguese", "portugal"),
+        ("honduran", "honduras"),
+        ("venezuelan", "venezuela"),
         ("californian", "california"),
     ]
     .into_iter()
@@ -603,28 +945,75 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
     // High-value topic words that should be included
     let topic_words: std::collections::HashSet<&str> = [
         // Natural disasters
-        "earthquake", "hurricane", "tornado", "volcano", "tsunami", "wildfire", "flood",
+        "earthquake",
+        "hurricane",
+        "tornado",
+        "volcano",
+        "tsunami",
+        "wildfire",
+        "flood",
         // Crypto
-        "bitcoin", "crypto", "ethereum", "solana", "dogecoin",
+        "bitcoin",
+        "crypto",
+        "ethereum",
+        "solana",
+        "dogecoin",
         // Climate/Environment
-        "climate", "emissions", "carbon",
+        "climate",
+        "emissions",
+        "carbon",
         // Conflict
-        "war", "ceasefire", "invasion", "conflict",
+        "war",
+        "ceasefire",
+        "invasion",
+        "conflict",
         // Economy
-        "recession", "inflation", "unemployment", "gdp", "trillionaire", "billionaire",
+        "recession",
+        "inflation",
+        "unemployment",
+        "gdp",
+        "trillionaire",
+        "billionaire",
         // Health
-        "pandemic", "virus", "vaccine", "covid", "outbreak",
+        "pandemic",
+        "virus",
+        "vaccine",
+        "covid",
+        "outbreak",
         // Space
-        "asteroid", "spacex", "nasa", "mars", "moon", "starship", "rocket",
+        "asteroid",
+        "spacex",
+        "nasa",
+        "mars",
+        "moon",
+        "starship",
+        "rocket",
         // Tech
-        "ai", "artificial", "intelligence", "chatgpt", "openai",
+        "ai",
+        "artificial",
+        "intelligence",
+        "chatgpt",
+        "openai",
         // Nuclear
-        "nuclear", "atomic",
+        "nuclear",
+        "atomic",
         // Sports (specific enough to be useful)
-        "basketball", "football", "baseball", "soccer", "nfl", "nba", "mlb", "fifa",
-        "superbowl", "playoffs", "championship",
+        "basketball",
+        "football",
+        "baseball",
+        "soccer",
+        "nfl",
+        "nba",
+        "mlb",
+        "fifa",
+        "superbowl",
+        "playoffs",
+        "championship",
         // Religion
-        "pope", "vatican", "catholic", "cardinal",
+        "pope",
+        "vatican",
+        "catholic",
+        "cardinal",
     ]
     .into_iter()
     .collect();
@@ -656,14 +1045,43 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
         }
         // Check if it's a proper noun (capitalized) - but exclude common words
         else if word.len() >= 4
-            && word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+            && word
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
         {
             // Blacklist of common capitalized words that aren't useful for filtering
             let capitalized_stop: std::collections::HashSet<&str> = [
-                "Sports", "News", "Media", "Game", "Games", "Video", "Cover", "Athlete",
-                "Team", "Teams", "League", "Association", "Club", "Clubs", "College",
-                "University", "Award", "Awards", "Prize", "Show", "Series", "Event",
-                "Report", "Update", "Watch", "Live", "Breaking", "Latest", "Today",
+                "Sports",
+                "News",
+                "Media",
+                "Game",
+                "Games",
+                "Video",
+                "Cover",
+                "Athlete",
+                "Team",
+                "Teams",
+                "League",
+                "Association",
+                "Club",
+                "Clubs",
+                "College",
+                "University",
+                "Award",
+                "Awards",
+                "Prize",
+                "Show",
+                "Series",
+                "Event",
+                "Report",
+                "Update",
+                "Watch",
+                "Live",
+                "Breaking",
+                "Latest",
+                "Today",
             ]
             .into_iter()
             .collect();
@@ -680,8 +1098,8 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
     // Extract FULL NAMES from outcome titles (e.g., "Will Elon Musk be..." -> "Elon Musk")
     if let Some(outcomes) = outcome_titles {
         let skip_words: std::collections::HashSet<&str> = [
-            "Will", "The", "Be", "Is", "Are", "Who", "What", "Which", "Other", "None",
-            "First", "Next", "World", "Worlds",
+            "Will", "The", "Be", "Is", "Are", "Who", "What", "Which", "Other", "None", "First",
+            "Next", "World", "Worlds",
         ]
         .into_iter()
         .collect();
@@ -698,7 +1116,11 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
 
             for word in &words {
                 let clean: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
-                let is_capitalized = clean.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                let is_capitalized = clean
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
                 let is_skip = skip_words.contains(clean.as_str());
                 let is_stop = stop_words.contains(clean.to_lowercase().as_str());
 
@@ -708,7 +1130,10 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
                     // End of consecutive capitals - save the full name if it's 2+ words
                     if name_parts.len() >= 2 {
                         let full_name = name_parts.join(" ");
-                        if !terms.iter().any(|t: &String| t.to_lowercase() == full_name.to_lowercase()) {
+                        if !terms
+                            .iter()
+                            .any(|t: &String| t.to_lowercase() == full_name.to_lowercase())
+                        {
                             terms.push(full_name);
                         }
                     }
@@ -719,7 +1144,10 @@ fn extract_must_match_terms(market_title: &str, outcome_titles: Option<&Vec<Stri
             // Handle name at end of string
             if name_parts.len() >= 2 {
                 let full_name = name_parts.join(" ");
-                if !terms.iter().any(|t: &String| t.to_lowercase() == full_name.to_lowercase()) {
+                if !terms
+                    .iter()
+                    .any(|t: &String| t.to_lowercase() == full_name.to_lowercase())
+                {
                     terms.push(full_name);
                 }
             }
@@ -760,9 +1188,9 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
     .collect();
 
     let generic_words: std::collections::HashSet<&str> = [
-        "will", "what", "who", "which", "when", "how", "the", "be", "is", "are",
-        "next", "first", "win", "become", "meet", "reach", "hit", "before", "after",
-        "its", "their", "price", "champion", "winner", "goals", "country", "world", "worlds",
+        "will", "what", "who", "which", "when", "how", "the", "be", "is", "are", "next", "first",
+        "win", "become", "meet", "reach", "hit", "before", "after", "its", "their", "price",
+        "champion", "winner", "goals", "country", "world", "worlds",
     ]
     .into_iter()
     .collect();
@@ -791,11 +1219,18 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
             for word in outcome.split_whitespace() {
                 let clean: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
                 if clean.len() >= 3
-                    && clean.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                    && clean
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
                     && !generic_words.contains(clean.to_lowercase().as_str())
                     && !["Will", "The", "Be", "Is", "Are", "Other", "Who"].contains(&clean.as_str())
                 {
-                    if !secondary_terms.iter().any(|t| t.to_lowercase() == clean.to_lowercase()) {
+                    if !secondary_terms
+                        .iter()
+                        .any(|t| t.to_lowercase() == clean.to_lowercase())
+                    {
                         secondary_terms.push(clean);
                     }
                 }
@@ -810,7 +1245,14 @@ fn build_semantic_query(market_title: &str, outcome_titles: Option<&Vec<String>>
         format!("{} news", entity)
     } else if !secondary_terms.is_empty() {
         // For person-based markets: "Elon Musk news"
-        format!("{} news", secondary_terms.into_iter().take(2).collect::<Vec<_>>().join(" "))
+        format!(
+            "{} news",
+            secondary_terms
+                .into_iter()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     } else {
         // Fallback: use cleaned market title
         market_title
@@ -920,10 +1362,17 @@ fn extract_market_entities(markets: &[PredictionMarket]) -> Vec<String> {
         let mut i = 0;
         while i < words.len() {
             let word = words[i];
-            let is_cap = word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+            let is_cap = word
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
 
             // Skip common title words
-            let skip_words = ["Will", "What", "Who", "Which", "When", "How", "The", "Is", "Are", "Can", "Does", "Do"];
+            let skip_words = [
+                "Will", "What", "Who", "Which", "When", "How", "The", "Is", "Are", "Can", "Does",
+                "Do",
+            ];
             if is_cap && !skip_words.contains(&word) && word.len() >= 3 {
                 let mut phrase_words = vec![word];
                 let mut j = i + 1;
@@ -931,7 +1380,11 @@ fn extract_market_entities(markets: &[PredictionMarket]) -> Vec<String> {
                 // Collect consecutive capitalized words
                 while j < words.len() {
                     let next = words[j];
-                    let next_cap = next.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                    let next_cap = next
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false);
                     if next_cap && !skip_words.contains(&next) && next.len() >= 2 {
                         phrase_words.push(next);
                         j += 1;
@@ -943,7 +1396,11 @@ fn extract_market_entities(markets: &[PredictionMarket]) -> Vec<String> {
                 // Add the phrase if it's meaningful
                 let phrase: String = phrase_words
                     .iter()
-                    .map(|w| w.chars().filter(|c| c.is_alphanumeric() || *c == '\'').collect::<String>())
+                    .map(|w| {
+                        w.chars()
+                            .filter(|c| c.is_alphanumeric() || *c == '\'')
+                            .collect::<String>()
+                    })
                     .collect::<Vec<_>>()
                     .join(" ");
 

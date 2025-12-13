@@ -22,10 +22,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// WebSocket upgrade handler
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     info!("WebSocket upgrade request received");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
@@ -44,18 +41,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             let tungstenite_msg = match msg {
-                Message::Text(text) => {
-                    tokio_tungstenite::tungstenite::Message::Text(text.into())
-                }
+                Message::Text(text) => tokio_tungstenite::tungstenite::Message::Text(text.into()),
                 Message::Binary(data) => {
                     tokio_tungstenite::tungstenite::Message::Binary(data.into())
                 }
-                Message::Ping(data) => {
-                    tokio_tungstenite::tungstenite::Message::Ping(data.into())
-                }
-                Message::Pong(data) => {
-                    tokio_tungstenite::tungstenite::Message::Pong(data.into())
-                }
+                Message::Ping(data) => tokio_tungstenite::tungstenite::Message::Ping(data.into()),
+                Message::Pong(data) => tokio_tungstenite::tungstenite::Message::Pong(data.into()),
                 Message::Close(_) => {
                     break;
                 }
@@ -77,12 +68,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 tokio_tungstenite::tungstenite::Message::Binary(data) => {
                     Message::Binary(data.to_vec())
                 }
-                tokio_tungstenite::tungstenite::Message::Ping(data) => {
-                    Message::Ping(data.to_vec())
-                }
-                tokio_tungstenite::tungstenite::Message::Pong(data) => {
-                    Message::Pong(data.to_vec())
-                }
+                tokio_tungstenite::tungstenite::Message::Ping(data) => Message::Ping(data.to_vec()),
+                tokio_tungstenite::tungstenite::Message::Pong(data) => Message::Pong(data.to_vec()),
                 tokio_tungstenite::tungstenite::Message::Close(_) => {
                     break;
                 }
@@ -96,7 +83,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     });
 
     // Create a bridge stream that implements the traits needed by our handler
-    let bridge = BridgeStream { rx, tx: response_tx };
+    let bridge = BridgeStream {
+        rx,
+        tx: response_tx,
+    };
 
     // Handle the connection using our WebSocketState
     state.ws_state.handle_connection(bridge).await;
@@ -113,7 +103,8 @@ struct BridgeStream {
 }
 
 impl futures_util::Stream for BridgeStream {
-    type Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>;
+    type Item =
+        Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,

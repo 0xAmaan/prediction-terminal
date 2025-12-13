@@ -296,18 +296,23 @@ impl MarketService {
                 };
 
                 // Extract series ticker from event_id (e.g., "KXNEWPOPE-70" -> "KXNEWPOPE")
-                let series_ticker = terminal_kalshi::types::KalshiMarket::extract_series_ticker_static(event_id);
+                let series_ticker =
+                    terminal_kalshi::types::KalshiMarket::extract_series_ticker_static(event_id);
 
                 // Sort by yes_price descending and take top N
                 let mut sorted_options = options.clone();
                 sorted_options.sort_by(|a, b| {
-                    let price_a: f64 = a["yes_price"].as_str()
+                    let price_a: f64 = a["yes_price"]
+                        .as_str()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0.0);
-                    let price_b: f64 = b["yes_price"].as_str()
+                    let price_b: f64 = b["yes_price"]
+                        .as_str()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0.0);
-                    price_b.partial_cmp(&price_a).unwrap_or(std::cmp::Ordering::Equal)
+                    price_b
+                        .partial_cmp(&price_a)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 let top_options: Vec<_> = sorted_options.into_iter().take(top).collect();
 
@@ -318,7 +323,11 @@ impl MarketService {
                     let option_name = option["name"].as_str().unwrap_or("Unknown").to_string();
 
                     if !market_ticker.is_empty() {
-                        match self.kalshi.get_candlesticks(series_ticker, market_ticker, interval).await {
+                        match self
+                            .kalshi
+                            .get_candlesticks(series_ticker, market_ticker, interval)
+                            .await
+                        {
                             Ok(history) => {
                                 // Convert Kalshi PriceHistoryPoint to Polymarket format
                                 let history: Vec<PriceHistoryPoint> = history

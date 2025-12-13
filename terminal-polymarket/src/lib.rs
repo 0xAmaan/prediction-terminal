@@ -14,4 +14,4 @@ pub mod websocket;
 
 pub use client::{PolymarketClient, PolymarketCredentials};
 pub use types::{MarketOption, PriceHistoryPoint};
-pub use websocket::{PolymarketWebSocket, PolymarketWebSocketConfig, PolymarketUpdate};
+pub use websocket::{PolymarketUpdate, PolymarketWebSocket, PolymarketWebSocketConfig};

@@ -20,3 +20,4 @@ regex = { workspace = true }
 rss = { workspace = true }
 atom_syndication = { workspace = true }
 quick-xml = { workspace = true }
+urlencoding = "2.1"

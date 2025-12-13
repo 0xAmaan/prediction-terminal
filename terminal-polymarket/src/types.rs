@@ -143,7 +143,10 @@ impl PolymarketMarket {
         }
 
         // Try parsing as comma-separated (fallback)
-        let parts: Vec<&str> = prices_str.trim_matches(|c| c == '[' || c == ']').split(',').collect();
+        let parts: Vec<&str> = prices_str
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .collect();
         if parts.len() >= 2 {
             let yes = Decimal::from_str(parts[0].trim().trim_matches('"')).unwrap_or(Decimal::ZERO);
             let no = Decimal::from_str(parts[1].trim().trim_matches('"')).unwrap_or(Decimal::ZERO);
@@ -204,11 +207,36 @@ impl PolymarketMarket {
     /// Check if category indicates a sports market
     pub fn is_sports_category(category: Option<&str>) -> bool {
         let sports_keywords = [
-            "nfl", "nba", "mlb", "nhl", "mls", "soccer", "football", "basketball",
-            "baseball", "hockey", "tennis", "boxing", "ufc", "mma", "cricket",
-            "f1", "formula 1", "golf", "esports", "counter strike", "valorant",
-            "league of legends", "la liga", "premier league", "champions league",
-            "serie a", "bundesliga", "ncaa", "college football", "college basketball",
+            "nfl",
+            "nba",
+            "mlb",
+            "nhl",
+            "mls",
+            "soccer",
+            "football",
+            "basketball",
+            "baseball",
+            "hockey",
+            "tennis",
+            "boxing",
+            "ufc",
+            "mma",
+            "cricket",
+            "f1",
+            "formula 1",
+            "golf",
+            "esports",
+            "counter strike",
+            "valorant",
+            "league of legends",
+            "la liga",
+            "premier league",
+            "champions league",
+            "serie a",
+            "bundesliga",
+            "ncaa",
+            "college football",
+            "college basketball",
         ];
 
         if let Some(cat) = category {
@@ -229,7 +257,12 @@ impl PolymarketMarket {
                 let team_a = title[..pos].trim().to_string();
                 let team_b = title[pos + sep.len()..].trim();
                 // Remove any trailing question mark or extra text
-                let team_b = team_b.split('?').next().unwrap_or(team_b).trim().to_string();
+                let team_b = team_b
+                    .split('?')
+                    .next()
+                    .unwrap_or(team_b)
+                    .trim()
+                    .to_string();
                 if !team_a.is_empty() && !team_b.is_empty() {
                     return Some((team_a, team_b));
                 }
@@ -242,7 +275,9 @@ impl PolymarketMarket {
     pub fn to_prediction_market(&self) -> terminal_core::PredictionMarket {
         use terminal_core::{MarketStatus, Platform, PredictionMarket};
 
-        let (yes_price, no_price) = self.parse_outcome_prices().unwrap_or((Decimal::ZERO, Decimal::ZERO));
+        let (yes_price, no_price) = self
+            .parse_outcome_prices()
+            .unwrap_or((Decimal::ZERO, Decimal::ZERO));
 
         let status = match (self.active, self.closed) {
             (_, Some(true)) => MarketStatus::Closed,
@@ -253,12 +288,14 @@ impl PolymarketMarket {
         // For grouped markets, use event slug for URL; otherwise use market slug
         let (url, title) = if let Some(group_item) = &self.group_item_title {
             // This is a grouped market (e.g., "Jurassic World" within "Top grossing movie 2025")
-            let event_slug = self.events
+            let event_slug = self
+                .events
                 .as_ref()
                 .and_then(|e| e.first())
                 .and_then(|e| e.slug.clone());
 
-            let event_title = self.events
+            let event_title = self
+                .events
                 .as_ref()
                 .and_then(|e| e.first())
                 .and_then(|e| e.title.clone());
@@ -275,7 +312,10 @@ impl PolymarketMarket {
             (url, title)
         } else {
             // Regular market
-            let url = self.slug.as_ref().map(|s| format!("https://polymarket.com/event/{}", s));
+            let url = self
+                .slug
+                .as_ref()
+                .map(|s| format!("https://polymarket.com/event/{}", s));
             (url, self.question.clone())
         };
 
@@ -449,15 +489,16 @@ pub struct ClobOrderLevel {
 impl ClobOrderbookResponse {
     /// Convert to terminal-core OrderBook
     pub fn to_order_book(&self, market_id: &str, is_yes_token: bool) -> terminal_core::OrderBook {
-        use terminal_core::{OrderBook, OrderBookLevel, Platform};
         use chrono::Utc;
         use std::str::FromStr;
+        use terminal_core::{OrderBook, OrderBookLevel, Platform};
 
         let mut order_book = OrderBook::new(market_id.to_string(), Platform::Polymarket);
         order_book.timestamp = Utc::now();
 
         // Convert bid levels
-        let bids: Vec<OrderBookLevel> = self.bids
+        let bids: Vec<OrderBookLevel> = self
+            .bids
             .iter()
             .filter_map(|level| {
                 let price = Decimal::from_str(&level.price).ok()?;
@@ -467,7 +508,8 @@ impl ClobOrderbookResponse {
             .collect();
 
         // Convert ask levels
-        let asks: Vec<OrderBookLevel> = self.asks
+        let asks: Vec<OrderBookLevel> = self
+            .asks
             .iter()
             .filter_map(|level| {
                 let price = Decimal::from_str(&level.price).ok()?;
@@ -526,9 +568,9 @@ pub struct ClobTrade {
 impl ClobTrade {
     /// Convert to terminal-core Trade
     pub fn to_trade(&self, market_id: &str) -> terminal_core::Trade {
-        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
         use chrono::{TimeZone, Utc};
         use std::str::FromStr;
+        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
 
         let side = match self.side.as_deref() {
             Some("BUY") => Some(TradeSide::Buy),
@@ -536,22 +578,27 @@ impl ClobTrade {
             _ => None,
         };
 
-        let price = self.price
+        let price = self
+            .price
             .as_ref()
             .and_then(|p| Decimal::from_str(p).ok())
             .unwrap_or(Decimal::ZERO);
 
-        let quantity = self.size
+        let quantity = self
+            .size
             .as_ref()
             .and_then(|s| Decimal::from_str(s).ok())
             .unwrap_or(Decimal::ZERO);
 
         // Parse timestamp (could be seconds or milliseconds)
-        let timestamp = self.timestamp
+        let timestamp = self
+            .timestamp
             .map(|ts| {
                 if ts > 10_000_000_000 {
                     // Milliseconds
-                    Utc.timestamp_millis_opt(ts).single().unwrap_or_else(Utc::now)
+                    Utc.timestamp_millis_opt(ts)
+                        .single()
+                        .unwrap_or_else(Utc::now)
                 } else {
                     // Seconds
                     Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now)
@@ -560,7 +607,9 @@ impl ClobTrade {
             .unwrap_or_else(Utc::now);
 
         Trade {
-            id: self.id.clone()
+            id: self
+                .id
+                .clone()
                 .or(self.transaction_hash.clone())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             market_id: market_id.to_string(),
@@ -608,8 +657,8 @@ pub struct DataApiTrade {
 impl DataApiTrade {
     /// Convert to terminal-core Trade
     pub fn to_trade(&self, market_id: &str) -> terminal_core::Trade {
-        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
         use chrono::{TimeZone, Utc};
+        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
 
         let side = match self.side.as_str() {
             "BUY" => Some(TradeSide::Buy),
@@ -624,13 +673,19 @@ impl DataApiTrade {
         };
 
         let timestamp = if self.timestamp > 10_000_000_000 {
-            Utc.timestamp_millis_opt(self.timestamp).single().unwrap_or_else(Utc::now)
+            Utc.timestamp_millis_opt(self.timestamp)
+                .single()
+                .unwrap_or_else(Utc::now)
         } else {
-            Utc.timestamp_opt(self.timestamp, 0).single().unwrap_or_else(Utc::now)
+            Utc.timestamp_opt(self.timestamp, 0)
+                .single()
+                .unwrap_or_else(Utc::now)
         };
 
         Trade {
-            id: self.transaction_hash.clone()
+            id: self
+                .transaction_hash
+                .clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             market_id: market_id.to_string(),
             platform: Platform::Polymarket,
@@ -693,7 +748,10 @@ impl PolymarketEvent {
             _ => MarketStatus::Open,
         };
 
-        let url = self.slug.as_ref().map(|s| format!("https://polymarket.com/event/{}", s));
+        let url = self
+            .slug
+            .as_ref()
+            .map(|s| format!("https://polymarket.com/event/{}", s));
 
         // Sports detection (use PolymarketMarket's helper methods)
         let is_sports = PolymarketMarket::is_sports_category(self.category.as_deref())
@@ -710,7 +768,9 @@ impl PolymarketEvent {
         if self.is_binary() {
             // Single market - use the market's prices directly
             let market = &self.markets[0];
-            let (yes_price, no_price) = market.parse_outcome_prices().unwrap_or((Decimal::ZERO, Decimal::ZERO));
+            let (yes_price, no_price) = market
+                .parse_outcome_prices()
+                .unwrap_or((Decimal::ZERO, Decimal::ZERO));
 
             let (home_odds, away_odds) = if is_sports && home_team.is_some() {
                 (Some(yes_price), Some(no_price))
@@ -739,10 +799,13 @@ impl PolymarketEvent {
                 is_multi_outcome: false,
                 options_json: None,
                 // For binary events, resolution rules may be in child market description
-                resolution_source: self.resolution_source.clone()
+                resolution_source: self
+                    .resolution_source
+                    .clone()
                     .filter(|s| !s.is_empty())
                     .or_else(|| {
-                        self.markets.first()
+                        self.markets
+                            .first()
                             .and_then(|m| m.description.clone())
                             .filter(|d| d.len() > 100) // Detailed rules are longer
                     }),
@@ -764,10 +827,13 @@ impl PolymarketEvent {
             let mut leading_option: Option<(String, Decimal, Option<String>)> = None;
 
             for market in &self.markets {
-                let (yes_price, _) = market.parse_outcome_prices().unwrap_or((Decimal::ZERO, Decimal::ZERO));
+                let (yes_price, _) = market
+                    .parse_outcome_prices()
+                    .unwrap_or((Decimal::ZERO, Decimal::ZERO));
 
                 // Use group_item_title if available, otherwise use question
-                let option_name = market.group_item_title
+                let option_name = market
+                    .group_item_title
                     .clone()
                     .unwrap_or_else(|| market.question.clone());
 
@@ -781,7 +847,9 @@ impl PolymarketEvent {
 
                 // Track leading option (highest probability) with its description
                 match &leading_option {
-                    None => leading_option = Some((option_name, yes_price, market.description.clone())),
+                    None => {
+                        leading_option = Some((option_name, yes_price, market.description.clone()))
+                    }
                     Some((_, current_price, _)) if yes_price > *current_price => {
                         leading_option = Some((option_name, yes_price, market.description.clone()));
                     }
@@ -789,7 +857,8 @@ impl PolymarketEvent {
                 }
             }
 
-            let (leading_name, yes_price, leading_description) = leading_option.unwrap_or(("Unknown".to_string(), Decimal::ZERO, None));
+            let (leading_name, yes_price, leading_description) =
+                leading_option.unwrap_or(("Unknown".to_string(), Decimal::ZERO, None));
             let no_price = Decimal::ONE - yes_price;
 
             // Serialize options to JSON for detail view
@@ -816,12 +885,13 @@ impl PolymarketEvent {
                 is_multi_outcome: true,
                 options_json,
                 // For multi-outcome events, use leading outcome's resolution rules
-                resolution_source: self.resolution_source.clone()
+                resolution_source: self
+                    .resolution_source
+                    .clone()
                     .filter(|s| !s.is_empty())
                     .or_else(|| {
                         // Use leading market's description (the one with highest probability)
-                        leading_description.clone()
-                            .filter(|d| d.len() > 100) // Detailed rules are longer
+                        leading_description.clone().filter(|d| d.len() > 100) // Detailed rules are longer
                     }),
                 // Sports fields - multi-outcome sports are less common, but support them
                 is_sports,

@@ -237,7 +237,11 @@ async fn get_market_news(
 
     // Log raw options_json for debugging
     if let Some(ref json) = market.options_json {
-        info!("Market {} raw options_json (first 1000 chars): {}", id, &json[..json.len().min(1000)]);
+        info!(
+            "Market {} raw options_json (first 1000 chars): {}",
+            id,
+            &json[..json.len().min(1000)]
+        );
     }
 
     // Extract outcome titles from options_json for multi-outcome markets

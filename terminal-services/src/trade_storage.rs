@@ -238,7 +238,16 @@ impl TradeStorage {
             .map_err(TradeStorageError::Database)?
             .filter_map(|r| r.ok())
             .map(
-                |(id, platform_str, market_id, timestamp, price, quantity, outcome_str, side_str)| {
+                |(
+                    id,
+                    platform_str,
+                    market_id,
+                    timestamp,
+                    price,
+                    quantity,
+                    outcome_str,
+                    side_str,
+                )| {
                     Trade {
                         id,
                         market_id,
@@ -448,7 +457,9 @@ mod tests {
         let stored = storage.store_trades(&trades).unwrap();
         assert_eq!(stored, 3);
 
-        let count = storage.get_trade_count(Platform::Kalshi, "market1").unwrap();
+        let count = storage
+            .get_trade_count(Platform::Kalshi, "market1")
+            .unwrap();
         assert_eq!(count, 3);
     }
 

@@ -80,9 +80,8 @@ async fn main() -> anyhow::Result<()> {
     // Initialize trade storage (SQLite database)
     let db_path = std::env::var("TRADES_DB_PATH").unwrap_or_else(|_| "data/trades.db".to_string());
     info!("Initializing trade storage at: {}", db_path);
-    let trade_storage = Arc::new(
-        TradeStorage::new(&db_path).expect("Failed to initialize trade storage"),
-    );
+    let trade_storage =
+        Arc::new(TradeStorage::new(&db_path).expect("Failed to initialize trade storage"));
 
     // Initialize candle service
     let candle_service = Arc::new(CandleService::new(trade_storage.clone()));
@@ -112,11 +111,8 @@ async fn main() -> anyhow::Result<()> {
             firecrawl_api_key.is_some()
         );
 
-        let mut news_service = NewsService::new(
-            exa_api_key,
-            firecrawl_api_key,
-            NewsServiceConfig::default(),
-        );
+        let mut news_service =
+            NewsService::new(exa_api_key, firecrawl_api_key, NewsServiceConfig::default());
 
         // Connect to market service for relevance scoring
         news_service.set_market_service(market_service.clone());
@@ -157,7 +153,9 @@ async fn main() -> anyhow::Result<()> {
     let aggregator = Arc::new(aggregator);
     let aggregator_for_events = Arc::clone(&aggregator);
     tokio::spawn(async move {
-        aggregator_for_events.process_subscription_events(subscription_rx).await;
+        aggregator_for_events
+            .process_subscription_events(subscription_rx)
+            .await;
     });
 
     // Create app state

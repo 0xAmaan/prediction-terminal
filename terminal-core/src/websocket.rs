@@ -100,13 +100,9 @@ impl SubscriptionType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Subscription confirmed
-    Subscribed {
-        subscription: SubscriptionType,
-    },
+    Subscribed { subscription: SubscriptionType },
     /// Unsubscription confirmed
-    Unsubscribed {
-        subscription: SubscriptionType,
-    },
+    Unsubscribed { subscription: SubscriptionType },
     /// Price update for a market
     PriceUpdate {
         platform: Platform,
@@ -134,10 +130,7 @@ pub enum ServerMessage {
         trade: Trade,
     },
     /// Error message
-    Error {
-        code: ErrorCode,
-        message: String,
-    },
+    Error { code: ErrorCode, message: String },
     /// Pong response to client ping
     Pong {
         /// Echo back client timestamp
@@ -227,17 +220,26 @@ pub enum SubscriptionChannel {
 impl From<&SubscriptionType> for SubscriptionKey {
     fn from(sub: &SubscriptionType) -> Self {
         match sub {
-            SubscriptionType::Price { platform, market_id } => Self {
+            SubscriptionType::Price {
+                platform,
+                market_id,
+            } => Self {
                 platform: *platform,
                 market_id: market_id.clone(),
                 channel: SubscriptionChannel::Price,
             },
-            SubscriptionType::OrderBook { platform, market_id } => Self {
+            SubscriptionType::OrderBook {
+                platform,
+                market_id,
+            } => Self {
                 platform: *platform,
                 market_id: market_id.clone(),
                 channel: SubscriptionChannel::OrderBook,
             },
-            SubscriptionType::Trades { platform, market_id } => Self {
+            SubscriptionType::Trades {
+                platform,
+                market_id,
+            } => Self {
                 platform: *platform,
                 market_id: market_id.clone(),
                 channel: SubscriptionChannel::Trades,
@@ -247,7 +249,10 @@ impl From<&SubscriptionType> for SubscriptionKey {
                 market_id: "__global_news__".to_string(),
                 channel: SubscriptionChannel::GlobalNews,
             },
-            SubscriptionType::MarketNews { platform, market_id } => Self {
+            SubscriptionType::MarketNews {
+                platform,
+                market_id,
+            } => Self {
                 platform: *platform,
                 market_id: market_id.clone(),
                 channel: SubscriptionChannel::MarketNews,

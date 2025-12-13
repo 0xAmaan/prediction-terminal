@@ -173,7 +173,12 @@ impl KalshiMarket {
         if let Some(pos) = event_ticker.rfind('-') {
             // Check if everything after the hyphen starts with a digit
             let suffix = &event_ticker[pos + 1..];
-            if suffix.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            if suffix
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+            {
                 return &event_ticker[..pos];
             }
         }
@@ -221,11 +226,36 @@ impl KalshiMarket {
     /// Check if category indicates a sports market
     pub fn is_sports_category(category: Option<&str>) -> bool {
         let sports_keywords = [
-            "nfl", "nba", "mlb", "nhl", "mls", "soccer", "football", "basketball",
-            "baseball", "hockey", "tennis", "boxing", "ufc", "mma", "cricket",
-            "f1", "formula 1", "golf", "esports", "counter strike", "valorant",
-            "league of legends", "la liga", "premier league", "champions league",
-            "serie a", "bundesliga", "ncaa", "college football", "college basketball",
+            "nfl",
+            "nba",
+            "mlb",
+            "nhl",
+            "mls",
+            "soccer",
+            "football",
+            "basketball",
+            "baseball",
+            "hockey",
+            "tennis",
+            "boxing",
+            "ufc",
+            "mma",
+            "cricket",
+            "f1",
+            "formula 1",
+            "golf",
+            "esports",
+            "counter strike",
+            "valorant",
+            "league of legends",
+            "la liga",
+            "premier league",
+            "champions league",
+            "serie a",
+            "bundesliga",
+            "ncaa",
+            "college football",
+            "college basketball",
         ];
 
         if let Some(cat) = category {
@@ -246,7 +276,12 @@ impl KalshiMarket {
                 let team_a = title[..pos].trim().to_string();
                 let team_b = title[pos + sep.len()..].trim();
                 // Remove any trailing question mark or extra text
-                let team_b = team_b.split('?').next().unwrap_or(team_b).trim().to_string();
+                let team_b = team_b
+                    .split('?')
+                    .next()
+                    .unwrap_or(team_b)
+                    .trim()
+                    .to_string();
                 if !team_a.is_empty() && !team_b.is_empty() {
                     return Some((team_a, team_b));
                 }
@@ -269,11 +304,15 @@ impl KalshiMarket {
         // URL format: https://kalshi.com/markets/{series_ticker}
         // Extract series_ticker from event_ticker by stripping numeric suffix
         // e.g., KXELONMARS-99 -> KXELONMARS
-        let series_ticker = self.event_ticker
+        let series_ticker = self
+            .event_ticker
             .as_ref()
             .map(|et| Self::extract_series_ticker(et))
             .unwrap_or(&self.ticker);
-        let url = Some(format!("https://kalshi.com/markets/{}", series_ticker.to_lowercase()));
+        let url = Some(format!(
+            "https://kalshi.com/markets/{}",
+            series_ticker.to_lowercase()
+        ));
 
         // Sports detection
         let is_sports = Self::is_sports_category(self.category.as_deref())
@@ -416,12 +455,9 @@ impl KalshiOrderbook {
     /// - YES bids = orders to buy YES
     /// - NO bids = orders to buy NO (which is equivalent to selling YES)
     /// So: YES asks are derived from NO bids (at inverted prices: 100 - price)
-    pub fn to_order_book(
-        &self,
-        market_id: &str,
-    ) -> terminal_core::OrderBook {
-        use terminal_core::{OrderBook, OrderBookLevel, Platform};
+    pub fn to_order_book(&self, market_id: &str) -> terminal_core::OrderBook {
         use chrono::Utc;
+        use terminal_core::{OrderBook, OrderBookLevel, Platform};
 
         let mut order_book = OrderBook::new(market_id.to_string(), Platform::Kalshi);
         order_book.timestamp = Utc::now();
@@ -544,8 +580,8 @@ pub struct KalshiTrade {
 impl KalshiTrade {
     /// Convert to terminal-core Trade
     pub fn to_trade(&self, market_id: &str) -> terminal_core::Trade {
-        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
         use chrono::Utc;
+        use terminal_core::{Platform, Trade, TradeOutcome, TradeSide};
 
         let (outcome, side) = match self.taker_side.as_deref() {
             Some("yes") => (TradeOutcome::Yes, Some(TradeSide::Buy)),
@@ -553,12 +589,16 @@ impl KalshiTrade {
             _ => (TradeOutcome::Yes, None),
         };
 
-        let price = self.yes_price
+        let price = self
+            .yes_price
             .map(|p| Decimal::from(p) / Decimal::from(100))
             .unwrap_or(Decimal::ZERO);
 
         Trade {
-            id: self.trade_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            id: self
+                .trade_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             market_id: market_id.to_string(),
             platform: Platform::Kalshi,
             timestamp: self.created_time.unwrap_or_else(Utc::now),
@@ -664,10 +704,7 @@ pub fn markets_to_multi_outcome(
     let leader_price = leader.yes_price();
 
     // Sum volume across all markets in the event
-    let total_volume: i64 = markets
-        .iter()
-        .map(|m| m.volume.unwrap_or(0))
-        .sum();
+    let total_volume: i64 = markets.iter().map(|m| m.volume.unwrap_or(0)).sum();
 
     // Use earliest close time from all markets
     let close_time = markets

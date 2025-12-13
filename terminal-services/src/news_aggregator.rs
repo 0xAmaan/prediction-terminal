@@ -30,8 +30,8 @@ pub struct NewsAggregatorConfig {
 impl Default for NewsAggregatorConfig {
     fn default() -> Self {
         Self {
-            global_poll_interval_secs: 5,  // 5 seconds for RSS
-            market_poll_interval_secs: 5,  // 5 seconds for RSS
+            global_poll_interval_secs: 5, // 5 seconds for RSS
+            market_poll_interval_secs: 5, // 5 seconds for RSS
             articles_per_poll: 20,
         }
     }
@@ -160,7 +160,10 @@ impl NewsAggregator {
         let new_articles = self.filter_new_articles(feed.items).await;
 
         if !new_articles.is_empty() {
-            info!("Broadcasting {} new global news articles", new_articles.len());
+            info!(
+                "Broadcasting {} new global news articles",
+                new_articles.len()
+            );
             for article in new_articles {
                 self.ws_state.broadcast_global_news(article);
             }
@@ -263,10 +266,7 @@ impl NewsAggregator {
             // Since HashSet doesn't maintain order, we just clear it
             // This is acceptable because duplicates will be rare after cleanup
             seen.clear();
-            info!(
-                "Cleared seen articles cache (was {} entries)",
-                before
-            );
+            info!("Cleared seen articles cache (was {} entries)", before);
         }
     }
 }

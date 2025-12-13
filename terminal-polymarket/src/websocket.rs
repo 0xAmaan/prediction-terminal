@@ -16,8 +16,8 @@ use tokio::time::interval;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
-use terminal_core::{OrderBook, OrderBookLevel, Platform, Trade, TradeOutcome, TradeSide};
 use crate::client::PolymarketCredentials;
+use terminal_core::{OrderBook, OrderBookLevel, Platform, Trade, TradeOutcome, TradeSide};
 
 /// Polymarket WebSocket URL (market channel - no auth required)
 /// Note: The URL includes /ws/market path for the market channel subscription
@@ -177,10 +177,7 @@ pub enum PolymarketUpdate {
         best_ask: Option<Decimal>,
     },
     /// Last trade price
-    Trade {
-        asset_id: String,
-        trade: Trade,
-    },
+    Trade { asset_id: String, trade: Trade },
     /// Connection state change
     ConnectionState {
         connected: bool,
@@ -442,7 +439,10 @@ impl PolymarketWebSocket {
             }
 
             let delay = RECONNECT_DELAY_BASE * 2u32.pow(reconnect_attempts - 1);
-            info!("[Polymarket WS] Reconnecting in {:?} (attempt {})", delay, reconnect_attempts);
+            info!(
+                "[Polymarket WS] Reconnecting in {:?} (attempt {})",
+                delay, reconnect_attempts
+            );
             tokio::time::sleep(delay).await;
         }
     }
@@ -465,7 +465,8 @@ impl PolymarketWebSocket {
             }
 
             // Check event_type if present
-            let event_type = json.get("event_type")
+            let event_type = json
+                .get("event_type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
@@ -483,7 +484,8 @@ impl PolymarketWebSocket {
                 "price_change" | "" if json.get("changes").is_some() => {
                     if let Ok(price_change) = serde_json::from_value::<PriceChangeMessage>(json) {
                         debug!("[Polymarket WS] Price change for {}", price_change.asset_id);
-                        let changes: Vec<(Decimal, Decimal, String)> = price_change.changes
+                        let changes: Vec<(Decimal, Decimal, String)> = price_change
+                            .changes
                             .iter()
                             .filter_map(|c| {
                                 let price = c.price.parse::<Decimal>().ok()?;
@@ -500,7 +502,9 @@ impl PolymarketWebSocket {
                         });
                     }
                 }
-                "last_trade_price" | "" if json.get("price").is_some() && !json.get("bids").is_some() => {
+                "last_trade_price" | ""
+                    if json.get("price").is_some() && !json.get("bids").is_some() =>
+                {
                     if let Ok(trade) = serde_json::from_value::<LastTradePriceMessage>(json) {
                         debug!("[Polymarket WS] Last trade price for {}", trade.asset_id);
                         let trade_obj = Self::convert_trade_message(&trade);
@@ -525,14 +529,20 @@ impl PolymarketWebSocket {
 
         // Convert bids (buy orders)
         for level in &msg.bids {
-            if let (Ok(price), Ok(size)) = (level.price.parse::<Decimal>(), level.size.parse::<Decimal>()) {
+            if let (Ok(price), Ok(size)) = (
+                level.price.parse::<Decimal>(),
+                level.size.parse::<Decimal>(),
+            ) {
                 orderbook.yes_bids.push(OrderBookLevel::new(price, size));
             }
         }
 
         // Convert asks (sell orders)
         for level in &msg.asks {
-            if let (Ok(price), Ok(size)) = (level.price.parse::<Decimal>(), level.size.parse::<Decimal>()) {
+            if let (Ok(price), Ok(size)) = (
+                level.price.parse::<Decimal>(),
+                level.size.parse::<Decimal>(),
+            ) {
                 orderbook.yes_asks.push(OrderBookLevel::new(price, size));
             }
         }
@@ -547,7 +557,8 @@ impl PolymarketWebSocket {
 
     /// Convert last trade price message to internal Trade
     fn convert_trade_message(msg: &LastTradePriceMessage) -> Trade {
-        let timestamp = msg.timestamp
+        let timestamp = msg
+            .timestamp
             .as_ref()
             .and_then(|ts| ts.parse::<i64>().ok())
             .map(|ts| {
@@ -561,13 +572,18 @@ impl PolymarketWebSocket {
             .unwrap_or_else(Utc::now);
 
         let price = msg.price.parse::<Decimal>().unwrap_or(Decimal::ZERO);
-        let quantity = msg.size
+        let quantity = msg
+            .size
             .as_ref()
             .and_then(|s| s.parse::<Decimal>().ok())
             .unwrap_or(Decimal::ONE);
 
         let side = msg.side.as_ref().map(|s| {
-            if s.to_uppercase() == "BUY" { TradeSide::Buy } else { TradeSide::Sell }
+            if s.to_uppercase() == "BUY" {
+                TradeSide::Buy
+            } else {
+                TradeSide::Sell
+            }
         });
 
         Trade {

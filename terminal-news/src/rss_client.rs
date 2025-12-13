@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use terminal_core::{NewsItem, NewsSource};
 
@@ -233,24 +233,35 @@ impl RssClient {
     /// Fetch news from all feeds
     pub async fn fetch_all(&self, limit: usize) -> Result<Vec<NewsItem>, NewsError> {
         let mut all_items = Vec::new();
+        let mut source_counts = std::collections::HashMap::new();
 
         for feed in &self.feeds {
             match self.fetch_feed(feed).await {
                 Ok(items) => {
-                    debug!("Fetched {} items from {}", items.len(), feed.name);
+                    let count = items.len();
+                    info!("✓ Fetched {} items from {}", count, feed.name);
+                    *source_counts.entry(feed.name.clone()).or_insert(0) += count;
                     all_items.extend(items);
                 }
                 Err(e) => {
-                    warn!("Failed to fetch feed {}: {}", feed.name, e);
+                    warn!("✗ Failed to fetch feed {}: {}", feed.name, e);
+                    *source_counts.entry(feed.name.clone()).or_insert(0) += 0;
                 }
             }
         }
+
+        info!(
+            "Raw fetch results: {} items from {} feeds",
+            all_items.len(),
+            self.feeds.len()
+        );
 
         // Sort by date, newest first
         all_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
 
         // Deduplicate by normalized title
         let mut seen_titles = std::collections::HashSet::new();
+        let before_dedup = all_items.len();
         all_items.retain(|item| {
             let key = normalize_title(&item.title);
             if seen_titles.contains(&key) {
@@ -260,12 +271,143 @@ impl RssClient {
                 true
             }
         });
+        info!(
+            "After deduplication: {} items (removed {} duplicates)",
+            all_items.len(),
+            before_dedup - all_items.len()
+        );
 
-        // Limit results
-        all_items.truncate(limit);
+        // Diversify sources using round-robin selection
+        // Group by source
+        let mut by_source: std::collections::HashMap<String, Vec<NewsItem>> =
+            std::collections::HashMap::new();
+        for item in all_items {
+            by_source
+                .entry(item.source.name.clone())
+                .or_insert_with(Vec::new)
+                .push(item);
+        }
 
-        info!("Fetched {} total news items from RSS feeds", all_items.len());
-        Ok(all_items)
+        // Sort each source's items by date
+        for items in by_source.values_mut() {
+            items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+        }
+
+        info!("Collected items from {} sources", by_source.len());
+
+        // Round-robin selection to ensure source diversity
+        let mut diversified_items = Vec::new();
+        let mut source_indices: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        // Continue until we have enough items or exhausted all sources
+        while diversified_items.len() < limit {
+            let mut added_this_round = false;
+
+            // Try to take one item from each source in round-robin fashion
+            for (source, items) in &by_source {
+                let idx = source_indices.entry(source.clone()).or_insert(0);
+                if *idx < items.len() {
+                    diversified_items.push(items[*idx].clone());
+                    *idx += 1;
+                    added_this_round = true;
+
+                    if diversified_items.len() >= limit {
+                        break;
+                    }
+                }
+            }
+
+            // If we couldn't add any items this round, we've exhausted all sources
+            if !added_this_round {
+                break;
+            }
+        }
+
+        // Final sort by date to ensure newest items appear first
+        diversified_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+
+        // Log source distribution in final results
+        let mut final_sources = std::collections::HashMap::new();
+        for item in &diversified_items {
+            *final_sources.entry(item.source.name.clone()).or_insert(0) += 1;
+        }
+        info!(
+            "Final {} items by source: {:?}",
+            diversified_items.len(),
+            final_sources
+        );
+
+        // Backfill missing thumbnails by fetching article pages
+        let items_without_images: Vec<usize> = diversified_items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.image_url.is_none())
+            .map(|(i, _)| i)
+            .collect();
+
+        if !items_without_images.is_empty() {
+            info!(
+                "Attempting to fetch thumbnails for {} articles without images",
+                items_without_images.len()
+            );
+
+            // Limit concurrent fetches to avoid overwhelming servers
+            let mut fetch_count = 0;
+            for idx in items_without_images {
+                if fetch_count >= 10 {
+                    // Limit to 10 additional fetches to keep response time reasonable
+                    break;
+                }
+
+                if let Ok(image_url) = self
+                    .fetch_article_thumbnail(&diversified_items[idx].url)
+                    .await
+                {
+                    diversified_items[idx].image_url = Some(image_url);
+                    fetch_count += 1;
+                }
+            }
+
+            if fetch_count > 0 {
+                info!("Successfully fetched {} additional thumbnails", fetch_count);
+            }
+        }
+
+        Ok(diversified_items)
+    }
+
+    /// Fetch thumbnail from actual article page (for items without images from RSS)
+    async fn fetch_article_thumbnail(&self, url: &str) -> Result<String, NewsError> {
+        let response = self
+            .client
+            .get(url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            )
+            .timeout(std::time::Duration::from_secs(5)) // 5 second timeout
+            .send()
+            .await
+            .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(NewsError::ApiError {
+                status: response.status().as_u16(),
+                message: format!("Failed to fetch article"),
+            });
+        }
+
+        let html = response
+            .text()
+            .await
+            .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
+
+        // Try to extract og:image or twitter:image from the actual article page
+        extract_meta_image(&html)
+            .or_else(|| extract_video_thumbnail(&html))
+            .or_else(|| extract_link_image(&html))
+            .ok_or_else(|| NewsError::ParseError("No thumbnail found".to_string()))
     }
 
     /// Fetch news from feeds matching specific categories
@@ -507,19 +649,233 @@ impl Default for RssClient {
     }
 }
 
-/// Extract image URL from HTML content (finds first <img src="...">)
+/// Extract image URL from HTML content (finds best quality image with multiple strategies)
 fn extract_image_from_html(html: &str) -> Option<String> {
-    // Look for <img src="..." or <img src='...'
-    let img_pattern = regex::Regex::new(r#"<img[^>]+src=["']([^"']+)["']"#).ok()?;
-    if let Some(caps) = img_pattern.captures(html) {
-        let url = caps.get(1)?.as_str().to_string();
-        // Skip tiny tracking pixels and icons
-        if url.contains("1x1") || url.contains("pixel") || url.contains("spacer") {
-            return None;
-        }
+    // Strategy 1: Try Open Graph and Twitter Card meta tags (highest quality)
+    if let Some(url) = extract_meta_image(html) {
         return Some(url);
     }
+
+    // Strategy 2: Try video thumbnails (YouTube, Vimeo, etc.)
+    if let Some(url) = extract_video_thumbnail(html) {
+        return Some(url);
+    }
+
+    // Strategy 3: Try <link rel="image_src"> tag
+    if let Some(url) = extract_link_image(html) {
+        return Some(url);
+    }
+
+    // Strategy 4: Look for all <img src="..." tags
+    let img_pattern = regex::Regex::new(r#"<img[^>]+src=["']([^"']+)["']"#).ok()?;
+
+    let mut candidates: Vec<String> = img_pattern
+        .captures_iter(html)
+        .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        .filter(|url| {
+            // Filter out tracking pixels, icons, and other junk
+            !url.contains("1x1")
+                && !url.contains("pixel")
+                && !url.contains("spacer")
+                && !url.contains("icon")
+                && !url.contains("logo")
+                && !url.contains("avatar")
+                && !url.ends_with(".svg")
+                && !url.ends_with(".gif")
+                && !url.contains("blank")
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Prefer larger images (likely article images, not thumbnails)
+    // Images with "image", "photo", "article" in URL are usually better
+    candidates.sort_by(|a, b| {
+        let a_score = score_image_url(a);
+        let b_score = score_image_url(b);
+        b_score.cmp(&a_score) // Descending
+    });
+
+    candidates.into_iter().next()
+}
+
+/// Extract image from Open Graph or Twitter Card meta tags
+fn extract_meta_image(html: &str) -> Option<String> {
+    // Try og:image first (Open Graph)
+    let og_pattern =
+        regex::Regex::new(r#"<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']"#)
+            .ok()?;
+    if let Some(caps) = og_pattern.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    // Try reversed attribute order
+    let og_pattern_rev =
+        regex::Regex::new(r#"<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']"#)
+            .ok()?;
+    if let Some(caps) = og_pattern_rev.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    // Try twitter:image
+    let twitter_pattern =
+        regex::Regex::new(r#"<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']"#)
+            .ok()?;
+    if let Some(caps) = twitter_pattern.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    // Try reversed attribute order
+    let twitter_pattern_rev =
+        regex::Regex::new(r#"<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']"#)
+            .ok()?;
+    if let Some(caps) = twitter_pattern_rev.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
     None
+}
+
+/// Extract video thumbnail from YouTube, Vimeo, or other video embeds
+fn extract_video_thumbnail(html: &str) -> Option<String> {
+    // YouTube embed: extract video ID and construct thumbnail URL
+    let youtube_pattern = regex::Regex::new(r#"youtube\.com/embed/([a-zA-Z0-9_-]+)"#).ok()?;
+    if let Some(caps) = youtube_pattern.captures(html) {
+        if let Some(video_id) = caps.get(1) {
+            return Some(format!(
+                "https://img.youtube.com/vi/{}/maxresdefault.jpg",
+                video_id.as_str()
+            ));
+        }
+    }
+
+    // YouTube watch URL
+    let youtube_watch = regex::Regex::new(r#"youtube\.com/watch\?v=([a-zA-Z0-9_-]+)"#).ok()?;
+    if let Some(caps) = youtube_watch.captures(html) {
+        if let Some(video_id) = caps.get(1) {
+            return Some(format!(
+                "https://img.youtube.com/vi/{}/maxresdefault.jpg",
+                video_id.as_str()
+            ));
+        }
+    }
+
+    // YouTube short URL
+    let youtube_short = regex::Regex::new(r#"youtu\.be/([a-zA-Z0-9_-]+)"#).ok()?;
+    if let Some(caps) = youtube_short.captures(html) {
+        if let Some(video_id) = caps.get(1) {
+            return Some(format!(
+                "https://img.youtube.com/vi/{}/maxresdefault.jpg",
+                video_id.as_str()
+            ));
+        }
+    }
+
+    // Vimeo embed
+    let vimeo_pattern = regex::Regex::new(r#"player\.vimeo\.com/video/(\d+)"#).ok()?;
+    if let Some(caps) = vimeo_pattern.captures(html) {
+        if let Some(video_id) = caps.get(1) {
+            // Note: Vimeo thumbnails require API call, but we can try the common pattern
+            return Some(format!("https://vumbnail.com/{}.jpg", video_id.as_str()));
+        }
+    }
+
+    // Generic <video> tag with poster attribute
+    let video_poster = regex::Regex::new(r#"<video[^>]+poster=["']([^"']+)["']"#).ok()?;
+    if let Some(caps) = video_poster.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    None
+}
+
+/// Extract image from <link rel="image_src"> tag
+fn extract_link_image(html: &str) -> Option<String> {
+    let link_pattern =
+        regex::Regex::new(r#"<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']"#).ok()?;
+    if let Some(caps) = link_pattern.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    // Try reversed attribute order
+    let link_pattern_rev =
+        regex::Regex::new(r#"<link[^>]+href=["']([^"']+)["'][^>]+rel=["']image_src["']"#).ok()?;
+    if let Some(caps) = link_pattern_rev.captures(html) {
+        if let Some(url) = caps.get(1) {
+            return Some(url.as_str().to_string());
+        }
+    }
+
+    None
+}
+
+/// Score image URL quality (higher is better)
+fn score_image_url(url: &str) -> i32 {
+    let mut score = 0;
+    let lower = url.to_lowercase();
+
+    // Prefer images with these keywords
+    if lower.contains("image") || lower.contains("img") {
+        score += 10;
+    }
+    if lower.contains("photo") {
+        score += 10;
+    }
+    if lower.contains("article") {
+        score += 10;
+    }
+    if lower.contains("content") {
+        score += 5;
+    }
+    if lower.contains("media") {
+        score += 5;
+    }
+
+    // Size indicators (larger is better for thumbnails)
+    if lower.contains("large") || lower.contains("big") {
+        score += 8;
+    }
+    if lower.contains("medium") {
+        score += 5;
+    }
+    if lower.contains("original") {
+        score += 10;
+    }
+    if lower.contains("_1200") || lower.contains("1920") || lower.contains("2048") {
+        score += 15;
+    }
+    if lower.contains("_800") || lower.contains("1024") {
+        score += 10;
+    }
+
+    // Penalize small images
+    if lower.contains("thumb") || lower.contains("small") {
+        score -= 5;
+    }
+    if lower.contains("_50") || lower.contains("_100") || lower.contains("_150") {
+        score -= 10;
+    }
+
+    // Image format preference (jpg/webp > png > gif)
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".webp") {
+        score += 5;
+    }
+
+    score
 }
 
 /// Extract image from RSS media:content or media:thumbnail extensions
@@ -537,8 +893,13 @@ fn extract_media_content(item: &rss::Item) -> Option<String> {
                     let medium = content.attrs().get("medium").map(|s| s.as_str());
                     let mime = content.attrs().get("type").map(|s| s.as_str());
 
-                    if medium == Some("image") || mime.map(|m| m.starts_with("image/")).unwrap_or(false)
-                       || url.ends_with(".jpg") || url.ends_with(".jpeg") || url.ends_with(".png") || url.ends_with(".webp") {
+                    if medium == Some("image")
+                        || mime.map(|m| m.starts_with("image/")).unwrap_or(false)
+                        || url.ends_with(".jpg")
+                        || url.ends_with(".jpeg")
+                        || url.ends_with(".png")
+                        || url.ends_with(".webp")
+                    {
                         return Some(url.clone());
                     }
                 }
@@ -666,15 +1027,82 @@ fn normalize_title(title: &str) -> String {
 
     // Skip words that commonly start sentences or are generic titles
     let skip_words: std::collections::HashSet<&str> = [
-        "The", "A", "An", "This", "That", "It", "In", "On", "At", "For", "To", "With", "From",
-        "By", "As", "Is", "Are", "Was", "Were", "Will", "Would", "Could", "Should", "May",
-        "Might", "Must", "Has", "Have", "Had", "Do", "Does", "Did", "Says", "Said",
-        "First", "Last", "After", "Before", "Report", "Reports", "News", "Breaking", "Watch",
-        "Update", "Live", "Just", "Now", "How", "Why", "What", "When", "Where", "Who",
-        "WATCH", "BREAKING", "LIVE", "UPDATE", "JUST", "NOW", "US", "UK",
+        "The",
+        "A",
+        "An",
+        "This",
+        "That",
+        "It",
+        "In",
+        "On",
+        "At",
+        "For",
+        "To",
+        "With",
+        "From",
+        "By",
+        "As",
+        "Is",
+        "Are",
+        "Was",
+        "Were",
+        "Will",
+        "Would",
+        "Could",
+        "Should",
+        "May",
+        "Might",
+        "Must",
+        "Has",
+        "Have",
+        "Had",
+        "Do",
+        "Does",
+        "Did",
+        "Says",
+        "Said",
+        "First",
+        "Last",
+        "After",
+        "Before",
+        "Report",
+        "Reports",
+        "News",
+        "Breaking",
+        "Watch",
+        "Update",
+        "Live",
+        "Just",
+        "Now",
+        "How",
+        "Why",
+        "What",
+        "When",
+        "Where",
+        "Who",
+        "WATCH",
+        "BREAKING",
+        "LIVE",
+        "UPDATE",
+        "JUST",
+        "NOW",
+        "US",
+        "UK",
         // Skip titles/positions - they're not the entity itself
-        "President", "Senator", "Governor", "Attorney", "General", "Secretary", "Minister",
-        "Chief", "Director", "Chairman", "CEO", "Department", "Justice", "State",
+        "President",
+        "Senator",
+        "Governor",
+        "Attorney",
+        "General",
+        "Secretary",
+        "Minister",
+        "Chief",
+        "Director",
+        "Chairman",
+        "CEO",
+        "Department",
+        "Justice",
+        "State",
     ]
     .into_iter()
     .collect();
@@ -683,7 +1111,11 @@ fn normalize_title(title: &str) -> String {
     while i < words.len() {
         let word = words[i];
         let clean_word: String = word.chars().filter(|c| c.is_alphabetic()).collect();
-        let is_cap = clean_word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+        let is_cap = clean_word
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
 
         // Skip common words
         if skip_words.contains(clean_word.as_str()) {
@@ -699,7 +1131,11 @@ fn normalize_title(title: &str) -> String {
             while j < words.len() {
                 let next = words[j];
                 let next_clean: String = next.chars().filter(|c| c.is_alphabetic()).collect();
-                let next_cap = next_clean.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                let next_cap = next_clean
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
 
                 if next_cap && !skip_words.contains(next_clean.as_str()) && next_clean.len() >= 2 {
                     phrase_words.push(next_clean);
@@ -744,12 +1180,54 @@ fn normalize_title(title: &str) -> String {
 
     // Fallback: use significant words
     let lower = title.to_lowercase();
-    let stop_words = ["the", "and", "for", "that", "this", "with", "from", "says", "said",
-                     "will", "would", "could", "about", "after", "into", "over", "more",
-                     "than", "been", "have", "were", "what", "when", "where", "which",
-                     "their", "there", "these", "those", "some", "just", "also", "news",
-                     "report", "reports", "again", "fails", "declines", "source", "grand",
-                     "jury", "federal", "court", "indict", "department", "justice"];
+    let stop_words = [
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "from",
+        "says",
+        "said",
+        "will",
+        "would",
+        "could",
+        "about",
+        "after",
+        "into",
+        "over",
+        "more",
+        "than",
+        "been",
+        "have",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "their",
+        "there",
+        "these",
+        "those",
+        "some",
+        "just",
+        "also",
+        "news",
+        "report",
+        "reports",
+        "again",
+        "fails",
+        "declines",
+        "source",
+        "grand",
+        "jury",
+        "federal",
+        "court",
+        "indict",
+        "department",
+        "justice",
+    ];
     let words: Vec<&str> = lower
         .split_whitespace()
         .filter(|w| w.len() > 4)

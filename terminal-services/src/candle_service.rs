@@ -179,7 +179,12 @@ mod tests {
     use rust_decimal_macros::dec;
     use terminal_core::{TradeOutcome, TradeSide};
 
-    fn create_test_trade(id: &str, market_id: &str, price: Decimal, timestamp: DateTime<Utc>) -> Trade {
+    fn create_test_trade(
+        id: &str,
+        market_id: &str,
+        price: Decimal,
+        timestamp: DateTime<Utc>,
+    ) -> Trade {
         Trade {
             id: id.to_string(),
             market_id: market_id.to_string(),
@@ -202,9 +207,24 @@ mod tests {
         // Create trades at different prices
         let trades = vec![
             create_test_trade("t1", "market1", dec!(0.50), base_time),
-            create_test_trade("t2", "market1", dec!(0.55), base_time + Duration::minutes(5)),
-            create_test_trade("t3", "market1", dec!(0.45), base_time + Duration::minutes(10)),
-            create_test_trade("t4", "market1", dec!(0.52), base_time + Duration::minutes(15)),
+            create_test_trade(
+                "t2",
+                "market1",
+                dec!(0.55),
+                base_time + Duration::minutes(5),
+            ),
+            create_test_trade(
+                "t3",
+                "market1",
+                dec!(0.45),
+                base_time + Duration::minutes(10),
+            ),
+            create_test_trade(
+                "t4",
+                "market1",
+                dec!(0.52),
+                base_time + Duration::minutes(15),
+            ),
         ];
 
         for trade in &trades {

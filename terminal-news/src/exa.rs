@@ -35,9 +35,10 @@ impl ExaClient {
     pub async fn search_news(&self, params: &NewsSearchParams) -> Result<Vec<NewsItem>, NewsError> {
         // Query should be provided dynamically based on current trending markets
         // Fallback to general breaking news if not provided
-        let query = params.query.clone().unwrap_or_else(|| {
-            "breaking news today".to_string()
-        });
+        let query = params
+            .query
+            .clone()
+            .unwrap_or_else(|| "breaking news today".to_string());
 
         // Build date filter based on time_range
         let start_date = params.time_range.as_ref().and_then(|range| {
@@ -59,7 +60,7 @@ impl ExaClient {
         let request = ExaSearchRequest {
             query,
             num_results: params.limit * 5, // Request 5x since we'll filter heavily
-            use_autoprompt: false, // Disable autoprompt for more literal matching
+            use_autoprompt: false,         // Disable autoprompt for more literal matching
             search_type: "neural".to_string(),
             category: Some("news".to_string()),
             start_published_date: start_date,
@@ -153,7 +154,10 @@ impl ExaClient {
             .await
             .map_err(|e| NewsError::ParseError(e.to_string()))?;
 
-        info!("Received {} results from Exa.ai", exa_response.results.len());
+        info!(
+            "Received {} results from Exa.ai",
+            exa_response.results.len()
+        );
 
         // Log what we're getting from Exa for debugging
         for (i, r) in exa_response.results.iter().take(5).enumerate() {
@@ -168,17 +172,21 @@ impl ExaClient {
 
         // Calculate the cutoff date for filtering old articles
         let now = Utc::now();
-        let max_age = params.time_range.as_ref().and_then(|range| {
-            match range.as_str() {
-                "1h" => Some(Duration::hours(2)),   // Allow some buffer
-                "6h" => Some(Duration::hours(12)),
-                "12h" => Some(Duration::hours(24)),
-                "24h" => Some(Duration::days(2)),
-                "7d" => Some(Duration::days(14)),
-                "30d" => Some(Duration::days(60)),
-                _ => None,
-            }
-        }).unwrap_or_else(|| Duration::days(3)); // Default to 3 days max
+        let max_age = params
+            .time_range
+            .as_ref()
+            .and_then(|range| {
+                match range.as_str() {
+                    "1h" => Some(Duration::hours(2)), // Allow some buffer
+                    "6h" => Some(Duration::hours(12)),
+                    "12h" => Some(Duration::hours(24)),
+                    "24h" => Some(Duration::days(2)),
+                    "7d" => Some(Duration::days(14)),
+                    "30d" => Some(Duration::days(60)),
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(|| Duration::days(3)); // Default to 3 days max
 
         let cutoff_date = now - max_age;
 
@@ -262,7 +270,11 @@ impl ExaClient {
             }
 
             seen_titles.insert(title_key);
-            items.push(self.convert_result_with_date(result, params.market_id.clone(), published_at));
+            items.push(self.convert_result_with_date(
+                result,
+                params.market_id.clone(),
+                published_at,
+            ));
         }
 
         // Sort by published date, newest first
@@ -464,11 +476,12 @@ fn extract_date_from_url(url: &str) -> Option<DateTime<Utc>> {
 /// Normalize a title for deduplication
 /// Extracts key words to detect duplicate stories from different sources
 fn normalize_title(title: &str) -> String {
-    let stop_words = ["the", "and", "for", "that", "this", "with", "from", "says",
-                      "said", "will", "would", "could", "about", "after", "into",
-                      "over", "more", "than", "been", "have", "were", "what", "when",
-                      "where", "which", "their", "there", "these", "those", "some",
-                      "just", "also", "news", "report", "reports"];
+    let stop_words = [
+        "the", "and", "for", "that", "this", "with", "from", "says", "said", "will", "would",
+        "could", "about", "after", "into", "over", "more", "than", "been", "have", "were", "what",
+        "when", "where", "which", "their", "there", "these", "those", "some", "just", "also",
+        "news", "report", "reports",
+    ];
 
     let lower = title.to_lowercase();
     let words: Vec<&str> = lower

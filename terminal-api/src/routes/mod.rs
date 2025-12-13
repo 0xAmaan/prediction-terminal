@@ -5,8 +5,8 @@ mod markets;
 mod news;
 pub mod ws;
 
-use axum::Router;
 use crate::AppState;
+use axum::Router;
 
 /// Create all API routes
 pub fn api_routes() -> Router<AppState> {

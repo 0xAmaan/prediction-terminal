@@ -80,10 +80,7 @@ impl SubscriptionManager {
             .or_default()
             .insert(key.clone());
 
-        debug!(
-            "Client {} subscribed to {:?}",
-            client_id, key
-        );
+        debug!("Client {} subscribed to {:?}", client_id, key);
     }
 
     /// Unsubscribe a client from a subscription
@@ -104,10 +101,7 @@ impl SubscriptionManager {
             subs.remove(&key);
         }
 
-        debug!(
-            "Client {} unsubscribed from {:?}",
-            client_id, key
-        );
+        debug!("Client {} unsubscribed from {:?}", client_id, key);
     }
 
     /// Remove all subscriptions for a client (on disconnect)
@@ -126,7 +120,10 @@ impl SubscriptionManager {
             }
         }
 
-        info!("Client {} disconnected, removed all subscriptions", client_id);
+        info!(
+            "Client {} disconnected, removed all subscriptions",
+            client_id
+        );
     }
 
     /// Check if a client is subscribed to a specific subscription
@@ -166,9 +163,9 @@ impl SubscriptionManager {
         platform: terminal_core::Platform,
         market_id: &str,
     ) -> bool {
-        self.subscriptions.iter().any(|entry| {
-            entry.key().platform == platform && entry.key().market_id == market_id
-        })
+        self.subscriptions
+            .iter()
+            .any(|entry| entry.key().platform == platform && entry.key().market_id == market_id)
     }
 
     /// Broadcast a message to all subscribers of a subscription
@@ -189,9 +186,7 @@ impl SubscriptionManager {
     ) -> Vec<SubscriptionKey> {
         self.subscriptions
             .iter()
-            .filter(|entry| {
-                entry.key().platform == platform && entry.key().market_id == market_id
-            })
+            .filter(|entry| entry.key().platform == platform && entry.key().market_id == market_id)
             .map(|entry| entry.key().clone())
             .collect()
     }
