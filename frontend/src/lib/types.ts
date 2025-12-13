@@ -202,3 +202,47 @@ export interface MarketStatsParams {
   platform?: Platform;
   limit?: number;
 }
+
+// ============================================================================
+// News Types
+// ============================================================================
+
+export interface NewsSource {
+  name: string;
+  url: string;
+  favicon_url: string | null;
+}
+
+export interface NewsItem {
+  id: string;
+  title: string;
+  url: string;
+  published_at: string;
+  source: NewsSource;
+  summary: string;
+  content: string | null;
+  image_url: string | null;
+  relevance_score: number;
+  related_market_ids: string[];
+  search_query: string | null;
+}
+
+export interface NewsFeed {
+  items: NewsItem[];
+  total_count: number;
+  next_cursor: string | null;
+}
+
+export interface ArticleContent {
+  content: string;
+  title: string | null;
+  description: string | null;
+  image_url: string | null;
+  site_name: string | null;
+}
+
+export interface NewsSearchParams {
+  query?: string;
+  limit?: number;
+  time_range?: string;
+}

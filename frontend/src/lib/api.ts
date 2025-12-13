@@ -10,6 +10,9 @@ import type {
   PriceHistoryPoint,
   MarketStatsResponse,
   MarketStatsParams,
+  NewsFeed,
+  NewsSearchParams,
+  ArticleContent,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -273,6 +276,90 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to fetch market stats: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // ========================================================================
+  // News Methods
+  // ========================================================================
+
+  /** Get global prediction market news */
+  async getGlobalNews(params: NewsSearchParams = {}): Promise<NewsFeed> {
+    const searchParams = new URLSearchParams();
+    if (params.query) {
+      searchParams.set("query", params.query);
+    }
+    if (params.limit) {
+      searchParams.set("limit", params.limit.toString());
+    }
+    if (params.time_range) {
+      searchParams.set("time_range", params.time_range);
+    }
+
+    const url = `${API_BASE}/api/news${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch news: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Search news with custom query */
+  async searchNews(
+    query: string,
+    params: Omit<NewsSearchParams, "query"> = {},
+  ): Promise<NewsFeed> {
+    const searchParams = new URLSearchParams();
+    searchParams.set("query", query);
+    if (params.limit) {
+      searchParams.set("limit", params.limit.toString());
+    }
+    if (params.time_range) {
+      searchParams.set("time_range", params.time_range);
+    }
+
+    const url = `${API_BASE}/api/news/search?${searchParams}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to search news: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get full article content */
+  async getArticleContent(articleUrl: string): Promise<ArticleContent> {
+    const url = `${API_BASE}/api/news/article?url=${encodeURIComponent(articleUrl)}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch article: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get news for a specific market */
+  async getMarketNews(
+    platform: string,
+    id: string,
+    limit?: number,
+  ): Promise<NewsFeed> {
+    const searchParams = new URLSearchParams();
+    if (limit) {
+      searchParams.set("limit", limit.toString());
+    }
+
+    const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(id)}/news${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch market news: ${response.statusText}`);
     }
 
     return response.json();

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { NewsItem, NewsSource } from "@/lib/types";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3001/ws";
 
@@ -11,9 +12,9 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3001/ws";
 export type Platform = "kalshi" | "polymarket";
 
 export interface SubscriptionType {
-  type: "price" | "order_book" | "trades";
-  platform: Platform;
-  market_id: string;
+  type: "price" | "order_book" | "trades" | "global_news" | "market_news";
+  platform?: Platform;
+  market_id?: string;
 }
 
 export interface ClientMessage {
@@ -95,6 +96,17 @@ export interface ConnectionStatusMessage {
   status: "connected" | "connecting" | "disconnected" | "failed";
 }
 
+export interface MarketNewsContext {
+  platform: Platform;
+  market_id: string;
+}
+
+export interface NewsUpdate {
+  type: "news_update";
+  item: NewsItem;
+  market_context: MarketNewsContext | null;
+}
+
 export type ServerMessage =
   | PriceUpdate
   | OrderBookUpdate
@@ -103,7 +115,8 @@ export type ServerMessage =
   | UnsubscribedMessage
   | ErrorMessage
   | PongMessage
-  | ConnectionStatusMessage;
+  | ConnectionStatusMessage
+  | NewsUpdate;
 
 // ============================================================================
 // Connection State
