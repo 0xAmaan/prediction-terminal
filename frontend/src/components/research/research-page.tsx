@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, ArrowLeft, CheckCircle, XCircle, RefreshCw, AlertCircle, Search } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { useResearch } from "@/hooks/use-research";
 import { ResearchDocument } from "./research-document";
@@ -220,36 +219,12 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
             </div>
           )}
 
-          {/* Loading State - Skeleton UI */}
+          {/* Loading State */}
           {showLoading && (
-            <div className="space-y-6">
+            <div className="flex items-center justify-center py-20">
               <div className="flex items-center gap-3">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Checking for existing research...</span>
-              </div>
-              {/* Skeleton cards */}
-              <div className="space-y-4">
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-32 mb-3" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-4/5 mb-2" />
-                  <Skeleton className="h-3 w-3/4" />
-                </div>
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-24 mb-3" />
-                  <div className="space-y-2">
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                  </div>
-                </div>
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-40 mb-3" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-5/6 mb-2" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
               </div>
             </div>
           )}
