@@ -478,7 +478,44 @@ impl NewsService {
                     market_title
                 );
 
-                filtered
+                // If Google News returned no results, try fallbacks
+                if filtered.is_empty() {
+                    info!("Google News returned 0 results, trying fallbacks...");
+
+                    // Try Exa as fallback if configured
+                    if self.exa.is_some() {
+                        info!("Trying Exa.ai as fallback...");
+                        match self
+                            .try_exa_search(market_title, market_id, limit, outcome_titles.as_ref())
+                            .await
+                        {
+                            Ok(exa_results) if !exa_results.is_empty() => exa_results,
+                            Ok(_) | Err(_) => {
+                                // Final fallback: RSS search
+                                info!("Final fallback: RSS search...");
+                                self.fallback_rss_search(
+                                    market_title,
+                                    market_id,
+                                    limit,
+                                    outcome_titles.as_ref(),
+                                )
+                                .await?
+                            }
+                        }
+                    } else {
+                        // No Exa, go straight to RSS fallback
+                        info!("No Exa configured, using RSS fallback...");
+                        self.fallback_rss_search(
+                            market_title,
+                            market_id,
+                            limit,
+                            outcome_titles.as_ref(),
+                        )
+                        .await?
+                    }
+                } else {
+                    filtered
+                }
             }
             Err(e) => {
                 info!("✗ Google News search failed for '{}': {}", market_title, e);

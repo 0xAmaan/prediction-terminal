@@ -354,8 +354,34 @@ fn extract_key_terms(text: &str) -> Vec<String> {
         "after",
         "market",
         "prediction",
-        "price",
         "value",
+        "hit",
+        "reach",
+        // Month names - too specific for news search
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
     ]
     .into_iter()
     .collect();
@@ -437,6 +463,13 @@ fn extract_key_terms(text: &str) -> Vec<String> {
 
         // Skip stop words and very short words
         if clean.len() < 3 || stop_words.contains(lower.as_str()) {
+            i += 1;
+            continue;
+        }
+
+        // Skip date-like patterns (numbers, date ranges like "8-14", years like "2024")
+        let is_date_like = clean.chars().all(|c| c.is_numeric() || c == '-');
+        if is_date_like {
             i += 1;
             continue;
         }
