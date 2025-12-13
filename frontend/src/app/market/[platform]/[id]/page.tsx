@@ -10,6 +10,7 @@ import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/type
 
 // Existing components
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
+import { MarketNewsSection } from "@/components/news";
 
 // New view components
 import { TradingView } from "@/components/market/views/trading-view";
@@ -335,46 +336,14 @@ const MarketPageContent = ({
             transition={{ duration: 0.2 }}
             className="flex-1 flex flex-col min-h-0"
           >
-            {/* Research View Placeholder */}
+            {/* Market News Section */}
             <div className="flex-1 overflow-auto">
               <div className="px-6 lg:px-8 py-8 pb-24">
                 <div className="max-w-4xl mx-auto">
-                  <div
-                    className="rounded-lg p-8 text-center"
-                    style={{
-                      backgroundColor: fey.bg300,
-                      border: `1px solid ${fey.border}`,
-                    }}
-                  >
-                    <div
-                      className="h-16 w-16 rounded-full flex items-center justify-center mx-auto mb-4"
-                      style={{ backgroundColor: `${fey.purple}15` }}
-                    >
-                      <Info className="h-8 w-8" style={{ color: fey.purple }} />
-                    </div>
-                    <h2
-                      className="text-xl font-semibold mb-2"
-                      style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
-                    >
-                      Deep Research Agent
-                    </h2>
-                    <p
-                      className="text-sm mb-6 max-w-md mx-auto"
-                      style={{ color: fey.grey500 }}
-                    >
-                      Our AI-powered research agent will analyze this market, gather relevant data,
-                      and provide comprehensive insights to help inform your trading decisions.
-                    </p>
-                    <div
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-                      style={{
-                        backgroundColor: fey.purple,
-                        color: fey.grey100,
-                      }}
-                    >
-                      Coming Soon
-                    </div>
-                  </div>
+                  <MarketNewsSection
+                    platform={market.platform}
+                    marketId={market.id}
+                  />
                 </div>
               </div>
             </div>

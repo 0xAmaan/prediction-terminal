@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MarketsGrid } from "@/components/markets-grid";
+import { NewsFeed } from "@/components/news";
 import { Activity, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -84,9 +85,20 @@ const HomePage = () => {
       </header>
 
       {/* Main content - scrollable */}
-      <main className="flex-1 overflow-hidden">
-        <div className="h-full mx-auto px-8 pt-8 pb-6" style={{ maxWidth: "1600px" }}>
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto px-8 pt-8 pb-6 space-y-8" style={{ maxWidth: "1600px" }}>
           <MarketsGrid search={debouncedSearch} />
+
+          {/* News Feed Section */}
+          <div>
+            <h2
+              className="text-lg font-semibold mb-4"
+              style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+            >
+              Market News
+            </h2>
+            <NewsFeed />
+          </div>
         </div>
       </main>
 
