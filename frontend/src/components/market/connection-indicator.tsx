@@ -2,6 +2,14 @@
 
 import { cn } from "@/lib/utils";
 
+// Fey color tokens
+const fey = {
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  red: "#D84F68",
+  amber: "#D4A853", // Warm amber for connecting/reconnecting states
+};
+
 type ConnectionState = "connected" | "connecting" | "disconnected" | "reconnecting";
 
 interface ConnectionIndicatorProps {
@@ -13,26 +21,22 @@ interface ConnectionIndicatorProps {
 
 const stateConfig: Record<
   ConnectionState,
-  { color: string; pulseColor: string; label: string }
+  { color: string; label: string }
 > = {
   connected: {
-    color: "bg-green-500",
-    pulseColor: "bg-green-400",
+    color: fey.teal,
     label: "Live",
   },
   connecting: {
-    color: "bg-yellow-500",
-    pulseColor: "bg-yellow-400",
+    color: fey.amber,
     label: "Connecting",
   },
   reconnecting: {
-    color: "bg-yellow-500",
-    pulseColor: "bg-yellow-400",
+    color: fey.amber,
     label: "Reconnecting",
   },
   disconnected: {
-    color: "bg-red-500",
-    pulseColor: "bg-red-400",
+    color: fey.red,
     label: "Disconnected",
   },
 };
@@ -51,21 +55,17 @@ export const ConnectionIndicator = ({
       <div className="relative flex h-2 w-2">
         {isActive && (
           <span
-            className={cn(
-              "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
-              config.pulseColor
-            )}
+            className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
+            style={{ backgroundColor: config.color }}
           />
         )}
         <span
-          className={cn(
-            "relative inline-flex h-2 w-2 rounded-full",
-            config.color
-          )}
+          className="relative inline-flex h-2 w-2 rounded-full"
+          style={{ backgroundColor: config.color }}
         />
       </div>
       {showLabel && (
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs" style={{ color: fey.grey500 }}>
           {config.label}
           {state === "connected" && latency !== null && latency !== undefined && (
             <span className="ml-1 opacity-60">({latency}ms)</span>

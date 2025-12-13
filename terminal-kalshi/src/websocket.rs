@@ -703,6 +703,7 @@ impl KalshiWebSocket {
                     TradeSide::Sell
                 }
             }),
+            transaction_hash: None, // Kalshi doesn't have on-chain transactions
         }
     }
 

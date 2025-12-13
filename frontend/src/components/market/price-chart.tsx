@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, type IChartApi, ColorType, AreaSeries } from "lightweight-charts";
+import { createChart, type IChartApi, ColorType, LineSeries } from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { TrendingUp } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  red: "#D84F68",
+  skyBlue: "#54BBF7",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 // ============================================================================
 // Types
@@ -104,7 +113,7 @@ export const PriceChart = ({
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<any>(null);
-  const [timeframe, setTimeframe] = useState<TimeFrame>("24H");
+  const [timeframe, setTimeframe] = useState<TimeFrame>("30D");
   const [chartData, setChartData] = useState<PriceDataPoint[]>([]);
 
   // Fetch price history from API
@@ -112,8 +121,7 @@ export const PriceChart = ({
     queryKey: ["priceHistory", platform, marketId, timeframe],
     queryFn: () => api.getPriceHistory(platform!, marketId!, { timeframe }),
     enabled: !!platform && !!marketId,
-    staleTime: 30000, // Consider data fresh for 30 seconds
-    refetchInterval: 60000, // Refetch every minute
+    staleTime: 5 * 60 * 1000, // Price history doesn't change rapidly
   });
 
   // Generate chart data based on API response or fallback to props/mock
@@ -190,16 +198,14 @@ export const PriceChart = ({
       },
     });
 
-    // Determine line color based on price trend
+    // Determine line color based on price trend (Fey colors)
     const firstPrice = chartData[0]?.value ?? 0.5;
     const lastPrice = chartData[chartData.length - 1]?.value ?? 0.5;
     const isUp = lastPrice >= firstPrice;
-    const lineColor = isUp ? "#22c55e" : "#ef4444";
+    const lineColor = isUp ? fey.teal : fey.red;
 
-    const series = chart.addSeries(AreaSeries, {
-      lineColor: lineColor,
-      topColor: isUp ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)",
-      bottomColor: isUp ? "rgba(34, 197, 94, 0.0)" : "rgba(239, 68, 68, 0.0)",
+    const series = chart.addSeries(LineSeries, {
+      color: lineColor,
       lineWidth: 2,
       priceFormat: {
         type: "custom",
@@ -207,13 +213,22 @@ export const PriceChart = ({
       },
     });
 
-    // Format data for the chart
-    const formattedData = chartData.map((d) => ({
-      time: d.time as any,
-      value: d.value,
-    }));
+    // Format data for the chart - filter, dedupe by timestamp, and sort
+    const seen = new Set<number>();
+    const formattedData = chartData
+      .filter((d) => d.value !== undefined && d.value !== null && !isNaN(d.value))
+      .map((d) => ({
+        time: d.time as number,
+        value: d.value,
+      }))
+      .filter((d) => {
+        if (seen.has(d.time)) return false;
+        seen.add(d.time);
+        return true;
+      })
+      .sort((a, b) => a.time - b.time);
 
-    series.setData(formattedData);
+    series.setData(formattedData as any);
     chart.timeScale().fitContent();
 
     chartRef.current = chart;
@@ -253,54 +268,83 @@ export const PriceChart = ({
 
   if (isChartLoading) {
     return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            {title}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div
+        className="rounded-lg"
+        style={{
+          backgroundColor: fey.bg300,
+          border: `1px solid ${fey.border}`,
+        }}
+      >
+        <div className="p-5 pb-2">
+          <div className="flex items-center gap-2">
+            <div
+              className="p-1.5 rounded"
+              style={{ backgroundColor: "rgba(84, 187, 247, 0.1)" }}
+            >
+              <TrendingUp className="h-4 w-4" style={{ color: fey.skyBlue }} />
+            </div>
+            <span
+              className="text-base font-semibold"
+              style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+            >
+              {title}
+            </span>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
           <div
-            className="animate-pulse bg-muted rounded-lg"
-            style={{ height: `${height}px` }}
+            className="animate-pulse rounded-lg"
+            style={{ height: `${height}px`, backgroundColor: fey.bg400 }}
           />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <div
+      className="rounded-lg"
+      style={{
+        backgroundColor: fey.bg300,
+        border: `1px solid ${fey.border}`,
+      }}
+    >
+      <div className="p-5 pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            {title}
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <div
+              className="p-1.5 rounded"
+              style={{ backgroundColor: "rgba(84, 187, 247, 0.1)" }}
+            >
+              <TrendingUp className="h-4 w-4" style={{ color: fey.skyBlue }} />
+            </div>
+            <span
+              className="text-base font-semibold"
+              style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+            >
+              {title}
+            </span>
+          </div>
           <div className="flex gap-1">
             {timeframes.map((tf) => (
-              <Button
+              <button
                 key={tf}
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "h-7 px-2 text-xs",
-                  timeframe === tf
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground"
-                )}
+                className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
+                style={{
+                  backgroundColor: timeframe === tf ? "rgba(84, 187, 247, 0.1)" : "transparent",
+                  color: timeframe === tf ? fey.skyBlue : fey.grey500,
+                }}
                 onClick={() => setTimeframe(tf)}
               >
                 {tf}
-              </Button>
+              </button>
             ))}
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="p-0 pb-4">
+      </div>
+      <div className="px-0 pb-4">
         <div ref={chartContainerRef} className="w-full" />
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

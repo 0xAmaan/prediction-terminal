@@ -30,6 +30,7 @@ chrono = { workspace = true }
 
 # Concurrency
 dashmap = "6.0"
+parking_lot = "0.12"
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled"] }

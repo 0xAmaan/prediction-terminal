@@ -579,6 +579,7 @@ impl PolymarketWebSocket {
             quantity,
             outcome: TradeOutcome::Yes, // Polymarket uses token for outcome
             side,
+            transaction_hash: None, // WebSocket last_trade_price doesn't include tx hash
         }
     }
 

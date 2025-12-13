@@ -8,13 +8,14 @@ This is a **Prediction Market Terminal** - a full-stack application that aggrega
 
 ## Development Commands
 
-### Frontend (Next.js)
+### Frontend (Next.js 16 + React 19)
 ```bash
 cd frontend
 bun install              # Install dependencies
 bun run dev --turbopack  # Start dev server (usually already running)
 bun run dev:backend      # Run Rust backend with hot reload (from frontend dir)
 bun run build            # Production build
+bun run build:backend    # Release build of Rust backend
 bun run lint             # ESLint
 ```
 
@@ -38,6 +39,7 @@ cargo fmt                      # Format all code (uses rustfmt.toml: edition 202
 - `TRADES_DB_PATH` defaults to `data/trades.db` (SQLite)
 - `SERVER_PORT` defaults to 3001
 - Frontend uses `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:3001`)
+- `KALSHI_PRIVATE_KEY_FILE` - path to RSA private key PEM file for Kalshi auth
 
 ## Architecture
 
@@ -62,6 +64,7 @@ The workspace contains two ecosystems:
   - `TradeCollector` - Background trade fetching and storage
   - `TradeStorage` - SQLite persistence for trades
   - `CandleService` - Price history/candlestick generation
+  - `MarketCache` - SQLite caching for market data
   - `WebSocketState` - Frontend client subscription management
 - `terminal-api/` - Axum HTTP server + WebSocket endpoint
 
@@ -72,7 +75,7 @@ The workspace contains two ecosystems:
    - Exchange WebSockets → `MarketDataAggregator` → `WebSocketState` → Frontend clients
    - Frontend subscribes via `/ws` endpoint with JSON messages
 
-### Frontend Structure (Next.js 15 + React 19)
+### Frontend Structure (Next.js 16 + React 19)
 
 ```
 frontend/src/
@@ -84,8 +87,11 @@ frontend/src/
 │   ├── market/       # Market-specific components (chart, orderbook, trades)
 │   └── markets-grid/ # Market listing components
 ├── hooks/
-│   ├── use-websocket.ts    # WebSocket connection management
-│   └── use-market-stream.ts # Real-time market data hook
+│   ├── use-websocket.ts       # WebSocket connection management
+│   ├── use-market-stream.ts   # Real-time market data hook
+│   ├── use-event-trades-stream.ts # Event-level trade streaming
+│   ├── use-trade-momentum.ts  # Trade momentum analysis
+│   └── use-market-sentiment.ts # Market sentiment indicators
 └── lib/
     ├── api.ts        # REST API client
     └── types.ts      # TypeScript types (mirrors terminal-core)
@@ -105,12 +111,46 @@ frontend/src/
 Frontend sends subscription messages:
 ```json
 {"type": "Subscribe", "channel": {"type": "Orderbook", "platform": "kalshi", "market_id": "..."}}
+{"type": "Subscribe", "channel": {"type": "Trades", "platform": "polymarket", "market_id": "..."}}
+{"type": "Unsubscribe", "channel": {...}}
 ```
 
 Server broadcasts updates:
 ```json
 {"type": "OrderbookUpdate", "update_type": "Snapshot", "orderbook": {...}}
+{"type": "TradeUpdate", "trade": {...}}
 ```
+
+## Current Focus
+
+**Polymarket is the primary focus** - while Kalshi infrastructure remains in place, active development is centered on Polymarket data and features. Prioritize Polymarket when adding new functionality.
+
+## UI Design System (Fey)
+
+The frontend follows the **Fey UI Kit** design system - a dark-themed, finance-focused design language.
+
+### Figma Reference
+- **File Key**: `lJZhaWTxa3MUANHQAitwEe`
+- **Full reference**: See `FEY-REFERENCE-GUIDE.md` for node IDs, color tokens, and component details
+
+### Core Design Tokens
+```
+Background:  #070709 (BG-100) → #1A1B20 (BG-500)
+Grey scale:  #EEF0F1 (Grey-100) → #202427 (Grey-900)
+Font:        Calibre (use Inter as fallback)
+Icons:       Phosphor Icons (phosphoricons.com)
+```
+
+### Key Figma Nodes for Reference
+| Component | Node ID |
+|-----------|---------|
+| Color system | `401:104684` |
+| Typography | `401:104837` |
+| Table rows | `176:33071` |
+| Charts | `495:37313` |
+| Detail screen | `443:234092` |
+
+Use `mcp__figma__get_design_context` with fileKey + nodeId to get component specs.
 
 ## Code Conventions
 

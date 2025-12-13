@@ -35,6 +35,8 @@ export interface PredictionMarket {
   away_odds: string | null;
   spread_line: string | null;
   total_line: string | null;
+  // Tags for categorization (e.g., "Politics", "Crypto", "AI")
+  tags: string[];
 }
 
 // Option data for multi-outcome events
@@ -105,6 +107,8 @@ export interface Trade {
   quantity: string;
   outcome: string; // TradeOutcome - accepts any case
   side: string | null; // TradeSide - accepts any case
+  outcome_name?: string; // For multi-outcome event trades - which sub-market this trade belongs to
+  transaction_hash?: string; // For on-chain trades (Polymarket on Polygon)
 }
 
 export interface TradeHistory {
@@ -152,4 +156,49 @@ export interface OutcomePriceHistory {
   market_id: string;
   color: string;
   history: PriceHistoryPoint[];
+}
+
+// ============================================================================
+// Market Stats Types (for enhanced table view)
+// ============================================================================
+
+/** Available timeframes for market stats */
+export type Timeframe = "1h" | "24h" | "7d" | "30d";
+
+/** Market statistics for a specific timeframe */
+export interface MarketStats {
+  market_id: string;
+  platform: Platform;
+  yes_price: string;
+  no_price: string;
+  /** Absolute price change (e.g., 0.0081 for +0.81 cents) */
+  price_change: string;
+  /** Percentage price change (e.g., 0.97 for +0.97%) */
+  price_change_percent: string;
+  /** Trading volume in the timeframe */
+  volume: string;
+  /** Number of YES trades in the timeframe */
+  yes_txn_count: number;
+  /** Number of NO trades in the timeframe */
+  no_txn_count: number;
+  /** The timeframe these stats cover */
+  timeframe: Timeframe;
+}
+
+/** Response from /api/markets/stats endpoint */
+export interface MarketStatsResponse {
+  stats: MarketStats[];
+  /** Sparkline price history for each market (market_id -> price points) */
+  sparklines: Record<string, PriceHistoryPoint[]>;
+  /** The timeframe used */
+  timeframe: string;
+  /** Number of markets */
+  count: number;
+}
+
+/** Query params for fetching market stats */
+export interface MarketStatsParams {
+  timeframe?: Timeframe;
+  platform?: Platform;
+  limit?: number;
 }

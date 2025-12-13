@@ -1,10 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { PredictionMarket, Platform } from "@/lib/types";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  red: "#D84F68",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 // ============================================================================
 // Types
@@ -40,23 +49,40 @@ const MarketCard = ({ market }: MarketCardProps) => {
   const isHigh = yesPrice >= 0.7;
   const isLow = yesPrice <= 0.3;
 
+  const getPriceColor = () => {
+    if (isHigh) return fey.teal;
+    if (isLow) return fey.red;
+    return fey.grey100;
+  };
+
   return (
     <Link href={`/market/${market.platform}/${market.id}`}>
-      <div className="p-3 rounded-lg border border-border/30 hover:bg-secondary/30 transition-colors cursor-pointer">
+      <div
+        className="p-3 rounded-lg transition-colors cursor-pointer"
+        style={{ border: `1px solid ${fey.border}` }}
+        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = fey.bg400)}
+        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{market.title}</p>
+            <p
+              className="text-sm font-medium truncate"
+              style={{ color: fey.grey100 }}
+            >
+              {market.title}
+            </p>
             {market.leading_outcome && (
-              <p className="text-xs text-muted-foreground mt-0.5 truncate">
+              <p
+                className="text-xs mt-0.5 truncate"
+                style={{ color: fey.grey500 }}
+              >
                 Leading: {market.leading_outcome}
               </p>
             )}
           </div>
           <div
-            className={cn(
-              "text-sm font-mono font-bold whitespace-nowrap",
-              isHigh ? "text-green-500" : isLow ? "text-red-500" : "text-foreground"
-            )}
+            className="text-sm font-mono font-bold whitespace-nowrap"
+            style={{ color: getPriceColor() }}
           >
             {formatPrice(market.yes_price)}
           </div>
@@ -73,13 +99,26 @@ const MarketCard = ({ market }: MarketCardProps) => {
 const RelatedMarketsSkeleton = () => (
   <div className="space-y-2">
     {Array.from({ length: 3 }).map((_, i) => (
-      <div key={i} className="p-3 rounded-lg border border-border/30">
+      <div
+        key={i}
+        className="p-3 rounded-lg"
+        style={{ border: `1px solid ${fey.border}` }}
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1">
-            <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
-            <div className="h-3 w-1/2 animate-pulse rounded bg-muted mt-1" />
+            <div
+              className="h-4 w-3/4 animate-pulse rounded"
+              style={{ backgroundColor: fey.bg400 }}
+            />
+            <div
+              className="h-3 w-1/2 animate-pulse rounded mt-1"
+              style={{ backgroundColor: fey.bg400 }}
+            />
           </div>
-          <div className="h-4 w-10 animate-pulse rounded bg-muted" />
+          <div
+            className="h-4 w-10 animate-pulse rounded"
+            style={{ backgroundColor: fey.bg400 }}
+          />
         </div>
       </div>
     ))}
@@ -103,14 +142,25 @@ export const RelatedMarkets = ({
 
   if (isLoading) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Related Markets</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div
+        className="rounded-lg"
+        style={{
+          backgroundColor: fey.bg300,
+          border: `1px solid ${fey.border}`,
+        }}
+      >
+        <div className="p-5 pb-3">
+          <span
+            className="text-sm font-semibold"
+            style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+          >
+            Related Markets
+          </span>
+        </div>
+        <div className="px-5 pb-5">
           <RelatedMarketsSkeleton />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
@@ -119,20 +169,34 @@ export const RelatedMarkets = ({
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <div
+      className="rounded-lg"
+      style={{
+        backgroundColor: fey.bg300,
+        border: `1px solid ${fey.border}`,
+      }}
+    >
+      <div className="p-5 pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">Related Markets</CardTitle>
-          <Badge variant="secondary" className="text-xs">
+          <span
+            className="text-sm font-semibold"
+            style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+          >
+            Related Markets
+          </span>
+          <span
+            className="text-xs px-2 py-0.5 rounded font-medium"
+            style={{ backgroundColor: fey.bg400, color: fey.grey500 }}
+          >
             {filteredMarkets.length}
-          </Badge>
+          </span>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-2">
+      </div>
+      <div className="px-5 pb-5 space-y-2">
         {filteredMarkets.map((market) => (
           <MarketCard key={market.id} market={market} />
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

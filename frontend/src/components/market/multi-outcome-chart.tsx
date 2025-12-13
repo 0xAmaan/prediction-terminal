@@ -3,12 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, type IChartApi, ColorType, LineSeries, type UTCTimestamp } from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { TrendingUp, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { OutcomePriceHistory } from "@/lib/types";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey500: "#7D8B96",
+  skyBlue: "#54BBF7",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 type TimeFrame = "1H" | "24H" | "7D" | "30D" | "ALL";
 
@@ -46,8 +53,7 @@ export const MultiOutcomeChart = ({
         top,
         interval: TIMEFRAME_TO_INTERVAL[timeframe],
       }),
-    staleTime: 60 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 5 * 60 * 1000, // Price history doesn't change rapidly
   });
 
   useEffect(() => {
@@ -147,27 +153,42 @@ export const MultiOutcomeChart = ({
   const timeframes: TimeFrame[] = ["1H", "24H", "7D", "30D", "ALL"];
 
   return (
-    <Card className="border-white/10 bg-black/20 backdrop-blur-sm">
-      <CardHeader className="pb-2">
+    <div
+      className="rounded-lg"
+      style={{
+        backgroundColor: fey.bg300,
+        border: `1px solid ${fey.border}`,
+      }}
+    >
+      <div className="p-5 pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-base font-medium">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            {title}
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <div
+              className="p-1.5 rounded"
+              style={{ backgroundColor: "rgba(84, 187, 247, 0.1)" }}
+            >
+              <TrendingUp className="h-4 w-4" style={{ color: fey.skyBlue }} />
+            </div>
+            <span
+              className="text-base font-semibold"
+              style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+            >
+              {title}
+            </span>
+          </div>
           <div className="flex gap-1">
             {timeframes.map((tf) => (
-              <Button
+              <button
                 key={tf}
-                variant={timeframe === tf ? "secondary" : "ghost"}
-                size="sm"
-                className={cn(
-                  "h-7 px-2 text-xs",
-                  timeframe === tf && "bg-white/10"
-                )}
+                className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
+                style={{
+                  backgroundColor: timeframe === tf ? "rgba(84, 187, 247, 0.1)" : "transparent",
+                  color: timeframe === tf ? fey.skyBlue : fey.grey500,
+                }}
                 onClick={() => setTimeframe(tf)}
               >
                 {tf}
-              </Button>
+              </button>
             ))}
           </div>
         </div>
@@ -180,41 +201,44 @@ export const MultiOutcomeChart = ({
                   className="w-2.5 h-2.5 rounded-full"
                   style={{ backgroundColor: outcome.color }}
                 />
-                <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                <span
+                  className="text-xs truncate max-w-[120px]"
+                  style={{ color: fey.grey500 }}
+                >
                   {outcome.name}
                 </span>
               </div>
             ))}
           </div>
         )}
-      </CardHeader>
-      <CardContent className="pt-0">
+      </div>
+      <div className="pt-0 px-5 pb-5">
         {isLoading ? (
           <div
-            className="flex items-center justify-center text-muted-foreground"
-            style={{ height }}
+            className="flex items-center justify-center"
+            style={{ height, color: fey.grey500 }}
           >
             <Loader2 className="h-6 w-6 animate-spin mr-2" />
             Loading price history...
           </div>
         ) : error ? (
           <div
-            className="flex items-center justify-center text-muted-foreground"
-            style={{ height }}
+            className="flex items-center justify-center"
+            style={{ height, color: fey.grey500 }}
           >
             Failed to load price history
           </div>
         ) : !outcomes || outcomes.length === 0 ? (
           <div
-            className="flex items-center justify-center text-muted-foreground"
-            style={{ height }}
+            className="flex items-center justify-center"
+            style={{ height, color: fey.grey500 }}
           >
             No price history available
           </div>
         ) : (
           <div ref={chartContainerRef} className="w-full" style={{ height }} />
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

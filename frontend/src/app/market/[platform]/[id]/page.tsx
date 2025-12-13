@@ -1,191 +1,97 @@
 "use client";
 
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
-import type { Platform, PredictionMarket, MarketOption } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { OrderBook } from "@/components/market/order-book";
-import { TradeHistory } from "@/components/market/trade-history";
-import { PriceChart } from "@/components/market/price-chart";
+import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/types";
+
+// Existing components
 import { ConnectionIndicator } from "@/components/market/connection-indicator";
-import { RelatedMarkets } from "@/components/market/related-markets";
-import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
-import { OutcomeAccordion } from "@/components/market/outcome-accordion";
+
+// New view components
+import { TradingView } from "@/components/market/views/trading-view";
+import { OverviewView } from "@/components/market/views/overview-view";
+import { MultiOutcomeOverviewView } from "@/components/market/views/multi-outcome-overview-view";
+import { MultiOutcomeTradingView } from "@/components/market/views/multi-outcome-trading-view";
+import { MarketTabs, type MarketTab } from "@/components/market/market-tabs";
+import { MarketBar } from "@/components/market/layout/market-bar";
+import { MultiOutcomeMarketBar } from "@/components/market/layout/multi-outcome-market-bar";
+import { ProModeToggle } from "@/components/market/ui/pro-mode-toggle";
+
+// Hooks
 import { useMarketStream } from "@/hooks/use-market-stream";
+import { useProMode } from "@/hooks/use-pro-mode";
 import type { ConnectionState } from "@/hooks/use-websocket";
-import {
-  ArrowLeft,
-  ExternalLink,
-  Clock,
-  TrendingUp,
-  Activity,
-  Calendar,
-  Info,
-  DollarSign,
-} from "lucide-react";
 
-// Format helpers (same as markets-table for consistency)
-const formatPrice = (price: string): string => {
-  const num = parseFloat(price);
-  if (isNaN(num)) return "—";
-  return `${(num * 100).toFixed(1)}¢`;
+// Animation variants
+import { staggerContainer, staggerItem } from "@/lib/motion";
+
+import { ArrowLeft, ExternalLink, Info } from "lucide-react";
+
+// Fey color tokens
+const fey = {
+  bg100: "#070709",
+  bg200: "#101116",
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey300: "#B6BEC4",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  red: "#D84F68",
+  skyBlue: "#54BBF7",
+  purple: "#6166DC",
+  border: "rgba(255, 255, 255, 0.06)",
 };
 
-const formatPricePercent = (price: string): string => {
-  const num = parseFloat(price);
-  if (isNaN(num)) return "—";
-  return `${(num * 100).toFixed(1)}%`;
-};
-
-const formatVolume = (volume: string): string => {
-  const num = parseFloat(volume);
-  if (isNaN(num) || num === 0) return "—";
-  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(2)}M`;
-  if (num >= 1_000) return `$${(num / 1_000).toFixed(1)}K`;
-  return `$${num.toFixed(0)}`;
-};
-
-const formatDate = (dateStr: string | null): string => {
-  if (!dateStr) return "No end date";
-  const date = new Date(dateStr);
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-};
-
-const formatTicker = (ticker: string): string => {
-  // Truncate long hex addresses (Polymarket) like 0x01d5...e569
-  if (ticker.startsWith("0x") && ticker.length > 20) {
-    return `${ticker.slice(0, 8)}...${ticker.slice(-4)}`;
-  }
-  return ticker;
-};
-
-const formatTimeRemaining = (dateStr: string | null): string => {
-  if (!dateStr) return "—";
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-
-  if (diffMs < 0) return "Ended";
-
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-
-  if (diffDays === 0 && diffHours === 0) return "< 1 hour";
-  if (diffDays === 0) return `${diffHours}h remaining`;
-  if (diffDays === 1) return `1 day, ${diffHours}h`;
-  if (diffDays < 7) return `${diffDays} days`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks`;
-  return `${Math.floor(diffDays / 30)} months`;
-};
+// ============================================================================
+// Sub-components
+// ============================================================================
 
 const PlatformBadge = ({ platform }: { platform: Platform }) => {
-  const isKalshi = platform === "kalshi";
+  const color = fey.skyBlue;
   return (
-    <Badge
-      variant="outline"
-      className={`${
-        isKalshi
-          ? "border-[#22c55e]/50 text-[#22c55e] bg-[#22c55e]/10"
-          : "border-[#3b82f6]/50 text-[#3b82f6] bg-[#3b82f6]/10"
-      } font-medium`}
+    <span
+      className="text-[10px] font-medium uppercase tracking-wider px-2 py-1 rounded"
+      style={{
+        backgroundColor: `${color}15`,
+        color: color,
+      }}
     >
-      {isKalshi ? "Kalshi" : "Polymarket"}
-    </Badge>
+      Polymarket
+    </span>
   );
 };
 
 const StatusBadge = ({ status }: { status: string }) => {
   const statusConfig = {
-    open: { color: "bg-green-500/20 text-green-400 border-green-500/30", label: "Open" },
-    closed: { color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30", label: "Closed" },
-    settled: { color: "bg-gray-500/20 text-gray-400 border-gray-500/30", label: "Settled" },
+    open: { color: fey.teal, label: "Open" },
+    closed: { color: "#C27C58", label: "Closed" },
+    settled: { color: fey.grey500, label: "Settled" },
   };
 
-  const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.open;
+  const config =
+    statusConfig[status as keyof typeof statusConfig] || statusConfig.open;
 
   return (
-    <Badge variant="outline" className={`${config.color} font-medium`}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current mr-1.5 animate-pulse" />
+    <span
+      className="text-[10px] font-medium uppercase tracking-wider px-2 py-1 rounded flex items-center gap-1.5"
+      style={{
+        backgroundColor: `${config.color}15`,
+        color: config.color,
+      }}
+    >
+      <span
+        className="h-1.5 w-1.5 rounded-full animate-pulse"
+        style={{ backgroundColor: config.color }}
+      />
       {config.label}
-    </Badge>
+    </span>
   );
 };
-
-const PriceCard = ({
-  label,
-  price,
-  variant,
-}: {
-  label: string;
-  price: string;
-  variant: "yes" | "no";
-}) => {
-  const num = parseFloat(price);
-  const isHigh = num >= 0.7;
-  const isLow = num <= 0.3;
-
-  return (
-    <Card className="border-border/30">
-      <CardContent className="p-4">
-        <div className="text-sm text-muted-foreground mb-1">{label}</div>
-        <div
-          className={`text-3xl font-bold font-mono ${
-            variant === "yes"
-              ? isHigh
-                ? "text-[#22c55e]"
-                : isLow
-                  ? "text-[#ef4444]"
-                  : "text-foreground"
-              : "text-muted-foreground"
-          }`}
-        >
-          {formatPrice(price)}
-        </div>
-        <div className="text-sm text-muted-foreground mt-1">
-          {formatPricePercent(price)} implied
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-interface MarketPageContentProps {
-  market: PredictionMarket;
-  orderBook: {
-    yes_bids: Array<{ price: string; quantity: string; order_count: number | null }>;
-    yes_asks: Array<{ price: string; quantity: string; order_count: number | null }>;
-    no_bids: Array<{ price: string; quantity: string; order_count: number | null }>;
-    no_asks: Array<{ price: string; quantity: string; order_count: number | null }>;
-  } | null;
-  orderBookLoading: boolean;
-  trades: Array<{
-    id: string;
-    market_id: string;
-    platform: string;
-    timestamp: string;
-    price: string;
-    quantity: string;
-    outcome: string;
-    side: string | null;
-  }>;
-  tradesLoading: boolean;
-  relatedMarkets: PredictionMarket[];
-  relatedMarketsLoading: boolean;
-  connectionState: ConnectionState;
-  latency: number | null;
-  livePrices: { yesPrice: string; noPrice: string } | null;
-}
 
 // Parse options from options_json
 const parseOptions = (optionsJson: string | null): MarketOption[] => {
@@ -196,6 +102,29 @@ const parseOptions = (optionsJson: string | null): MarketOption[] => {
     return [];
   }
 };
+
+// ============================================================================
+// Main Content Component with Tab Switching
+// ============================================================================
+
+interface MarketPageContentProps {
+  market: PredictionMarket;
+  orderBook: {
+    yes_bids: Array<{ price: string; quantity: string; order_count: number | null }>;
+    yes_asks: Array<{ price: string; quantity: string; order_count: number | null }>;
+    no_bids: Array<{ price: string; quantity: string; order_count: number | null }>;
+    no_asks: Array<{ price: string; quantity: string; order_count: number | null }>;
+  } | null;
+  orderBookLoading: boolean;
+  trades: Trade[];
+  tradesLoading: boolean;
+  relatedMarkets: PredictionMarket[];
+  relatedMarketsLoading: boolean;
+  connectionState: ConnectionState;
+  latency: number | null;
+  livePrices: { yesPrice: string; noPrice: string } | null;
+  priceHistory: number[];
+}
 
 const MarketPageContent = ({
   market,
@@ -208,280 +137,354 @@ const MarketPageContent = ({
   connectionState,
   latency,
   livePrices,
+  priceHistory,
 }: MarketPageContentProps) => {
-  const platformColor = market.platform === "kalshi" ? "#22c55e" : "#3b82f6";
+  // Tab state - Overview is default
+  const [activeTab, setActiveTab] = useState<MarketTab>("overview");
 
-  // Use live prices from WebSocket if available, fallback to REST data
-  const currentYesPrice = livePrices?.yesPrice ?? market.yes_price;
-  const currentNoPrice = livePrices?.noPrice ?? market.no_price;
+  // Pro mode state
+  const { proMode, toggleProMode } = useProMode();
 
-  // Parse multi-outcome options
+  // Parse multi-outcome options early (needed for state initialization)
   const options = parseOptions(market.options_json ?? null);
   const isMultiOutcome = market.is_multi_outcome && options.length > 0;
 
+  // Selected outcome state for multi-outcome trading view
+  const [selectedOutcome, setSelectedOutcome] = useState<MarketOption | null>(null);
+
+  // Initialize selected outcome to leading (highest price) on mount
+  useEffect(() => {
+    if (isMultiOutcome && options.length > 0 && !selectedOutcome) {
+      const sorted = [...options].sort(
+        (a, b) => parseFloat(b.yes_price) - parseFloat(a.yes_price)
+      );
+      setSelectedOutcome(sorted[0]);
+    }
+  }, [isMultiOutcome, options, selectedOutcome]);
+
+  // Keyboard shortcuts for tab switching
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+
+      // O for Overview, T for Trading, R for Research
+      if (event.key === "o" || event.key === "O") {
+        setActiveTab("overview");
+      } else if (event.key === "t" || event.key === "T") {
+        setActiveTab("trading");
+      } else if (event.key === "r" || event.key === "R") {
+        setActiveTab("research");
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Use live prices from WebSocket if available
+  const currentYesPrice = livePrices?.yesPrice ?? market.yes_price;
+  const currentNoPrice = livePrices?.noPrice ?? market.no_price;
+
+  const isConnected = connectionState === "connected";
+
+  // Calculate spread for MarketBar
+  const spread = useMemo(() => {
+    if (!orderBook || orderBook.yes_bids.length === 0 || orderBook.yes_asks.length === 0) {
+      return null;
+    }
+    const bestBid = parseFloat(orderBook.yes_bids[0].price);
+    const bestAsk = parseFloat(orderBook.yes_asks[0].price);
+    return bestAsk - bestBid;
+  }, [orderBook]);
+
+  // Handle outcome click from overview grid - switch to trading tab with that outcome
+  const handleOutcomeClick = useCallback((outcome: MarketOption) => {
+    setSelectedOutcome(outcome);
+    setActiveTab("trading");
+  }, []);
+
+  // =========================================================================
+  // Tab-based Layout (for both binary and multi-outcome markets)
+  // =========================================================================
+
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-xl sticky top-0 z-50">
-        <div className="px-32 py-4">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              className="p-2 rounded-lg hover:bg-secondary/50 transition-colors text-muted-foreground hover:text-foreground"
-            >
+    <motion.div
+      className="h-screen flex flex-col overflow-hidden"
+      style={{ backgroundColor: fey.bg100 }}
+      initial="hidden"
+      animate="visible"
+      variants={staggerContainer}
+    >
+      {/* Minimal Header - Just back button and external link */}
+      <motion.header
+        className="sticky top-0 z-50"
+        style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
+        variants={staggerItem}
+      >
+        <div className="px-6 lg:px-8 py-3">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
               <ArrowLeft className="h-5 w-5" />
             </Link>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1">
-                <PlatformBadge platform={market.platform} />
-                <StatusBadge status={market.status} />
-                {market.category && (
-                  <Badge variant="secondary" className="text-xs">
-                    {market.category}
-                  </Badge>
-                )}
-                <ConnectionIndicator state={connectionState} latency={latency} showLabel={true} />
-              </div>
-              <h1 className="text-xl font-semibold truncate">{market.title}</h1>
+
+            <div className="flex items-center gap-3">
+              {activeTab === "trading" && (
+                <ProModeToggle proMode={proMode} onToggle={toggleProMode} size="sm" />
+              )}
+              {market.url && (
+                <a
+                  href={market.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
+                  style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
             </div>
-            {market.url && (
-              <a
-                href={market.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border/50 hover:bg-secondary/50 transition-colors text-sm"
-                style={{ borderColor: `${platformColor}40` }}
-              >
-                <span>View on {market.platform === "kalshi" ? "Kalshi" : "Polymarket"}</span>
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            )}
           </div>
         </div>
-      </header>
+      </motion.header>
 
-      {/* Main Content */}
-      <main className="px-32 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column - Main Info */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Price Cards - different display for multi-outcome */}
+      {/* Tab Navigation */}
+      <MarketTabs activeTab={activeTab} onTabChange={setActiveTab} />
+
+      {/* Tab Content with Crossfade Animation */}
+      <AnimatePresence mode="wait">
+        {activeTab === "overview" && (
+          <motion.div
+            key="overview"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="flex-1 flex flex-col min-h-0"
+          >
             {isMultiOutcome ? (
-              <div className="space-y-6">
-                {/* Multi-line chart showing top outcomes */}
-                <MultiOutcomeChart
-                  platform={market.platform}
-                  marketId={market.id}
-                  height={350}
-                  title="Price History"
-                  top={5}
-                />
-
-                {/* Expandable outcomes list with full detail */}
-                <Card className="border-border/30">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Activity className="h-4 w-4 text-primary" />
-                      Outcomes ({options.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <OutcomeAccordion
-                      platform={market.platform}
-                      eventId={market.id}
-                      options={options}
-                    />
-                  </CardContent>
-                </Card>
-              </div>
+              <MultiOutcomeOverviewView
+                market={market}
+                options={options}
+                trades={trades}
+                onOutcomeClick={handleOutcomeClick}
+              />
             ) : (
-              <div className="grid grid-cols-2 gap-4">
-                <PriceCard label="Yes Price" price={currentYesPrice} variant="yes" />
-                <PriceCard label="No Price" price={currentNoPrice} variant="no" />
-              </div>
-            )}
-
-            {/* Price Chart - only show for binary markets */}
-            {!isMultiOutcome && (
-              <PriceChart
-                platform={market.platform}
-                marketId={market.id}
-                currentPrice={parseFloat(currentYesPrice)}
-                height={280}
-                title="Price History"
+              <OverviewView
+                market={market}
+                priceHistory={priceHistory}
+                relatedMarkets={relatedMarkets}
+                relatedMarketsLoading={relatedMarketsLoading}
+                trades={trades}
+                livePrices={livePrices}
               />
             )}
-
-            {/* Order Book - only show for binary markets */}
-            {!isMultiOutcome && (
-              <OrderBook
-                yesBids={orderBook?.yes_bids ?? []}
-                yesAsks={orderBook?.yes_asks ?? []}
-                noBids={orderBook?.no_bids ?? []}
-                noAsks={orderBook?.no_asks ?? []}
-                isLoading={orderBookLoading}
-                maxLevels={10}
+          </motion.div>
+        )}
+        {activeTab === "trading" && (
+          <motion.div
+            key="trading"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="flex-1 flex flex-col min-h-0"
+          >
+            {isMultiOutcome ? (
+              <MultiOutcomeTradingView
+                market={market}
+                options={options}
+                selectedOutcome={selectedOutcome}
+                onOutcomeSelect={setSelectedOutcome}
+                relatedMarkets={relatedMarkets}
+                relatedMarketsLoading={relatedMarketsLoading}
+                proMode={proMode}
+                toggleProMode={toggleProMode}
+              />
+            ) : (
+              <TradingView
+                market={market}
+                orderBook={orderBook}
+                orderBookLoading={orderBookLoading}
+                trades={trades}
+                relatedMarkets={relatedMarkets}
+                relatedMarketsLoading={relatedMarketsLoading}
+                livePrices={livePrices}
+                priceHistory={priceHistory}
+                proMode={proMode}
+                toggleProMode={toggleProMode}
               />
             )}
-
-          </div>
-
-          {/* Right Column - Sidebar */}
-          <div className="space-y-6">
-            {/* Market Stats */}
-            <Card className="border-border/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Market Stats</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4" />
-                    Volume
-                  </span>
-                  <span className="font-mono font-medium">{formatVolume(market.volume)}</span>
-                </div>
-                {market.liquidity && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground flex items-center gap-2">
-                      <DollarSign className="h-4 w-4" />
-                      Liquidity
-                    </span>
-                    <span className="font-mono font-medium">{formatVolume(market.liquidity)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    Time Left
-                  </span>
-                  <span className="font-medium">{formatTimeRemaining(market.close_time)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Calendar className="h-4 w-4" />
-                    Closes
-                  </span>
-                  <span className="text-sm">{formatDate(market.close_time)}</span>
-                </div>
-                {market.ticker && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground flex items-center gap-2">
-                      <Activity className="h-4 w-4" />
-                      Ticker
-                    </span>
-                    <span className="font-mono text-sm" title={market.ticker}>
-                      {formatTicker(market.ticker)}
-                    </span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* About This Market / Resolution */}
-            {(market.description || market.resolution_source) && (
-              <Card className="border-border/30">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Info className="h-4 w-4 text-primary" />
-                    About This Market
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {market.description && (
-                    <p className="text-[15px] text-foreground/80 leading-relaxed whitespace-pre-wrap">
-                      {market.description}
-                    </p>
-                  )}
-                  {market.resolution_source && (
-                    <div>
-                      <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Resolution Source
-                      </div>
-                      <p className="text-[15px] text-foreground/70 leading-relaxed">
-                        {market.resolution_source}
-                      </p>
+          </motion.div>
+        )}
+        {activeTab === "research" && (
+          <motion.div
+            key="research"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="flex-1 flex flex-col min-h-0"
+          >
+            {/* Research View Placeholder */}
+            <div className="flex-1 overflow-auto">
+              <div className="px-6 lg:px-8 py-8 pb-24">
+                <div className="max-w-4xl mx-auto">
+                  <div
+                    className="rounded-lg p-8 text-center"
+                    style={{
+                      backgroundColor: fey.bg300,
+                      border: `1px solid ${fey.border}`,
+                    }}
+                  >
+                    <div
+                      className="h-16 w-16 rounded-full flex items-center justify-center mx-auto mb-4"
+                      style={{ backgroundColor: `${fey.purple}15` }}
+                    >
+                      <Info className="h-8 w-8" style={{ color: fey.purple }} />
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+                    <h2
+                      className="text-xl font-semibold mb-2"
+                      style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+                    >
+                      Deep Research Agent
+                    </h2>
+                    <p
+                      className="text-sm mb-6 max-w-md mx-auto"
+                      style={{ color: fey.grey500 }}
+                    >
+                      Our AI-powered research agent will analyze this market, gather relevant data,
+                      and provide comprehensive insights to help inform your trading decisions.
+                    </p>
+                    <div
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                      style={{
+                        backgroundColor: fey.purple,
+                        color: fey.grey100,
+                      }}
+                    >
+                      Coming Soon
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            {/* Trade History - only show for binary markets */}
-            {!isMultiOutcome && (
-              <TradeHistory trades={trades} isLoading={tradesLoading} maxTrades={20} />
-            )}
-
-            {/* Related Markets */}
-            <RelatedMarkets
-              markets={relatedMarkets}
-              currentMarketId={market.id}
-              isLoading={relatedMarketsLoading}
-              maxDisplay={5}
-            />
-          </div>
-        </div>
-      </main>
-    </div>
+      {/* Fixed Market Bar Footer - Only show on Overview */}
+      {activeTab === "overview" && (
+        isMultiOutcome ? (
+          <MultiOutcomeMarketBar
+            options={options}
+            selectedOutcome={selectedOutcome}
+            onOutcomeSelect={handleOutcomeClick}
+            volume24h={market.volume}
+            lastTrade={trades[0] ?? null}
+            isConnected={isConnected}
+            latency={latency}
+          />
+        ) : (
+          <MarketBar
+            yesPrice={currentYesPrice}
+            noPrice={currentNoPrice}
+            spread={spread}
+            volume24h={market.volume}
+            lastTrade={trades[0] ?? null}
+            isConnected={isConnected}
+            latency={latency}
+          />
+        )
+      )}
+    </motion.div>
   );
 };
 
+// ============================================================================
+// Loading Skeleton
+// ============================================================================
+
 const LoadingSkeleton = () => (
-  <div className="min-h-screen bg-background">
-    <header className="border-b border-border/50 bg-card/50">
-      <div className="px-32 py-4">
+  <div className="min-h-screen" style={{ backgroundColor: fey.bg100 }}>
+    <header style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}>
+      <div className="px-8 lg:px-32 py-3">
         <div className="flex items-center gap-4">
-          <Skeleton className="h-9 w-9 rounded-lg" />
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
-              <Skeleton className="h-5 w-16" />
-              <Skeleton className="h-5 w-14" />
-            </div>
-            <Skeleton className="h-6 w-96" />
+          <div className="h-9 w-9 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+          <div className="flex items-center gap-3">
+            <div className="h-5 w-16 rounded animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+            <div className="h-5 w-14 rounded animate-pulse" style={{ backgroundColor: fey.bg300 }} />
           </div>
+          <div className="h-5 w-96 flex-1 rounded animate-pulse" style={{ backgroundColor: fey.bg300 }} />
         </div>
       </div>
     </header>
-    <main className="px-32 py-8">
+    <div style={{ borderBottom: `1px solid ${fey.border}` }}>
+      <div className="px-8 lg:px-32 py-3 flex gap-8">
+        <div className="h-5 w-20 rounded animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+        <div className="h-5 w-16 rounded animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+      </div>
+    </div>
+    <main className="px-8 lg:px-32 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <Skeleton className="h-32 rounded-xl" />
-            <Skeleton className="h-32 rounded-xl" />
-          </div>
-          <Skeleton className="h-80 rounded-xl" />
-          <Skeleton className="h-64 rounded-xl" />
+          <div className="h-32 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+          <div className="h-40 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+          <div className="h-64 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
         </div>
         <div className="space-y-6">
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
+          <div className="h-48 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
+          <div className="h-48 rounded-lg animate-pulse" style={{ backgroundColor: fey.bg300 }} />
         </div>
       </div>
     </main>
   </div>
 );
 
+// ============================================================================
+// Error State
+// ============================================================================
+
 const ErrorState = ({ message }: { message: string }) => (
-  <div className="min-h-screen bg-background flex items-center justify-center">
-    <Card className="max-w-md w-full mx-4">
-      <CardContent className="p-8 text-center">
-        <div className="h-12 w-12 rounded-full bg-destructive/20 flex items-center justify-center mx-auto mb-4">
-          <Info className="h-6 w-6 text-destructive" />
-        </div>
-        <h2 className="text-lg font-semibold mb-2">Failed to Load Market</h2>
-        <p className="text-muted-foreground mb-6">{message}</p>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Markets
-        </Link>
-      </CardContent>
-    </Card>
+  <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: fey.bg100 }}>
+    <div
+      className="max-w-md w-full mx-4 rounded-lg p-8 text-center"
+      style={{ backgroundColor: fey.bg300, border: `1px solid ${fey.border}` }}
+    >
+      <div
+        className="h-12 w-12 rounded-full flex items-center justify-center mx-auto mb-4"
+        style={{ backgroundColor: `${fey.red}15` }}
+      >
+        <Info className="h-6 w-6" style={{ color: fey.red }} />
+      </div>
+      <h2 className="text-lg font-semibold mb-2" style={{ color: fey.grey100 }}>
+        Failed to Load Market
+      </h2>
+      <p className="mb-6" style={{ color: fey.grey500 }}>{message}</p>
+      <Link
+        href="/"
+        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg transition-colors"
+        style={{ backgroundColor: fey.teal, color: fey.bg100 }}
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to Markets
+      </Link>
+    </div>
   </div>
 );
+
+// ============================================================================
+// Main Page Component
+// ============================================================================
 
 const MarketPage = () => {
   const params = useParams();
@@ -489,36 +492,35 @@ const MarketPage = () => {
   const id = params.id as string;
 
   // Fetch market data
-  const { data: market, isLoading, error } = useQuery({
+  const {
+    data: market,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["market", platform, id],
     queryFn: () => api.getMarket(platform, id),
     enabled: !!platform && !!id,
-    staleTime: 30 * 1000, // 30 seconds
-    refetchInterval: 60 * 1000, // Refresh every minute
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Determine if this is a multi-outcome market (skip orderbook/trades for those)
+  // Determine if this is a multi-outcome market
   const isMultiOutcome = market?.is_multi_outcome ?? false;
 
-  // Fetch order book (use ticker for Kalshi, id for Polymarket)
-  // Skip for multi-outcome markets - they don't have single orderbooks
+  // Fetch order book
   const orderBookId = platform === "kalshi" ? market?.ticker : id;
   const { data: orderBook, isLoading: orderBookLoading } = useQuery({
     queryKey: ["orderbook", platform, orderBookId],
     queryFn: () => api.getOrderBook(platform, orderBookId!),
     enabled: !!platform && !!orderBookId && !isMultiOutcome,
-    staleTime: 5 * 1000, // 5 seconds
-    refetchInterval: 10 * 1000, // Refresh every 10 seconds
+    staleTime: 5 * 60 * 1000,
   });
 
   // Fetch trades
-  // Skip for multi-outcome markets - they don't have single trade feeds
   const { data: tradesData, isLoading: tradesLoading } = useQuery({
     queryKey: ["trades", platform, orderBookId],
     queryFn: () => api.getTrades(platform, orderBookId!, 50),
     enabled: !!platform && !!orderBookId && !isMultiOutcome,
-    staleTime: 5 * 1000,
-    refetchInterval: 15 * 1000, // Refresh every 15 seconds
+    staleTime: 5 * 60 * 1000,
   });
 
   // Fetch related markets
@@ -526,11 +528,19 @@ const MarketPage = () => {
     queryKey: ["related", platform, id],
     queryFn: () => api.getRelatedMarkets(platform, id, 6),
     enabled: !!platform && !!id,
-    staleTime: 60 * 1000, // 1 minute
+    staleTime: 5 * 60 * 1000,
   });
 
-  // WebSocket streaming for live updates
-  const wsMarketId = platform === "kalshi" ? market?.ticker ?? id : id;
+  // Fetch price history
+  const { data: priceHistoryData } = useQuery({
+    queryKey: ["priceHistory", platform, orderBookId, "7d"],
+    queryFn: () => api.getPriceHistory(platform, orderBookId!, { timeframe: "7d" }),
+    enabled: !!platform && !!orderBookId && !isMultiOutcome,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // WebSocket streaming
+  const wsMarketId = platform === "kalshi" ? (market?.ticker ?? id) : id;
   const {
     connectionState,
     prices: wsPrices,
@@ -553,7 +563,7 @@ const MarketPage = () => {
     return <ErrorState message={error?.message || "Market not found"} />;
   }
 
-  // Merge WebSocket data with REST data (WebSocket takes priority when available)
+  // Merge WebSocket data with REST data
   const mergedOrderBook = wsOrderBook
     ? {
         yes_bids: wsOrderBook.yesBids,
@@ -563,11 +573,16 @@ const MarketPage = () => {
       }
     : orderBook ?? null;
 
-  // Merge trades: WebSocket trades at the top, then REST trades (deduplicated)
+  // Merge trades
   const restTrades = tradesData?.trades ?? [];
   const wsTradeIds = new Set(wsTrades.map((t) => t.id));
   const uniqueRestTrades = restTrades.filter((t) => !wsTradeIds.has(t.id));
   const mergedTrades = [...wsTrades, ...uniqueRestTrades].slice(0, 50);
+
+  // Extract price history
+  const priceHistory: number[] = priceHistoryData?.candles
+    ? priceHistoryData.candles.slice(-50).map((c) => parseFloat(c.close))
+    : [];
 
   return (
     <MarketPageContent
@@ -580,7 +595,10 @@ const MarketPage = () => {
       relatedMarketsLoading={relatedMarketsLoading}
       connectionState={connectionState}
       latency={latency}
-      livePrices={wsPrices ? { yesPrice: wsPrices.yesPrice, noPrice: wsPrices.noPrice } : null}
+      livePrices={
+        wsPrices ? { yesPrice: wsPrices.yesPrice, noPrice: wsPrices.noPrice } : null
+      }
+      priceHistory={priceHistory}
     />
   );
 };

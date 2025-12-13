@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformBadge } from "../platform-badge";
-import { PlatformFilter } from "../platform-filter";
+import { PlatformFilter, type FilterOption } from "../platform-filter";
 
 type SortField = "volume" | "close_time" | "yes_price" | "created_at" | null;
 type SortDirection = "asc" | "desc";
@@ -278,7 +278,7 @@ const SortableHeader = ({
 
 export const MarketsTable = ({ search = "" }: MarketsTableProps) => {
   const router = useRouter();
-  const [platform, setPlatform] = useState<"all" | "kalshi" | "polymarket">("all");
+  const [filter, setFilter] = useState<FilterOption>("all");
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
@@ -299,10 +299,10 @@ export const MarketsTable = ({ search = "" }: MarketsTableProps) => {
   };
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["markets", platform, search],
+    queryKey: ["markets", filter, search],
     queryFn: () =>
       api.listMarkets({
-        platform: platform === "all" ? undefined : platform,
+        platform: "polymarket",
         search: search || undefined,
         limit: 100,
       }),
@@ -346,7 +346,7 @@ export const MarketsTable = ({ search = "" }: MarketsTableProps) => {
     <div className="h-full flex flex-col">
       {/* Filters row */}
       <div className="shrink-0 flex items-center justify-between mb-6">
-        <PlatformFilter value={platform} onChange={setPlatform} />
+        <PlatformFilter value={filter} onChange={setFilter} />
         {data && (
           <div className="text-base text-muted-foreground flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-primary" />

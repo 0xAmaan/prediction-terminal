@@ -1,23 +1,27 @@
 "use client";
 
 import { useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import type { Trade } from "@/lib/types";
+import { ExternalLink } from "lucide-react";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  tealMuted: "rgba(77, 190, 149, 0.1)",
+  red: "#D84F68",
+  redMuted: "rgba(216, 79, 104, 0.1)",
+  skyBlue: "#54BBF7",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 // ============================================================================
 // Types
 // ============================================================================
-
-interface Trade {
-  id: string;
-  market_id: string;
-  platform: string;
-  timestamp: string;
-  price: string;
-  quantity: string;
-  outcome: string; // "Yes" | "No" | "yes" | "no"
-  side: string | null; // "Buy" | "Sell" | "buy" | "sell"
-}
 
 interface TradeHistoryProps {
   trades: Trade[];
@@ -76,6 +80,11 @@ const formatTime = (timestamp: string): string => {
   });
 };
 
+// Get Polygonscan URL for a transaction hash
+const getPolygonscanUrl = (txHash: string): string => {
+  return `https://polygonscan.com/tx/${txHash}`;
+};
+
 // ============================================================================
 // Trade Row Component
 // ============================================================================
@@ -89,37 +98,60 @@ const TradeRow = ({ trade }: TradeRowProps) => {
   const isYes = trade.outcome?.toLowerCase() === "yes";
 
   return (
-    <div className="grid grid-cols-4 gap-2 px-2 py-1.5 text-xs hover:bg-muted/50">
+    <div
+      className="grid grid-cols-[1fr_1fr_auto_1fr_auto] gap-2 px-2 py-1.5 text-xs transition-colors"
+      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = fey.bg400)}
+      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+    >
       {/* Price */}
       <div
-        className={cn(
-          "font-medium",
-          isBuy ? "text-green-500" : "text-red-500",
-        )}
+        className="font-medium"
+        style={{ color: isBuy ? fey.teal : fey.red }}
       >
         {formatPrice(trade.price)}
       </div>
 
       {/* Quantity */}
-      <div className="text-right">{formatQuantity(trade.quantity)}</div>
+      <div className="text-right" style={{ color: fey.grey100 }}>
+        {formatQuantity(trade.quantity)}
+      </div>
 
       {/* Outcome */}
-      <div className="text-right">
+      <div className="text-center">
         <span
-          className={cn(
-            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-            isYes
-              ? "bg-green-500/10 text-green-500"
-              : "bg-red-500/10 text-red-500",
-          )}
+          className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+          style={{
+            backgroundColor: isYes ? fey.tealMuted : fey.redMuted,
+            color: isYes ? fey.teal : fey.red,
+          }}
         >
           {isYes ? "Yes" : "No"}
         </span>
       </div>
 
       {/* Time */}
-      <div className="text-right text-muted-foreground">
+      <div className="text-right" style={{ color: fey.grey500 }}>
         {formatTime(trade.timestamp)}
+      </div>
+
+      {/* Tx Link */}
+      <div className="text-center">
+        {trade.transaction_hash ? (
+          <a
+            href={getPolygonscanUrl(trade.transaction_hash)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center transition-colors"
+            style={{ color: fey.grey500 }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = fey.skyBlue)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = fey.grey500)}
+            title={`View on Polygonscan: ${trade.transaction_hash.slice(0, 10)}...`}
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : (
+          <span style={{ color: "rgba(125, 139, 150, 0.3)" }}>—</span>
+        )}
       </div>
     </div>
   );
@@ -132,11 +164,12 @@ const TradeRow = ({ trade }: TradeRowProps) => {
 const TradeHistorySkeleton = () => (
   <div className="space-y-1">
     {Array.from({ length: 8 }).map((_, i) => (
-      <div key={i} className="grid grid-cols-4 gap-2 px-2 py-1.5">
-        <div className="h-4 animate-pulse rounded bg-muted" />
-        <div className="h-4 animate-pulse rounded bg-muted" />
-        <div className="h-4 animate-pulse rounded bg-muted" />
-        <div className="h-4 animate-pulse rounded bg-muted" />
+      <div key={i} className="grid grid-cols-[1fr_1fr_auto_1fr_auto] gap-2 px-2 py-1.5">
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 w-8 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 w-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
       </div>
     ))}
   </div>
@@ -158,36 +191,62 @@ export const TradeHistory = ({
 
   if (isLoading) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Recent Trades</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div
+        className="rounded-lg"
+        style={{
+          backgroundColor: fey.bg300,
+          border: `1px solid ${fey.border}`,
+        }}
+      >
+        <div className="p-5 pb-3">
+          <span
+            className="text-sm font-semibold"
+            style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+          >
+            Recent Trades
+          </span>
+        </div>
+        <div className="px-5 pb-5">
           <TradeHistorySkeleton />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <div
+      className="rounded-lg"
+      style={{
+        backgroundColor: fey.bg300,
+        border: `1px solid ${fey.border}`,
+      }}
+    >
+      <div className="p-5 pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium">Recent Trades</CardTitle>
+          <span
+            className="text-sm font-semibold"
+            style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+          >
+            Recent Trades
+          </span>
           {trades.length > 0 && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs" style={{ color: fey.grey500 }}>
               {trades.length} trades
             </span>
           )}
         </div>
-      </CardHeader>
-      <CardContent>
+      </div>
+      <div className="px-5 pb-5">
         {/* Header */}
-        <div className="grid grid-cols-4 gap-2 border-b px-2 pb-2 text-xs font-medium text-muted-foreground">
+        <div
+          className="grid grid-cols-[1fr_1fr_auto_1fr_auto] gap-2 px-2 pb-2 text-xs font-medium"
+          style={{ color: fey.grey500, borderBottom: `1px solid ${fey.border}` }}
+        >
           <div>Price</div>
           <div className="text-right">Qty</div>
-          <div className="text-right">Side</div>
+          <div className="text-center">Side</div>
           <div className="text-right">Time</div>
+          <div className="text-center">Tx</div>
         </div>
 
         {/* Trades */}
@@ -197,12 +256,12 @@ export const TradeHistory = ({
               <TradeRow key={`${trade.id}-${index}`} trade={trade} />
             ))
           ) : (
-            <div className="py-8 text-center text-sm text-muted-foreground">
+            <div className="py-8 text-center text-sm" style={{ color: fey.grey500 }}>
               No trades yet
             </div>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

@@ -316,6 +316,8 @@ impl KalshiMarket {
             away_odds,
             spread_line: None,
             total_line: None,
+            // Kalshi doesn't have tags like Polymarket
+            tags: Vec::new(),
         }
     }
 }
@@ -558,6 +560,7 @@ impl KalshiTrade {
             quantity: Decimal::from(self.count.unwrap_or(0)),
             outcome,
             side,
+            transaction_hash: None, // Kalshi doesn't have on-chain transactions
         }
     }
 }
@@ -723,6 +726,8 @@ pub fn markets_to_multi_outcome(
         away_odds: None,
         spread_line: None,
         total_line: None,
+        // Kalshi doesn't have tags like Polymarket
+        tags: Vec::new(),
     }
 }
 

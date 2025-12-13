@@ -15,17 +15,32 @@ export const formatVolume = (vol: number | string): string => {
 };
 
 export const formatCloseTime = (dateStr: string | null): string => {
-  if (!dateStr) return "";
+  if (!dateStr) return "—";
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = date.getTime() - now.getTime();
   const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
   if (diffDays < 0) return "Ended";
   if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "1d";
+  if (diffDays === 1) return "Tomorrow";
   if (diffDays < 7) return `${diffDays}d`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
-  return `${Math.floor(diffDays / 30)}mo`;
+
+  // For anything more than a week out, show the actual date
+  const currentYear = now.getFullYear();
+  const closeYear = date.getFullYear();
+
+  if (closeYear === currentYear) {
+    // Same year: "Jan 15" or "Dec 31"
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } else {
+    // Different year: "Jan 15, 2026"
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
 };
 
 export const formatGameTime = (dateStr: string | null): string => {

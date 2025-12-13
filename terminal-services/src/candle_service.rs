@@ -189,6 +189,7 @@ mod tests {
             quantity: dec!(100),
             outcome: TradeOutcome::Yes,
             side: Some(TradeSide::Buy),
+            transaction_hash: None,
         }
     }
 

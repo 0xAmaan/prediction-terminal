@@ -1,8 +1,20 @@
 "use client";
 
 import { useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  tealMuted: "rgba(77, 190, 149, 0.15)",
+  red: "#D84F68",
+  redMuted: "rgba(216, 79, 104, 0.15)",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 // ============================================================================
 // Types
@@ -88,26 +100,33 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
   }, [sortedBids, sortedAsks]);
 
   const sideLabel = side === "yes" ? "YES" : "NO";
-  const bidColor = side === "yes" ? "bg-green-500/20" : "bg-red-500/20";
-  const askColor = side === "yes" ? "bg-red-500/20" : "bg-green-500/20";
-  const bidTextColor = side === "yes" ? "text-green-500" : "text-red-500";
-  const askTextColor = side === "yes" ? "text-red-500" : "text-green-500";
+  // Fey colors for bids/asks
+  const bidBgColor = side === "yes" ? fey.tealMuted : fey.redMuted;
+  const askBgColor = side === "yes" ? fey.redMuted : fey.tealMuted;
+  const bidTextColor = side === "yes" ? fey.teal : fey.red;
+  const askTextColor = side === "yes" ? fey.red : fey.teal;
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-2">
-        <span className="text-xs font-semibold text-muted-foreground">
+        <span
+          className="text-xs font-semibold"
+          style={{ color: fey.grey500 }}
+        >
           {sideLabel}
         </span>
         {spread && (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs" style={{ color: fey.grey500 }}>
             Spread: {spread}¢
           </span>
         )}
       </div>
 
       {/* Header */}
-      <div className="grid grid-cols-3 gap-2 px-2 text-xs font-medium text-muted-foreground">
+      <div
+        className="grid grid-cols-3 gap-2 px-2 text-xs font-medium"
+        style={{ color: fey.grey500 }}
+      >
         <div>Price</div>
         <div className="text-right">Qty</div>
         <div className="text-right">Total</div>
@@ -124,16 +143,16 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
               className="relative grid grid-cols-3 gap-2 px-2 py-0.5 text-xs"
             >
               <div
-                className={cn("absolute inset-y-0 right-0", askColor)}
-                style={{ width: `${depthPercent}%` }}
+                className="absolute inset-y-0 right-0"
+                style={{ width: `${depthPercent}%`, backgroundColor: askBgColor }}
               />
-              <div className={cn("relative z-10", askTextColor)}>
+              <div className="relative z-10" style={{ color: askTextColor }}>
                 {formatPrice(level.price)}
               </div>
-              <div className="relative z-10 text-right">
+              <div className="relative z-10 text-right" style={{ color: fey.grey100 }}>
                 {formatQuantity(level.quantity)}
               </div>
-              <div className="relative z-10 text-right text-muted-foreground">
+              <div className="relative z-10 text-right" style={{ color: fey.grey500 }}>
                 {level.order_count ?? "-"}
               </div>
             </div>
@@ -144,15 +163,15 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
       {/* Spread indicator */}
       {spread && (
         <div className="flex items-center justify-center py-1">
-          <div className="h-px flex-1 bg-border" />
-          <span className="px-2 text-xs text-muted-foreground">
+          <div className="h-px flex-1" style={{ backgroundColor: fey.border }} />
+          <span className="px-2 text-xs" style={{ color: fey.grey500 }}>
             {formatPrice(
               sortedBids[0] ? parseFloat(sortedBids[0].price) : 0,
             )}{" "}
             -{" "}
             {formatPrice(sortedAsks[0] ? parseFloat(sortedAsks[0].price) : 0)}
           </span>
-          <div className="h-px flex-1 bg-border" />
+          <div className="h-px flex-1" style={{ backgroundColor: fey.border }} />
         </div>
       )}
 
@@ -167,16 +186,16 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
               className="relative grid grid-cols-3 gap-2 px-2 py-0.5 text-xs"
             >
               <div
-                className={cn("absolute inset-y-0 right-0", bidColor)}
-                style={{ width: `${depthPercent}%` }}
+                className="absolute inset-y-0 right-0"
+                style={{ width: `${depthPercent}%`, backgroundColor: bidBgColor }}
               />
-              <div className={cn("relative z-10", bidTextColor)}>
+              <div className="relative z-10" style={{ color: bidTextColor }}>
                 {formatPrice(level.price)}
               </div>
-              <div className="relative z-10 text-right">
+              <div className="relative z-10 text-right" style={{ color: fey.grey100 }}>
                 {formatQuantity(level.quantity)}
               </div>
-              <div className="relative z-10 text-right text-muted-foreground">
+              <div className="relative z-10 text-right" style={{ color: fey.grey500 }}>
                 {level.order_count ?? "-"}
               </div>
             </div>
@@ -186,7 +205,7 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
 
       {/* Empty state */}
       {sortedBids.length === 0 && sortedAsks.length === 0 && (
-        <div className="py-8 text-center text-sm text-muted-foreground">
+        <div className="py-8 text-center text-sm" style={{ color: fey.grey500 }}>
           No orders available
         </div>
       )}
@@ -200,17 +219,17 @@ const OrderBookSide = ({ bids, asks, side, maxLevels }: OrderBookSideProps) => {
 
 const OrderBookSkeleton = () => (
   <div className="space-y-2">
-    <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+    <div className="h-4 w-16 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
     <div className="grid grid-cols-3 gap-2 px-2">
-      <div className="h-3 animate-pulse rounded bg-muted" />
-      <div className="h-3 animate-pulse rounded bg-muted" />
-      <div className="h-3 animate-pulse rounded bg-muted" />
+      <div className="h-3 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+      <div className="h-3 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+      <div className="h-3 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
     </div>
     {Array.from({ length: 5 }).map((_, i) => (
       <div key={i} className="grid grid-cols-3 gap-2 px-2">
-        <div className="h-4 animate-pulse rounded bg-muted" />
-        <div className="h-4 animate-pulse rounded bg-muted" />
-        <div className="h-4 animate-pulse rounded bg-muted" />
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
+        <div className="h-4 animate-pulse rounded" style={{ backgroundColor: fey.bg400 }} />
       </div>
     ))}
   </div>
@@ -231,23 +250,45 @@ export const OrderBook = ({
 }: OrderBookProps) => {
   if (isLoading) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Order Book</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div
+        className="rounded-lg"
+        style={{
+          backgroundColor: fey.bg300,
+          border: `1px solid ${fey.border}`,
+        }}
+      >
+        <div className="p-5 pb-3">
+          <span
+            className="text-sm font-semibold"
+            style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+          >
+            Order Book
+          </span>
+        </div>
+        <div className="px-5 pb-5">
           <OrderBookSkeleton />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium">Order Book</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div
+      className="rounded-lg"
+      style={{
+        backgroundColor: fey.bg300,
+        border: `1px solid ${fey.border}`,
+      }}
+    >
+      <div className="p-5 pb-3">
+        <span
+          className="text-sm font-semibold"
+          style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+        >
+          Order Book
+        </span>
+      </div>
+      <div className="px-5 pb-5 space-y-4">
         <OrderBookSide
           bids={yesBids}
           asks={yesAsks}
@@ -257,7 +298,7 @@ export const OrderBook = ({
 
         {showNoSide && (noBids.length > 0 || noAsks.length > 0) && (
           <>
-            <div className="h-px bg-border" />
+            <div className="h-px" style={{ backgroundColor: fey.border }} />
             <OrderBookSide
               bids={noBids}
               asks={noAsks}
@@ -266,7 +307,7 @@ export const OrderBook = ({
             />
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

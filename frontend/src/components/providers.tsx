@@ -10,8 +10,13 @@ export const Providers = ({ children }: { children: ReactNode }) => {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 30 * 1000, // 30 seconds
-            refetchInterval: 60 * 1000, // Refetch every minute
+            // Backend cache TTL is 5 minutes, so data is fresh for that long
+            staleTime: 5 * 60 * 1000, // 5 minutes
+            // No automatic refetch - rely on backend cache freshness
+            // Real-time data comes via WebSocket anyway
+            refetchInterval: false,
+            // Refetch on window focus for stale data
+            refetchOnWindowFocus: "always",
           },
         },
       })

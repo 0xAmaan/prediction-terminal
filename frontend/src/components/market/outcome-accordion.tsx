@@ -9,14 +9,26 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Loader2, TrendingUp, TrendingDown, BookOpen, LineChart, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { OrderBook } from "./order-book";
 import { TradeHistory } from "./trade-history";
 import type { MarketOption, Platform } from "@/lib/types";
+
+// Fey color tokens
+const fey = {
+  bg300: "#131419",
+  bg400: "#16181C",
+  grey100: "#EEF0F1",
+  grey300: "#B6BEC4",
+  grey500: "#7D8B96",
+  teal: "#4DBE95",
+  tealMuted: "rgba(77, 190, 149, 0.15)",
+  red: "#D84F68",
+  skyBlue: "#54BBF7",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 interface OutcomeAccordionProps {
   platform: Platform;
@@ -60,36 +72,54 @@ export const OutcomeAccordion = ({
           <AccordionItem
             key={option.market_id}
             value={option.market_id}
-            className="border border-white/10 rounded-lg bg-black/10 overflow-hidden"
+            className="rounded-lg overflow-hidden"
+            style={{
+              backgroundColor: fey.bg300,
+              border: `1px solid ${fey.border}`,
+            }}
           >
-            <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-white/5 transition-colors">
+            <AccordionTrigger
+              className="px-4 py-3 hover:no-underline transition-colors"
+              style={{ backgroundColor: "transparent" }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = fey.bg400)}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+            >
               <div className="flex items-center justify-between w-full pr-2">
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground w-6">
+                  <span
+                    className="text-xs w-6"
+                    style={{ color: fey.grey500 }}
+                  >
                     #{index + 1}
                   </span>
-                  <span className={cn(
-                    "font-medium text-left",
-                    isLeading && "text-primary"
-                  )}>
+                  <span
+                    className="font-medium text-left"
+                    style={{ color: isLeading ? fey.teal : fey.grey100 }}
+                  >
                     {option.name}
                   </span>
                   {isLeading && (
-                    <Badge variant="outline" className="text-xs bg-primary/10 border-primary/30">
+                    <span
+                      className="text-xs px-2 py-0.5 rounded font-medium"
+                      style={{
+                        backgroundColor: fey.tealMuted,
+                        color: fey.teal,
+                      }}
+                    >
                       Leading
-                    </Badge>
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   {price >= 0.5 ? (
-                    <TrendingUp className="h-3.5 w-3.5 text-green-500" />
+                    <TrendingUp className="h-3.5 w-3.5" style={{ color: fey.teal }} />
                   ) : (
-                    <TrendingDown className="h-3.5 w-3.5 text-red-500" />
+                    <TrendingDown className="h-3.5 w-3.5" style={{ color: fey.red }} />
                   )}
-                  <span className={cn(
-                    "font-mono text-sm font-medium min-w-[40px] text-right",
-                    price >= 0.5 ? "text-green-500" : "text-red-500"
-                  )}>
+                  <span
+                    className="font-mono text-sm font-medium min-w-[40px] text-right"
+                    style={{ color: price >= 0.5 ? fey.teal : fey.red }}
+                  >
                     {formatPrice(option.yes_price)}
                   </span>
                 </div>
@@ -127,7 +157,7 @@ const OutcomeDetail = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   if (hasError) {
     return (
-      <div className="py-8 text-center text-muted-foreground">
+      <div className="py-8 text-center" style={{ color: fey.grey500 }}>
         <p className="text-sm">Detailed data not available for this outcome.</p>
         <p className="text-xs mt-1">Missing token or condition ID from API.</p>
       </div>
@@ -136,34 +166,54 @@ const OutcomeDetail = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   return (
     <div className="pt-2">
-      <Tabs defaultValue="orderbook" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 bg-black/20">
-          <TabsTrigger value="orderbook" className="flex items-center gap-2 data-[state=active]:bg-white/10">
-            <BookOpen className="h-3.5 w-3.5" />
-            Order Book
-          </TabsTrigger>
-          <TabsTrigger value="chart" className="flex items-center gap-2 data-[state=active]:bg-white/10">
-            <LineChart className="h-3.5 w-3.5" />
-            Chart
-          </TabsTrigger>
-          <TabsTrigger value="trades" className="flex items-center gap-2 data-[state=active]:bg-white/10">
-            <History className="h-3.5 w-3.5" />
-            Trades
-          </TabsTrigger>
-        </TabsList>
+      <OutcomeTabNav platform={platform} eventId={eventId} option={option} />
+    </div>
+  );
+};
 
-        <TabsContent value="orderbook" className="mt-4">
-          <OrderBookTab platform={platform} eventId={eventId} option={option} />
-        </TabsContent>
+// Simple tab navigation without shadcn Tabs
+const OutcomeTabNav = ({ platform, eventId, option }: OutcomeDetailProps) => {
+  const [activeTab, setActiveTab] = useState<"orderbook" | "chart" | "trades">("orderbook");
 
-        <TabsContent value="chart" className="mt-4">
-          <ChartTab platform={platform} eventId={eventId} option={option} />
-        </TabsContent>
+  const tabs = [
+    { id: "orderbook" as const, label: "Order Book", icon: BookOpen },
+    { id: "chart" as const, label: "Chart", icon: LineChart },
+    { id: "trades" as const, label: "Trades", icon: History },
+  ];
 
-        <TabsContent value="trades" className="mt-4">
-          <TradesTab platform={platform} eventId={eventId} option={option} />
-        </TabsContent>
-      </Tabs>
+  return (
+    <div>
+      {/* Tab buttons */}
+      <div
+        className="flex rounded-lg p-1 mb-4"
+        style={{ backgroundColor: fey.bg400 }}
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-md text-sm font-medium transition-colors"
+            style={{
+              backgroundColor: activeTab === tab.id ? fey.bg300 : "transparent",
+              color: activeTab === tab.id ? fey.grey100 : fey.grey500,
+            }}
+          >
+            <tab.icon className="h-3.5 w-3.5" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === "orderbook" && (
+        <OrderBookTab platform={platform} eventId={eventId} option={option} />
+      )}
+      {activeTab === "chart" && (
+        <ChartTab platform={platform} eventId={eventId} option={option} />
+      )}
+      {activeTab === "trades" && (
+        <TradesTab platform={platform} eventId={eventId} option={option} />
+      )}
     </div>
   );
 };
@@ -181,13 +231,12 @@ const OrderBookTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
     queryKey: ["outcome-orderbook", platform, eventId, option.clob_token_id],
     queryFn: () => api.getOutcomeOrderBook(platform, eventId, option.clob_token_id!),
     enabled: !!option.clob_token_id,
-    staleTime: 10 * 1000,
-    refetchInterval: 15 * 1000,
+    staleTime: 5 * 60 * 1000, // Real-time updates via WebSocket
   });
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12 text-muted-foreground">
+      <div className="flex items-center justify-center py-12" style={{ color: fey.grey500 }}>
         <Loader2 className="h-5 w-5 animate-spin mr-2" />
         Loading order book...
       </div>
@@ -196,7 +245,7 @@ const OrderBookTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   if (error || !orderbook) {
     return (
-      <div className="text-center py-12 text-muted-foreground text-sm">
+      <div className="text-center py-12 text-sm" style={{ color: fey.grey500 }}>
         Failed to load order book
       </div>
     );
@@ -270,7 +319,7 @@ const ChartTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
     chartRef.current = chart;
 
     const series = chart.addSeries(LineSeries, {
-      color: "#22c55e",
+      color: fey.teal,
       lineWidth: 2,
       priceFormat: {
         type: "custom",
@@ -307,7 +356,7 @@ const ChartTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12 text-muted-foreground" style={{ height: 250 }}>
+      <div className="flex items-center justify-center py-12" style={{ height: 250, color: fey.grey500 }}>
         <Loader2 className="h-5 w-5 animate-spin mr-2" />
         Loading price history...
       </div>
@@ -316,7 +365,7 @@ const ChartTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   if (error || !priceHistory || priceHistory.length === 0) {
     return (
-      <div className="text-center py-12 text-muted-foreground text-sm" style={{ height: 250 }}>
+      <div className="text-center py-12 text-sm" style={{ height: 250, color: fey.grey500 }}>
         No price history available
       </div>
     );
@@ -334,13 +383,12 @@ const TradesTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
     queryKey: ["outcome-trades", platform, eventId, option.condition_id],
     queryFn: () => api.getOutcomeTrades(platform, eventId, option.condition_id!, 30),
     enabled: !!option.condition_id,
-    staleTime: 10 * 1000,
-    refetchInterval: 15 * 1000,
+    staleTime: 5 * 60 * 1000, // Real-time updates via WebSocket
   });
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12 text-muted-foreground">
+      <div className="flex items-center justify-center py-12" style={{ color: fey.grey500 }}>
         <Loader2 className="h-5 w-5 animate-spin mr-2" />
         Loading trades...
       </div>
@@ -349,7 +397,7 @@ const TradesTab = ({ platform, eventId, option }: OutcomeDetailProps) => {
 
   if (error || !trades) {
     return (
-      <div className="text-center py-12 text-muted-foreground text-sm">
+      <div className="text-center py-12 text-sm" style={{ color: fey.grey500 }}>
         Failed to load trades
       </div>
     );

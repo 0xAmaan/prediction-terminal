@@ -20,6 +20,7 @@ use terminal_polymarket::{PolymarketUpdate, PolymarketWebSocket, PolymarketWebSo
 
 use crate::websocket::{SubscriptionEvent, WebSocketState};
 use crate::MarketService;
+use crate::TradeStorage;
 
 /// Health status for a connection
 #[derive(Debug, Clone, Serialize)]
@@ -147,6 +148,8 @@ pub struct MarketDataAggregator {
     kalshi_metrics: Arc<ConnectionMetrics>,
     /// Health metrics for Polymarket connection
     polymarket_metrics: Arc<ConnectionMetrics>,
+    /// Trade storage for persisting prices and orderbook snapshots
+    trade_storage: Option<Arc<TradeStorage>>,
 }
 
 impl MarketDataAggregator {
@@ -168,7 +171,111 @@ impl MarketDataAggregator {
             orderbook_cache: Arc::new(RwLock::new(HashMap::new())),
             kalshi_metrics: Arc::new(ConnectionMetrics::new()),
             polymarket_metrics: Arc::new(ConnectionMetrics::new()),
+            trade_storage: None,
         }
+    }
+
+    /// Set trade storage for price and orderbook persistence
+    pub fn set_trade_storage(&mut self, storage: Arc<TradeStorage>) {
+        self.trade_storage = Some(storage);
+    }
+
+    /// Start orderbook snapshot background task
+    fn start_snapshot_task(
+        orderbook_cache: Arc<RwLock<HashMap<String, OrderBook>>>,
+        ticker_map: Arc<RwLock<HashMap<String, String>>>,
+        _token_map: Arc<RwLock<HashMap<String, String>>>,
+        storage: Arc<TradeStorage>,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+
+            loop {
+                interval.tick().await;
+
+                // Read current orderbooks
+                let orderbooks = {
+                    let cache = orderbook_cache.read().await;
+                    cache.clone()
+                };
+
+                if orderbooks.is_empty() {
+                    continue;
+                }
+
+                // Get ticker mappings for platform detection
+                let kalshi_tickers: HashSet<String> = {
+                    let map = ticker_map.read().await;
+                    map.values().cloned().collect()
+                };
+
+                // Snapshot each orderbook
+                for (market_id, book) in orderbooks {
+                    // Determine platform (if in kalshi ticker map, it's Kalshi)
+                    let platform = if kalshi_tickers.contains(&market_id) {
+                        Platform::Kalshi
+                    } else {
+                        Platform::Polymarket
+                    };
+
+                    // Serialize orderbook levels to JSON
+                    let yes_bids = serde_json::to_string(&book.yes_bids).unwrap_or_default();
+                    let yes_asks = serde_json::to_string(&book.yes_asks).unwrap_or_default();
+                    let no_bids = serde_json::to_string(&book.no_bids).unwrap_or_default();
+                    let no_asks = serde_json::to_string(&book.no_asks).unwrap_or_default();
+
+                    // Store snapshot
+                    if let Err(e) = storage.store_orderbook_snapshot(
+                        platform,
+                        &market_id,
+                        &yes_bids,
+                        &yes_asks,
+                        &no_bids,
+                        &no_asks,
+                    ) {
+                        warn!("[Aggregator] Failed to store orderbook snapshot for {}: {}", market_id, e);
+                    }
+
+                    // Also store current price from best bid/ask
+                    let yes_price = book.yes_bids.first().map(|l| {
+                        l.price.try_into().unwrap_or_else(|_| l.price.to_string().parse().unwrap_or(0.0))
+                    });
+                    let no_price = book.no_bids.first().map(|l| {
+                        l.price.try_into().unwrap_or_else(|_| l.price.to_string().parse().unwrap_or(0.0))
+                    });
+
+                    if yes_price.is_some() || no_price.is_some() {
+                        if let Err(e) = storage.store_price(platform, &market_id, yes_price, no_price) {
+                            warn!("[Aggregator] Failed to store price for {}: {}", market_id, e);
+                        }
+                    }
+                }
+
+                // Prune old snapshots once per day (check on each tick, but only act if needed)
+                // This is a lightweight check
+                static LAST_PRUNE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let last = LAST_PRUNE.load(std::sync::atomic::Ordering::SeqCst);
+
+                if now - last > 86400 {
+                    // Prune snapshots older than 7 days
+                    match storage.prune_orderbook_snapshots(7) {
+                        Ok(deleted) => {
+                            if deleted > 0 {
+                                info!("[Aggregator] Pruned {} old orderbook snapshots", deleted);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[Aggregator] Failed to prune orderbook snapshots: {}", e);
+                        }
+                    }
+                    LAST_PRUNE.store(now, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
     }
 
     /// Get health status for all connections
@@ -250,6 +357,17 @@ impl MarketDataAggregator {
 
             self.polymarket_ws = Some(polymarket_ws);
             info!("[Aggregator] Polymarket WebSocket started");
+        }
+
+        // Start orderbook snapshot task if storage is configured
+        if let Some(ref storage) = self.trade_storage {
+            Self::start_snapshot_task(
+                Arc::clone(&self.orderbook_cache),
+                Arc::clone(&self.kalshi_ticker_map),
+                Arc::clone(&self.polymarket_token_map),
+                Arc::clone(storage),
+            );
+            info!("[Aggregator] Orderbook snapshot task started");
         }
 
         Ok(())

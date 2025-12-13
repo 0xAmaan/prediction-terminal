@@ -8,6 +8,8 @@ import type {
   PriceInterval,
   OutcomePriceHistory,
   PriceHistoryPoint,
+  MarketStatsResponse,
+  MarketStatsParams,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -242,6 +244,35 @@ export const api = {
       throw new Error(
         `Failed to fetch outcome price history: ${response.statusText}`,
       );
+    }
+
+    return response.json();
+  },
+
+  // ========================================================================
+  // Market Stats Methods
+  // ========================================================================
+
+  /** Get market stats with volume, txn counts, price changes for a timeframe */
+  async getMarketStats(
+    params: MarketStatsParams = {},
+  ): Promise<MarketStatsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.timeframe) {
+      searchParams.set("timeframe", params.timeframe);
+    }
+    if (params.platform) {
+      searchParams.set("platform", params.platform);
+    }
+    if (params.limit) {
+      searchParams.set("limit", params.limit.toString());
+    }
+
+    const url = `${API_BASE}/api/markets/stats${searchParams.toString() ? `?${searchParams}` : ""}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch market stats: ${response.statusText}`);
     }
 
     return response.json();

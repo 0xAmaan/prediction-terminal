@@ -42,5 +42,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # DateTime
 chrono = { workspace = true }
 
+# Decimal precision
+rust_decimal = { workspace = true }
+
 # Environment variables
 dotenvy = "0.15"

@@ -13,8 +13,8 @@ use std::sync::Arc;
 use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
-    AggregatorConfig, CandleService, MarketDataAggregator, MarketService, TradeCollector,
-    TradeCollectorConfig, TradeStorage, WebSocketState,
+    AggregatorConfig, CandleService, MarketCache, MarketDataAggregator, MarketService,
+    MarketStatsService, TradeCollector, TradeCollectorConfig, TradeStorage, WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -23,12 +23,14 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
+    pub market_cache: Arc<MarketCache>,
     pub market_service: Arc<MarketService>,
     pub ws_state: Arc<WebSocketState>,
     pub trade_storage: Arc<TradeStorage>,
     pub candle_service: Arc<CandleService>,
     pub trade_collector: Arc<TradeCollector>,
     pub aggregator: Arc<MarketDataAggregator>,
+    pub market_stats_service: Arc<MarketStatsService>,
 }
 
 #[tokio::main]
@@ -63,14 +65,38 @@ async fn main() -> anyhow::Result<()> {
     let kalshi_client = KalshiClient::new(false); // Use production API
     let polymarket_client = PolymarketClient::new();
 
-    // Initialize services
-    let market_service = Arc::new(MarketService::new(kalshi_client, polymarket_client));
+    // Initialize market service
+    let market_service = MarketService::new(kalshi_client, polymarket_client);
+    let market_service_arc = Arc::new(market_service.clone());
+
+    // Initialize market cache (in-memory + SQLite for instant lookups)
+    let cache_db_path = std::env::var("CACHE_DB_PATH").unwrap_or_else(|_| "data/cache.db".to_string());
+    info!("Initializing market cache at: {}", cache_db_path);
+    let market_cache = MarketCache::new(&cache_db_path, market_service.clone())
+        .await
+        .expect("Failed to initialize market cache");
+    let market_cache = Arc::new(market_cache);
+
+    // Refresh markets in background on startup
+    let cache_for_refresh = Arc::clone(&market_cache);
+    tokio::spawn(async move {
+        info!("Starting initial market cache refresh...");
+        if let Err(e) = cache_for_refresh.refresh_all().await {
+            tracing::error!("Failed to refresh market cache on startup: {}", e);
+        } else {
+            let stats = cache_for_refresh.stats();
+            info!(
+                "Market cache refreshed: {} total ({} Kalshi, {} Polymarket)",
+                stats.total, stats.kalshi_count, stats.polymarket_count
+            );
+        }
+    });
 
     // Create subscription event channel for aggregator integration
     let (subscription_tx, subscription_rx) = WebSocketState::create_subscription_event_channel();
 
     // Create WebSocket state with subscription event sender
-    let mut ws_state = WebSocketState::new((*market_service).clone());
+    let mut ws_state = WebSocketState::new(market_service.clone());
     ws_state.set_subscription_event_sender(subscription_tx);
     let ws_state = Arc::new(ws_state);
 
@@ -84,12 +110,21 @@ async fn main() -> anyhow::Result<()> {
     // Initialize candle service
     let candle_service = Arc::new(CandleService::new(trade_storage.clone()));
 
+    // Initialize market stats service
+    let market_stats_service = Arc::new(MarketStatsService::new(trade_storage.clone()));
+
     // Initialize trade collector
+    // KALSHI_DISABLED: Disable Kalshi trade collection while focusing on Polymarket
+    let trade_collector_config = TradeCollectorConfig {
+        collect_kalshi: false,
+        collect_polymarket: true,
+        ..TradeCollectorConfig::default()
+    };
     let trade_collector = Arc::new(TradeCollector::new(
-        market_service.clone(),
+        market_service_arc.clone(),
         trade_storage.clone(),
         Some(ws_state.clone()),
-        TradeCollectorConfig::default(),
+        trade_collector_config,
     ));
 
     // Start trade collector in background
@@ -99,12 +134,19 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Initialize and start market data aggregator
-    let aggregator_config = AggregatorConfig::default();
+    // KALSHI_DISABLED: Disable Kalshi WebSocket while focusing on Polymarket
+    let aggregator_config = AggregatorConfig {
+        kalshi_enabled: false,
+        polymarket_enabled: true,
+    };
     let mut aggregator = MarketDataAggregator::new(
         aggregator_config,
         ws_state.clone(),
-        (*market_service).clone(),
+        market_service.clone(),
     );
+
+    // Set trade storage for orderbook snapshot persistence
+    aggregator.set_trade_storage(trade_storage.clone());
 
     // Start aggregator (connects to exchange WebSockets)
     if let Err(e) = aggregator.start().await {
@@ -122,12 +164,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Create app state
     let state = AppState {
-        market_service,
+        market_cache,
+        market_service: market_service_arc,
         ws_state,
         trade_storage,
         candle_service,
         trade_collector,
         aggregator,
+        market_stats_service,
     };
 
     // Configure CORS for frontend

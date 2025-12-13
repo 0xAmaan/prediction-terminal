@@ -49,53 +49,71 @@
   --color-polymarket: var(--polymarket);
 }
 
-/* Axiom-inspired dark theme as default */
+/* Fey Design System Theme */
 :root {
-  --radius: 0.5rem;
-  /* Deep background */
-  --background: #101114;
-  --foreground: #f5f5f5;
-  /* Card/table background */
-  --card: #19191A;
-  --card-foreground: #f5f5f5;
-  --popover: #1a1a1a;
-  --popover-foreground: #f5f5f5;
-  /* Muted purple/magenta primary */
-  --primary: #a855f7;
-  --primary-foreground: #ffffff;
-  --secondary: #242424;
-  --secondary-foreground: #a1a1aa;
-  --muted: #1f1f1f;
-  --muted-foreground: #71717a;
-  /* Teal accent */
-  --accent: #2dd4bf;
-  --accent-foreground: #0d0d0d;
-  /* Coral destructive */
-  --destructive: #f87171;
-  --border: #2a2a2a;
-  --input: #242424;
-  --ring: #a855f7;
-  /* Market colors */
-  --positive: #22c55e;
-  --negative: #ef4444;
+  --radius: 0.625rem;
+
+  /* Fey backgrounds - deeper blacks */
+  --background: #070709;        /* BG-100 - deepest */
+  --foreground: #EEF0F1;        /* Grey-100 */
+
+  /* Card surfaces - Fey elevation */
+  --card: #131419;              /* BG-300 */
+  --card-hover: #16181C;        /* BG-400 */
+  --card-foreground: #EEF0F1;
+  --popover: #101116;           /* BG-200 */
+  --popover-foreground: #EEF0F1;
+
+  /* Primary - Fey sky blue */
+  --primary: #54BBF7;
+  --primary-foreground: #070709;
+
+  /* Surfaces */
+  --secondary: #101116;         /* BG-200 */
+  --secondary-foreground: #B6BEC4; /* Grey-300 */
+  --muted: #131419;             /* BG-300 */
+  --muted-foreground: #7D8B96;  /* Grey-500 */
+  --faint: #4E5860;             /* Grey-700 */
+
+  /* Fey teal accent */
+  --accent: #4DBE95;
+  --accent-foreground: #070709;
+
+  /* Fey red for destructive */
+  --destructive: #D84F68;
+
+  /* Fey-style subtle borders */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.10);
+  --input: #101116;
+  --ring: #54BBF7;
+
+  /* Market colors - Fey accent style */
+  --positive: #4DBE95;          /* Fey teal */
+  --positive-muted: rgba(77, 190, 149, 0.15);
+  --negative: #D84F68;          /* Fey red */
+  --negative-muted: rgba(216, 79, 104, 0.15);
+
   /* Platform colors - Kalshi=green, Polymarket=blue */
   --kalshi: #22c55e;
   --polymarket: #3b82f6;
-  /* Charts */
-  --chart-1: #a855f7;
-  --chart-2: #2dd4bf;
-  --chart-3: #3b82f6;
-  --chart-4: #f59e0b;
-  --chart-5: #ef4444;
+
+  /* Charts - Fey accent colors */
+  --chart-1: #54BBF7;           /* Sky blue */
+  --chart-2: #4DBE95;           /* Teal */
+  --chart-3: #6166DC;           /* Purple */
+  --chart-4: #C27C58;           /* Brown */
+  --chart-5: #D84F68;           /* Red */
+
   /* Sidebar */
-  --sidebar: #101114;
-  --sidebar-foreground: #f5f5f5;
-  --sidebar-primary: #a855f7;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1f1f1f;
-  --sidebar-accent-foreground: #f5f5f5;
-  --sidebar-border: #2a2a2a;
-  --sidebar-ring: #a855f7;
+  --sidebar: #070709;
+  --sidebar-foreground: #EEF0F1;
+  --sidebar-primary: #54BBF7;
+  --sidebar-primary-foreground: #070709;
+  --sidebar-accent: #131419;
+  --sidebar-accent-foreground: #EEF0F1;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #54BBF7;
 }
 
 /* Light theme override if needed */
@@ -143,6 +161,79 @@
   input[type="button"] {
     cursor: pointer;
   }
+}
+
+/* Fey Typography Utilities */
+@layer utilities {
+  .fey-price-lg {
+    @apply text-5xl font-mono font-bold tracking-tight;
+  }
+  .fey-price {
+    @apply font-mono font-medium tabular-nums;
+  }
+  .fey-heading {
+    @apply text-sm font-medium text-foreground;
+  }
+  .fey-body {
+    @apply text-sm text-muted-foreground;
+  }
+  .fey-caption {
+    @apply text-xs text-muted-foreground;
+  }
+  .fey-label {
+    @apply text-[11px] uppercase tracking-wider text-muted-foreground;
+  }
+}
+
+/* Fey Animations */
+@keyframes trade-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes trade-flash-green {
+  0% { background-color: transparent; }
+  15% { background-color: rgba(34, 197, 94, 0.15); }
+  100% { background-color: transparent; }
+}
+
+@keyframes trade-flash-red {
+  0% { background-color: transparent; }
+  15% { background-color: rgba(239, 68, 68, 0.15); }
+  100% { background-color: transparent; }
+}
+
+@keyframes tab-indicator {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.animate-trade-enter {
+  animation: trade-enter 200ms ease-out;
+}
+
+.animate-trade-flash-green {
+  animation: trade-flash-green 800ms ease-out;
+}
+
+.animate-trade-flash-red {
+  animation: trade-flash-red 800ms ease-out;
+}
+
+.animate-tab-indicator {
+  animation: tab-indicator 200ms ease-out;
 }
 
 /* Pro Trading Terminal Card Row Styles */
@@ -261,21 +352,21 @@
   background-clip: padding-box, border-box !important;
 }
 
-/* Custom scrollbar for dark theme */
+/* Custom scrollbar for Fey dark theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #101114;
+  background: #070709;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
+  background: #202427;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: #373E44;
 }

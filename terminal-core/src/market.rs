@@ -100,6 +100,10 @@ pub struct PredictionMarket {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution_source: Option<String>,
 
+    /// Tags for categorization (e.g., "Politics", "Crypto", "AI")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     // ========================================================================
     // Sports-specific fields
     // ========================================================================
@@ -404,6 +408,9 @@ pub struct Trade {
     /// Trade side (buy or sell) from taker's perspective
     #[serde(skip_serializing_if = "Option::is_none")]
     pub side: Option<TradeSide>,
+    /// Transaction hash (for on-chain trades like Polymarket on Polygon)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_hash: Option<String>,
 }
 
 /// Trade history response with pagination

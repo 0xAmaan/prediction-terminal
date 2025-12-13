@@ -115,6 +115,20 @@ pub struct MarketEvent {
     pub title: Option<String>,
 }
 
+/// A tag from the Polymarket API
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolymarketTag {
+    /// Tag ID
+    pub id: String,
+
+    /// Human-readable label (e.g., "Politics", "Crypto", "AI")
+    pub label: String,
+
+    /// URL slug
+    pub slug: String,
+}
+
 impl PolymarketMarket {
     /// Parse outcome prices from the JSON string
     /// The API returns prices in various formats:
@@ -293,6 +307,28 @@ impl PolymarketMarket {
             (None, None, None, None)
         };
 
+        // Create options_json with token ID for sparkline fetching
+        // clob_token_ids format is either a JSON array "[\"YES_TOKEN\", \"NO_TOKEN\"]" or a single token
+        let options_json = self.clob_token_ids.as_ref().and_then(|ids| {
+            let yes_token = if ids.starts_with('[') {
+                // Parse as JSON array and get first (YES) token
+                serde_json::from_str::<Vec<String>>(ids)
+                    .ok()
+                    .and_then(|tokens| tokens.first().cloned())
+            } else {
+                // Single token string
+                Some(ids.clone())
+            };
+
+            yes_token.and_then(|token_id| {
+                serde_json::to_string(&vec![serde_json::json!({
+                    "name": "Yes",
+                    "clob_token_id": token_id
+                })])
+                .ok()
+            })
+        });
+
         PredictionMarket {
             id: self.id.clone(),
             platform: Platform::Polymarket,
@@ -313,7 +349,7 @@ impl PolymarketMarket {
             outcome_count: None,
             leading_outcome: None,
             is_multi_outcome: false,
-            options_json: None,
+            options_json,
             // Sports fields
             is_sports,
             is_live: false, // Polymarket API doesn't provide live game data
@@ -326,6 +362,8 @@ impl PolymarketMarket {
             spread_line: None,
             total_line: None,
             resolution_source: self.resolution_source.clone(),
+            // Individual markets don't have tags - tags are on events
+            tags: Vec::new(),
         }
     }
 }
@@ -391,6 +429,10 @@ pub struct PolymarketEvent {
     /// Resolution source - describes how the event will be resolved
     #[serde(default, rename = "resolutionSource")]
     pub resolution_source: Option<String>,
+
+    /// Tags associated with this event (e.g., "Politics", "Crypto", "AI")
+    #[serde(default)]
+    pub tags: Vec<PolymarketTag>,
 }
 
 /// Option data for multi-outcome events (stored as JSON)
@@ -570,6 +612,7 @@ impl ClobTrade {
             quantity,
             outcome: TradeOutcome::Yes, // Default to YES for the token
             side,
+            transaction_hash: self.transaction_hash.clone(),
         }
     }
 }
@@ -639,6 +682,7 @@ impl DataApiTrade {
             quantity: Decimal::from_str(&self.size.to_string()).unwrap_or(Decimal::ZERO),
             outcome,
             side,
+            transaction_hash: self.transaction_hash.clone(),
         }
     }
 }
@@ -707,6 +751,9 @@ impl PolymarketEvent {
             (None, None)
         };
 
+        // Extract tag labels
+        let tags: Vec<String> = self.tags.iter().map(|t| t.label.clone()).collect();
+
         if self.is_binary() {
             // Single market - use the market's prices directly
             let market = &self.markets[0];
@@ -717,6 +764,15 @@ impl PolymarketEvent {
             } else {
                 (None, None)
             };
+
+            // Create options_json with token ID for sparkline fetching
+            let options_json = market.yes_token_id().and_then(|token_id| {
+                serde_json::to_string(&vec![serde_json::json!({
+                    "name": "Yes",
+                    "clob_token_id": token_id
+                })])
+                .ok()
+            });
 
             PredictionMarket {
                 id: self.id.clone(),
@@ -737,7 +793,7 @@ impl PolymarketEvent {
                 outcome_count: None,
                 leading_outcome: None,
                 is_multi_outcome: false,
-                options_json: None,
+                options_json,
                 // For binary events, resolution rules may be in child market description
                 resolution_source: self.resolution_source.clone()
                     .filter(|s| !s.is_empty())
@@ -757,6 +813,7 @@ impl PolymarketEvent {
                 away_odds,
                 spread_line: None,
                 total_line: None,
+                tags: tags.clone(),
             }
         } else {
             // Multi-outcome event - find the leading option
@@ -834,6 +891,7 @@ impl PolymarketEvent {
                 away_odds: None,
                 spread_line: None,
                 total_line: None,
+                tags,
             }
         }
     }

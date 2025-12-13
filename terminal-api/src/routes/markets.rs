@@ -8,9 +8,13 @@ use axum::{
     Json, Router,
 };
 use chrono::{Duration, Utc};
+use futures_util::future::join_all;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use terminal_core::{Platform, PredictionMarket, PriceInterval};
-use tracing::{error, info};
+use terminal_services::{MarketStats, Timeframe};
+use tracing::{debug, error, info, warn};
 
 use crate::AppState;
 
@@ -94,10 +98,44 @@ pub struct OutcomePriceHistoryQuery {
     pub interval: Option<String>,
 }
 
+/// Query parameters for market stats
+#[derive(Debug, Deserialize)]
+pub struct MarketStatsQuery {
+    /// Timeframe: "1h", "24h", "7d", "30d"
+    pub timeframe: Option<String>,
+    /// Filter by platform
+    pub platform: Option<String>,
+    /// Maximum number of results
+    pub limit: Option<usize>,
+}
+
+/// Response for market stats
+#[derive(Debug, Serialize)]
+pub struct MarketStatsResponse {
+    /// Stats for each market
+    pub stats: Vec<MarketStats>,
+    /// Sparkline price history for each market (market_id -> price points)
+    pub sparklines: HashMap<String, Vec<PriceHistoryPoint>>,
+    /// The timeframe used
+    pub timeframe: String,
+    /// Number of markets
+    pub count: usize,
+}
+
+/// Price history point for sparklines
+#[derive(Debug, Clone, Serialize)]
+pub struct PriceHistoryPoint {
+    /// Unix timestamp in seconds
+    pub t: i64,
+    /// Price (0.0 - 1.0)
+    pub p: f64,
+}
+
 /// Create market routes
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/markets", get(list_markets))
+        .route("/markets/stats", get(get_market_stats))
         .route("/markets/:platform/:id", get(get_market))
         .route("/markets/:platform/:id/orderbook", get(get_orderbook))
         .route("/markets/:platform/:id/trades", get(get_trades))
@@ -111,6 +149,9 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// List markets with optional filtering
+///
+/// This now reads from the in-memory cache for instant response.
+/// Background refresh ensures data stays fresh.
 async fn list_markets(
     State(state): State<AppState>,
     Query(params): Query<ListMarketsQuery>,
@@ -127,48 +168,179 @@ async fn list_markets(
         }
     });
 
-    // Fetch markets
-    let result = if let Some(query) = &params.search {
-        state
-            .market_service
-            .search_markets(query, platform_filter, params.limit)
-            .await
+    // Fetch from cache (instant!)
+    let mut markets = if let Some(query) = &params.search {
+        // Search uses cache - instant
+        state.market_cache.search_markets(query, platform_filter, params.limit)
     } else {
-        match platform_filter {
-            Some(platform) => {
-                state
-                    .market_service
-                    .get_markets_by_platform(platform, params.limit)
-                    .await
-            }
-            None => state.market_service.get_all_markets(params.limit).await,
-        }
+        // List uses cache - instant
+        state.market_cache.get_markets(platform_filter)
     };
 
-    match result {
-        Ok(markets) => {
-            let count = markets.len();
-            info!("Returning {} markets", count);
-            (
-                StatusCode::OK,
-                Json(MarketsResponse { markets, count }),
-            )
-                .into_response()
-        }
-        Err(e) => {
-            error!("Failed to fetch markets: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            )
-                .into_response()
+    // Apply limit if specified (for non-search queries)
+    if params.search.is_none() {
+        if let Some(limit) = params.limit {
+            markets.truncate(limit);
         }
     }
+
+    let count = markets.len();
+    info!("Returning {} markets (from cache)", count);
+
+    (
+        StatusCode::OK,
+        Json(MarketsResponse { markets, count }),
+    )
+        .into_response()
+}
+
+/// Get market stats (price change, volume, txn counts) for all markets
+///
+/// This endpoint provides aggregated statistics for the markets table view.
+async fn get_market_stats(
+    State(state): State<AppState>,
+    Query(params): Query<MarketStatsQuery>,
+) -> impl IntoResponse {
+    debug!("Getting market stats with params: {:?}", params);
+
+    // Parse timeframe (default to 24h)
+    let timeframe = params
+        .timeframe
+        .as_deref()
+        .and_then(Timeframe::from_str)
+        .unwrap_or(Timeframe::TwentyFourHours);
+
+    // Parse platform filter
+    let platform_filter: Option<Platform> = params.platform.as_ref().and_then(|p| {
+        match p.to_lowercase().as_str() {
+            "kalshi" | "k" => Some(Platform::Kalshi),
+            "polymarket" | "poly" | "p" => Some(Platform::Polymarket),
+            "all" | "" => None,
+            _ => None,
+        }
+    });
+
+    // Get markets from cache
+    let mut markets = state.market_cache.get_markets(platform_filter);
+
+    // Apply limit if specified
+    if let Some(limit) = params.limit {
+        markets.truncate(limit);
+    }
+
+    // Prepare market data for stats calculation
+    let market_data: Vec<(Platform, String, Decimal, Decimal)> = markets
+        .iter()
+        .map(|m| (m.platform, m.id.clone(), m.yes_price, m.no_price))
+        .collect();
+
+    // Calculate stats for all markets
+    let stats = state
+        .market_stats_service
+        .get_bulk_market_stats(&market_data, timeframe);
+
+    // Determine interval based on timeframe for sparklines
+    let interval = match timeframe {
+        Timeframe::OneHour => "1h",
+        Timeframe::TwentyFourHours => "1d",
+        Timeframe::SevenDays => "1w",
+        Timeframe::ThirtyDays => "max",
+    };
+
+    // Helper struct for parsing options_json
+    #[derive(Debug, Deserialize)]
+    struct MarketOption {
+        #[allow(dead_code)]
+        name: String,
+        #[serde(default)]
+        clob_token_id: Option<String>,
+    }
+
+    // Extract token IDs for sparkline fetching
+    // For Polymarket, we need the clob_token_id from options_json
+    let polymarket_count = markets.iter().filter(|m| m.platform == Platform::Polymarket).count();
+    let token_ids: Vec<(String, String)> = markets
+        .iter()
+        .filter(|m| m.platform == Platform::Polymarket)
+        .filter_map(|m| {
+            // Parse options_json to get the YES token ID
+            if let Some(json) = &m.options_json {
+                match serde_json::from_str::<Vec<MarketOption>>(json) {
+                    Ok(options) => {
+                        // Get the first option's clob_token_id (YES token for binary markets)
+                        if let Some(option) = options.first() {
+                            if let Some(token_id) = &option.clob_token_id {
+                                return Some((m.id.clone(), token_id.clone()));
+                            } else {
+                                debug!("Market {} has option but no clob_token_id", m.id);
+                            }
+                        } else {
+                            debug!("Market {} has empty options array", m.id);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Market {} failed to parse options_json: {}", m.id, e);
+                    }
+                }
+            } else {
+                debug!("Market {} has no options_json", m.id);
+            }
+            None
+        })
+        .collect();
+
+    info!("Extracted {} token IDs from {} Polymarket markets", token_ids.len(), polymarket_count);
+
+    // Fetch sparklines in parallel for all markets with valid token IDs
+    let sparkline_futures: Vec<_> = token_ids
+        .into_iter()
+        .map(|(market_id, token_id)| {
+            let service = state.market_service.clone();
+            let interval = interval.to_string();
+            async move {
+                let result = service
+                    .get_outcome_prices(Platform::Polymarket, &token_id, &interval)
+                    .await;
+                (market_id, result)
+            }
+        })
+        .collect();
+
+    let sparkline_results = join_all(sparkline_futures).await;
+
+    let sparklines: HashMap<String, Vec<PriceHistoryPoint>> = sparkline_results
+        .into_iter()
+        .filter_map(|(id, result)| {
+            match result {
+                Ok(data) => Some((id, data.into_iter().map(|p| PriceHistoryPoint { t: p.t, p: p.p }).collect())),
+                Err(e) => {
+                    warn!("Failed to fetch sparkline for market {}: {}", id, e);
+                    None
+                }
+            }
+        })
+        .collect();
+
+    info!("Fetched {} sparklines for {} markets", sparklines.len(), markets.len());
+
+    let count = stats.len();
+    info!("Returning stats for {} markets", count);
+
+    (
+        StatusCode::OK,
+        Json(MarketStatsResponse {
+            stats,
+            sparklines,
+            timeframe: timeframe.as_str().to_string(),
+            count,
+        }),
+    )
+        .into_response()
 }
 
 /// Get a single market by platform and ID
+///
+/// Uses cache with fallback to API for cache misses.
 async fn get_market(
     State(state): State<AppState>,
     Path((platform_str, id)): Path<(String, String)>,
@@ -189,7 +361,8 @@ async fn get_market(
         }
     };
 
-    match state.market_service.get_market(platform, &id).await {
+    // Use cache (falls back to API on miss)
+    match state.market_cache.get_market(platform, &id).await {
         Ok(market) => (StatusCode::OK, Json(market)).into_response(),
         Err(terminal_core::TerminalError::NotFound(_)) => (
             StatusCode::NOT_FOUND,
