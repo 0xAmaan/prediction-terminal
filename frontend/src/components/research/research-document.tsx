@@ -4,10 +4,48 @@ import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, Lock } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { VersionHistory } from "./version-history";
 import type { SynthesizedReport, KeyFactor } from "@/lib/types";
+
+// Custom components for ReactMarkdown to improve section rendering
+const markdownComponents: Components = {
+  // Paragraphs with proper spacing
+  p: ({ children }) => (
+    <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
+  ),
+  // Headings with proper spacing - make them stand out from paragraphs
+  h2: ({ children }) => (
+    <h2 className="text-foreground font-semibold text-base mt-6 mb-3 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-foreground font-semibold text-sm mt-5 mb-2 first:mt-0">{children}</h3>
+  ),
+  h4: ({ children }) => (
+    <h4 className="text-foreground font-semibold text-sm mt-4 mb-2 first:mt-0">{children}</h4>
+  ),
+  // Bold text styling - make it stand out
+  strong: ({ children }) => (
+    <strong className="font-semibold text-foreground">{children}</strong>
+  ),
+  // Lists with proper spacing
+  ul: ({ children }) => (
+    <ul className="list-disc pl-5 mb-3 space-y-1">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal pl-5 mb-3 space-y-1">{children}</ol>
+  ),
+  li: ({ children }) => (
+    <li className="pl-1">{children}</li>
+  ),
+  // Links
+  a: ({ children, href }) => (
+    <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>
+  ),
+};
 
 interface ResearchDocumentProps {
   report: SynthesizedReport;
@@ -108,8 +146,13 @@ export function ResearchDocument({
                 New Research Content
               </CardTitle>
             </CardHeader>
-            <CardContent className="prose prose-invert prose-sm max-w-none">
-              <ReactMarkdown>{streamingContent}</ReactMarkdown>
+            <CardContent className="text-sm text-muted-foreground">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                components={markdownComponents}
+              >
+                {streamingContent}
+              </ReactMarkdown>
             </CardContent>
           </Card>
         </div>
@@ -149,8 +192,13 @@ export function ResearchDocument({
           <CardHeader className="pb-2">
             <CardTitle className="text-base">{section.heading}</CardTitle>
           </CardHeader>
-          <CardContent className="prose prose-invert prose-sm max-w-none prose-p:text-muted-foreground prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary">
-            <ReactMarkdown>{section.content}</ReactMarkdown>
+          <CardContent className="text-sm text-muted-foreground">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkBreaks]}
+              components={markdownComponents}
+            >
+              {section.content}
+            </ReactMarkdown>
           </CardContent>
         </Card>
       ))}

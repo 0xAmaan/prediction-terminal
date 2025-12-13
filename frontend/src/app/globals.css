@@ -401,3 +401,21 @@
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
 }
+
+/* Research report section styling - handles AI-generated pseudo-headings */
+/* When a paragraph contains ONLY bold text, style it as a subheading */
+.text-muted-foreground > p:has(> strong:only-child) {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.text-muted-foreground > p:has(> strong:only-child):first-child {
+  margin-top: 0;
+}
+
+/* Make bold-only paragraphs look like headings */
+.text-muted-foreground > p > strong:only-child {
+  display: block;
+  color: var(--foreground);
+}
