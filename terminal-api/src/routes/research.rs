@@ -15,20 +15,26 @@ use tracing::{error, info};
 use crate::AppState;
 
 /// Create research routes
+///
+/// NOTE: Route ordering matters in Axum. More specific routes (with additional
+/// path segments) must come BEFORE less specific routes with wildcards.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/research/:platform/:market_id", post(start_research))
-        .route("/research/:platform/:market_id", get(get_research))
-        .route(
-            "/research/:platform/:market_id/versions",
-            get(list_versions),
-        )
+        // Most specific routes first (with extra path segments after :market_id)
         .route(
             "/research/:platform/:market_id/versions/:version_key",
             get(get_version),
         )
+        .route(
+            "/research/:platform/:market_id/versions",
+            get(list_versions),
+        )
         .route("/research/:platform/:market_id/chat", get(get_chat))
         .route("/research/:platform/:market_id/chat", post(send_chat))
+        // Less specific routes last
+        .route("/research/:platform/:market_id", post(start_research))
+        .route("/research/:platform/:market_id", get(get_research))
+        // Static routes (no wildcards in the middle)
         .route("/research/job/:job_id", get(get_job))
         .route("/research/jobs", get(list_jobs))
 }
