@@ -603,14 +603,18 @@ impl ResearchService {
             .update_report(existing_report, &search_results, question)
             .await?;
 
-        // Generate a summary answer for the chat
+        // Generate a concise summary of the changes for the chat
+        let summary = self
+            .openai_client
+            .summarize_followup_changes(question, existing_report, &updated_report)
+            .await
+            .unwrap_or_else(|_| {
+                "The report has been updated with new details in the relevant sections.".to_string()
+            });
+
         let answer = format!(
             "I've researched your question and updated the report with new findings.\n\n**Summary of new information:**\n\n{}",
-            if updated_report.executive_summary != existing_report.executive_summary {
-                &updated_report.executive_summary
-            } else {
-                "The report has been updated with new details in the relevant sections."
-            }
+            summary
         );
 
         Ok((answer, updated_report))
