@@ -8,6 +8,18 @@ use terminal_kalshi::KalshiClient;
 use terminal_polymarket::{MarketOption, PolymarketClient, PriceHistoryPoint};
 use tracing::{debug, info, instrument, warn};
 
+/// Minimal struct for parsing binary market options_json to extract clob_token_id
+/// Binary markets only have: {"name": "Yes", "clob_token_id": "..."}
+/// Multi-outcome markets have the full MarketOption fields (yes_price, market_id, etc.)
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MinimalOption {
+    #[serde(default)]
+    #[allow(dead_code)]
+    name: Option<String>,
+    #[serde(default)]
+    clob_token_id: Option<String>,
+}
+
 /// Service for fetching and aggregating markets across platforms
 pub struct MarketService {
     kalshi: Arc<KalshiClient>,
@@ -346,7 +358,7 @@ impl MarketService {
                 // Get the event to access options
                 let market = self.polymarket.get_market(event_id).await?;
 
-                // Parse options from options_json
+                // Parse options from options_json (multi-outcome markets have full MarketOption fields)
                 let options: Vec<MarketOption> = if let Some(json) = &market.options_json {
                     serde_json::from_str(json).unwrap_or_default()
                 } else {
@@ -368,7 +380,7 @@ impl MarketService {
                 let mut results = Vec::new();
                 for (idx, option) in top_options.into_iter().enumerate() {
                     if let Some(token_id) = &option.clob_token_id {
-                        match self.polymarket.get_prices_history(token_id, interval).await {
+                        match self.polymarket.get_prices_history(token_id, interval, None).await {
                             Ok(history) => {
                                 results.push(OutcomePriceHistory {
                                     name: option.name.clone(),
@@ -475,7 +487,89 @@ impl MarketService {
                     .map(|p| PriceHistoryPoint { t: p.t, p: p.p })
                     .collect())
             }
-            Platform::Polymarket => self.polymarket.get_prices_history(token_id, interval).await,
+            Platform::Polymarket => self.polymarket.get_prices_history(token_id, interval, None).await,
+        }
+    }
+
+    /// Get native price history for a market or outcome
+    ///
+    /// This fetches price history directly from the platform's API (complete coverage),
+    /// rather than building from stored trades (partial coverage).
+    ///
+    /// For Polymarket:
+    /// - If market_id is an event ID (UUID format), looks up the YES token's clob_token_id
+    /// - If market_id is already a token ID (numeric string), uses it directly
+    ///
+    /// # Arguments
+    /// * `platform` - The trading platform
+    /// * `market_id` - Market identifier (event ID or token ID for Polymarket)
+    /// * `interval` - Duration string: "1m", "1h", "6h", "1d", "1w", "max"
+    /// * `fidelity` - Optional fidelity override in minutes (lower = more data points)
+    #[instrument(skip(self))]
+    pub async fn get_native_price_history(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        interval: &str,
+        fidelity: Option<u32>,
+    ) -> Result<Vec<PriceHistoryPoint>, TerminalError> {
+        info!(
+            "Fetching native price history for {} on {:?}",
+            market_id, platform
+        );
+
+        match platform {
+            Platform::Kalshi => {
+                // For Kalshi, extract series ticker and use candlesticks API
+                let series_ticker =
+                    terminal_kalshi::types::KalshiMarket::extract_series_from_market_ticker(
+                        market_id,
+                    );
+
+                let history = self
+                    .kalshi
+                    .get_candlesticks(series_ticker, market_id, interval)
+                    .await?;
+
+                Ok(history
+                    .into_iter()
+                    .map(|p| PriceHistoryPoint { t: p.t, p: p.p })
+                    .collect())
+            }
+            Platform::Polymarket => {
+                // Polymarket token IDs are very long numeric strings (77+ digits)
+                // Event IDs are UUIDs (with hyphens) or shorter alphanumeric strings
+                let is_token_id = market_id.len() > 50 && market_id.chars().all(|c| c.is_ascii_digit());
+
+                let token_id = if is_token_id {
+                    // Already a token ID (e.g., from multi-outcome individual outcome)
+                    debug!("Using market_id directly as token ID: {}", market_id);
+                    market_id.to_string()
+                } else {
+                    // Event ID - look up the YES token's clob_token_id
+                    let market = self.polymarket.get_market(market_id).await?;
+
+                    let options: Vec<MinimalOption> = if let Some(json) = &market.options_json {
+                        serde_json::from_str(json).map_err(|e| {
+                            TerminalError::parse(format!("Failed to parse options_json: {}", e))
+                        })?
+                    } else {
+                        return Err(TerminalError::not_found(
+                            "No options found for market".to_string(),
+                        ));
+                    };
+
+                    options
+                        .first()
+                        .and_then(|o| o.clob_token_id.clone())
+                        .ok_or_else(|| {
+                            TerminalError::not_found("No clob_token_id found for market".to_string())
+                        })?
+                };
+
+                debug!("Fetching price history for token ID: {}", token_id);
+                self.polymarket.get_prices_history(&token_id, interval, fidelity).await
+            }
         }
     }
 }

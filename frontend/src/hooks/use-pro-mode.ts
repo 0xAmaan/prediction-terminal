@@ -1,71 +1,18 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 // ============================================================================
-// Pro Mode Hook
+// Pro Mode Hook (simplified - always returns true)
 // ============================================================================
 
 interface UseProModeReturn {
   proMode: boolean;
-  setProMode: (value: boolean) => void;
-  toggleProMode: () => void;
 }
 
 export const useProMode = (): UseProModeReturn => {
-  const [proMode, setProModeState] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
-
-  // Load from localStorage on mount
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("terminal-pro-mode");
-      setProModeState(stored === "true");
-      setIsInitialized(true);
-    }
-  }, []);
-
-  // Save to localStorage when changed
-  const setProMode = useCallback((value: boolean) => {
-    setProModeState(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("terminal-pro-mode", String(value));
-    }
-  }, []);
-
-  const toggleProMode = useCallback(() => {
-    setProMode(!proMode);
-  }, [proMode, setProMode]);
-
-  // Listen for keyboard shortcut (P key)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      // Toggle pro mode with P key
-      if (
-        e.key.toLowerCase() === "p" &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey
-      ) {
-        toggleProMode();
-      }
-    };
-
-    if (isInitialized) {
-      window.addEventListener("keydown", handleKeyDown);
-      return () => window.removeEventListener("keydown", handleKeyDown);
-    }
-  }, [isInitialized, toggleProMode]);
-
-  return { proMode, setProMode, toggleProMode };
+  // Pro mode is now always enabled
+  return { proMode: true };
 };
 
 // ============================================================================

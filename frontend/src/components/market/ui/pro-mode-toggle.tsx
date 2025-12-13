@@ -122,6 +122,55 @@ export const ProModeToggle = ({
 };
 
 // ============================================================================
+// Static Pro Badge (non-interactive)
+// ============================================================================
+
+interface ProBadgeProps {
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}
+
+export const ProBadge = ({
+  size = "sm",
+  className = "",
+}: ProBadgeProps) => {
+  const sizes = {
+    sm: {
+      icon: "h-3 w-3",
+      text: "text-[10px]",
+      padding: "px-2 py-1",
+    },
+    md: {
+      icon: "h-3.5 w-3.5",
+      text: "text-xs",
+      padding: "px-3 py-1.5",
+    },
+    lg: {
+      icon: "h-4 w-4",
+      text: "text-sm",
+      padding: "px-4 py-2",
+    },
+  };
+
+  const s = sizes[size];
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-lg ${s.padding} ${className}`}
+      style={{
+        backgroundColor: fey.amberMuted,
+        border: "1px solid rgba(245, 165, 36, 0.3)",
+      }}
+    >
+      <Zap className={s.icon} style={{ color: fey.amber }} />
+      <span className={`font-medium ${s.text}`} style={{ color: fey.amber }}>
+        Pro
+      </span>
+    </div>
+  );
+};
+
+// ============================================================================
 // Minimal Toggle (just the switch)
 // ============================================================================
 
@@ -178,7 +227,6 @@ export const KeyboardShortcutsHelp = ({
   isOpen,
   onClose,
   shortcuts = [
-    { key: "P", description: "Toggle Pro/Simple mode" },
     { key: "1", description: "1 hour timeframe" },
     { key: "2", description: "4 hour timeframe" },
     { key: "3", description: "1 day timeframe" },

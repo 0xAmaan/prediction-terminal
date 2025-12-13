@@ -16,6 +16,7 @@ terminal-polymarket = { workspace = true }
 terminal-news = { workspace = true, features = ["discord"] }
 terminal-research = { workspace = true }
 terminal-services = { workspace = true }
+terminal-trading = { workspace = true }
 
 # Web framework
 axum = { workspace = true, features = ["ws"] }

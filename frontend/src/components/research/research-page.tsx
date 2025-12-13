@@ -4,8 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, ArrowLeft, CheckCircle, XCircle, RefreshCw, AlertCircle } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Loader2, ArrowLeft, CheckCircle, XCircle, RefreshCw, AlertCircle, Search } from "lucide-react";
 import Link from "next/link";
 import { useResearch } from "@/hooks/use-research";
 import { ResearchDocument } from "./research-document";
@@ -34,6 +33,10 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [historicalReport, setHistoricalReport] = useState<SynthesizedReport | null>(null);
   const [isLoadingVersion, setIsLoadingVersion] = useState(false);
+
+  // Track if we've checked for existing research and if user wants to start new research
+  const [hasCheckedCache, setHasCheckedCache] = useState(false);
+  const [userWantsResearch, setUserWantsResearch] = useState(false);
 
   // Ref for document panel scrolling
   const documentPanelRef = useRef<HTMLDivElement>(null);
@@ -74,12 +77,40 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
     pollForUpdate();
   }, [platform, marketId, refreshByMarket, handleScrollToTop]);
 
-  // Start research on mount if no job exists
+  // On mount, check for existing cached research
   useEffect(() => {
-    if (!job && !isLoading && !error) {
+    if (hasCheckedCache) return;
+
+    const checkCache = async () => {
+      try {
+        const cached = await api.getResearchByMarket(platform, marketId);
+        if (cached) {
+          // Found cached research - load it automatically
+          startResearch(platform, marketId);
+        }
+        // No cached research - user must click to start
+      } catch (e) {
+        console.error("Failed to check cache:", e);
+      } finally {
+        setHasCheckedCache(true);
+      }
+    };
+
+    checkCache();
+  }, [platform, marketId, hasCheckedCache, startResearch]);
+
+  // Start research when user explicitly requests it
+  useEffect(() => {
+    if (userWantsResearch && !job && !isLoading) {
       startResearch(platform, marketId);
+      setUserWantsResearch(false);
     }
-  }, [job, isLoading, error, platform, marketId, startResearch]);
+  }, [userWantsResearch, job, isLoading, platform, marketId, startResearch]);
+
+  // Handler for starting research manually
+  const handleStartResearch = useCallback(() => {
+    setUserWantsResearch(true);
+  }, []);
 
   // Handle version change
   const handleVersionChange = useCallback(async (versionKey: string | null) => {
@@ -114,7 +145,8 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
   const isComplete = job?.status === "completed";
   const isFailed = job?.status === "failed";
   const isRunning = job && !isComplete && !isFailed;
-  const showLoading = !job && !error;
+  const showLoading = isLoading || (!hasCheckedCache && !job && !error);
+  const showStartButton = hasCheckedCache && !job && !isLoading && !error;
 
   // Determine which report to display
   const isViewingHistorical = selectedVersion !== null;
@@ -164,36 +196,35 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
 
         {/* Document Panel */}
         <div ref={documentPanelRef} className="w-3/5 flex flex-col min-h-0 overflow-y-auto p-6">
-          {/* Loading State - Skeleton UI */}
+          {/* Start Research Button - shown for new markets */}
+          {showStartButton && (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="text-center max-w-md">
+                <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Search className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-xl font-semibold mb-3">Start Deep Research</h3>
+                <p className="text-muted-foreground mb-6">
+                  Get AI-powered analysis of this market including news, data, and key factors that could influence the outcome.
+                </p>
+                <Button
+                  size="lg"
+                  className="gap-2"
+                  onClick={handleStartResearch}
+                >
+                  <Search className="h-4 w-4" />
+                  Start Research
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Loading State */}
           {showLoading && (
-            <div className="space-y-6">
+            <div className="flex items-center justify-center py-20">
               <div className="flex items-center gap-3">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Starting research...</span>
-              </div>
-              {/* Skeleton cards */}
-              <div className="space-y-4">
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-32 mb-3" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-4/5 mb-2" />
-                  <Skeleton className="h-3 w-3/4" />
-                </div>
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-24 mb-3" />
-                  <div className="space-y-2">
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                    <Skeleton className="h-10 w-full" />
-                  </div>
-                </div>
-                <div className="border border-border/30 rounded-lg p-4">
-                  <Skeleton className="h-4 w-40 mb-3" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-5/6 mb-2" />
-                  <Skeleton className="h-3 w-full mb-2" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
+                <span className="text-sm text-muted-foreground">Checking for existing research...</span>
               </div>
             </div>
           )}

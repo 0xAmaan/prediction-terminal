@@ -653,15 +653,17 @@ impl PolymarketClient {
     /// # Arguments
     /// * `token_id` - The CLOB token ID (YES token)
     /// * `interval` - Duration string: "1m", "1h", "6h", "1d", "1w", "max"
+    /// * `fidelity_override` - Optional fidelity in minutes (lower = more data points)
     #[instrument(skip(self))]
     pub async fn get_prices_history(
         &self,
         token_id: &str,
         interval: &str,
+        fidelity_override: Option<u32>,
     ) -> Result<Vec<PriceHistoryPoint>, TerminalError> {
-        // Map interval to minimum required fidelity (in minutes)
+        // Use override if provided, otherwise map interval to default fidelity
         // Fidelity controls data granularity - lower = more data points
-        let fidelity = match interval {
+        let fidelity = fidelity_override.unwrap_or_else(|| match interval {
             "1m" => 1,
             "1h" => 1,
             "6h" => 5,
@@ -669,7 +671,7 @@ impl PolymarketClient {
             "1w" => 60,
             "max" => 1440, // 1 day in minutes
             _ => 60,       // default to hourly
-        };
+        });
 
         let url = format!(
             "{}/prices-history?market={}&interval={}&fidelity={}",

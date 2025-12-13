@@ -23,11 +23,9 @@ import { MultiOutcomeTradingView } from "@/components/market/views/multi-outcome
 import { MarketTabs, type MarketTab } from "@/components/market/market-tabs";
 import { MarketBar } from "@/components/market/layout/market-bar";
 import { MultiOutcomeMarketBar } from "@/components/market/layout/multi-outcome-market-bar";
-import { ProModeToggle } from "@/components/market/ui/pro-mode-toggle";
 
 // Hooks
 import { useMarketStream } from "@/hooks/use-market-stream";
-import { useProMode } from "@/hooks/use-pro-mode";
 import type { ConnectionState } from "@/hooks/use-websocket";
 
 // Animation variants
@@ -146,9 +144,6 @@ const MarketPageContent = ({
   // Tab state - Overview is default
   const [activeTab, setActiveTab] = useState<MarketTab>("overview");
 
-  // Pro mode state
-  const { proMode, toggleProMode } = useProMode();
-
   // Parse multi-outcome options early (needed for state initialization)
   const options = parseOptions(market.options_json ?? null);
   const isMultiOutcome = market.is_multi_outcome && options.length > 0;
@@ -229,42 +224,41 @@ const MarketPageContent = ({
       animate="visible"
       variants={staggerContainer}
     >
-      {/* Minimal Header - Just back button and external link */}
-      <motion.header
-        className="sticky top-0 z-50"
-        style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
-        variants={staggerItem}
-      >
-        <div className="px-6 lg:px-8 py-3">
-          <div className="flex items-center justify-between">
-            <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
+      {/* Minimal Header - Hide on Trading tab (TradingView has its own header) */}
+      {activeTab !== "trading" && (
+        <motion.header
+          className="sticky top-0 z-50"
+          style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
+          variants={staggerItem}
+        >
+          <div className="px-6 lg:px-8 py-3">
+            <div className="flex items-center justify-between">
+              <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
+                <ArrowLeft className="h-5 w-5" />
+              </Link>
 
-            <div className="flex items-center gap-3">
-              <ResearchButton
-                platform={market.platform}
-                marketId={market.id}
-                marketTitle={market.title}
-              />
-              {activeTab === "trading" && (
-                <ProModeToggle proMode={proMode} onToggle={toggleProMode} size="sm" />
-              )}
-              {market.url && (
-                <a
-                  href={market.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
-                  style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-              )}
+              <div className="flex items-center gap-3">
+                <ResearchButton
+                  platform={market.platform}
+                  marketId={market.id}
+                  marketTitle={market.title}
+                />
+                {market.url && (
+                  <a
+                    href={market.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
+                    style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      </motion.header>
+        </motion.header>
+      )}
 
       {/* Tab Navigation */}
       <MarketTabs activeTab={activeTab} onTabChange={setActiveTab} />
@@ -316,8 +310,6 @@ const MarketPageContent = ({
                 onOutcomeSelect={setSelectedOutcome}
                 relatedMarkets={relatedMarkets}
                 relatedMarketsLoading={relatedMarketsLoading}
-                proMode={proMode}
-                toggleProMode={toggleProMode}
               />
             ) : (
               <TradingView
@@ -329,8 +321,6 @@ const MarketPageContent = ({
                 relatedMarketsLoading={relatedMarketsLoading}
                 livePrices={livePrices}
                 priceHistory={priceHistory}
-                proMode={proMode}
-                toggleProMode={toggleProMode}
               />
             )}
           </motion.div>
@@ -539,6 +529,11 @@ const MarketPage = () => {
 
   if (error || !market) {
     return <ErrorState message={error?.message || "Market not found"} />;
+  }
+
+  // Update document title with market name
+  if (typeof document !== "undefined" && market.title) {
+    document.title = `${market.title} | Prediction Terminal`;
   }
 
   // Merge WebSocket data with REST data

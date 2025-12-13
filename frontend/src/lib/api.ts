@@ -512,4 +512,150 @@ export const api = {
 
     return response.json();
   },
+
+  // ========================================================================
+  // Trading Methods
+  // ========================================================================
+
+  /** Submit a new order to Polymarket */
+  async submitOrder(params: {
+    tokenId: string;
+    side: "buy" | "sell";
+    price: number;
+    size: number;
+    orderType?: "GTC" | "GTD" | "FOK";
+  }): Promise<{
+    success: boolean;
+    orderId?: string;
+    error?: string;
+    transactionHashes: string[];
+  }> {
+    const response = await fetch(`${API_BASE}/api/trade/order`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        tokenId: params.tokenId,
+        side: params.side,
+        price: params.price,
+        size: params.size,
+        orderType: params.orderType || "GTC",
+      }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(
+        data.error || `Failed to submit order: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  },
+
+  /** Cancel an order by ID */
+  async cancelOrder(orderId: string): Promise<void> {
+    const response = await fetch(
+      `${API_BASE}/api/trade/order/${encodeURIComponent(orderId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(
+        data.error || `Failed to cancel order: ${response.statusText}`,
+      );
+    }
+  },
+
+  /** Cancel all orders */
+  async cancelAllOrders(): Promise<void> {
+    const response = await fetch(`${API_BASE}/api/trade/orders/cancel-all`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(
+        data.error || `Failed to cancel all orders: ${response.statusText}`,
+      );
+    }
+  },
+
+  /** Get open orders */
+  async getOpenOrders(): Promise<
+    Array<{
+      id: string;
+      market: string;
+      assetId: string;
+      side: string;
+      originalSize: string;
+      sizeMatched: string;
+      price: string;
+      status: string;
+      createdAt: string;
+    }>
+  > {
+    const response = await fetch(`${API_BASE}/api/trade/orders`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get open orders: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get deposit address for funding the trading wallet */
+  async getDepositAddress(): Promise<{
+    address: string;
+    network: string;
+    token: string;
+  }> {
+    const response = await fetch(`${API_BASE}/api/trade/deposit`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get deposit address: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get trading wallet balance */
+  async getTradingBalance(): Promise<{
+    usdcBalance: string;
+    usdcAllowance: string;
+    walletAddress: string;
+  }> {
+    const response = await fetch(`${API_BASE}/api/trade/balance`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get balance: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get current positions derived from trade history */
+  async getPositions(): Promise<
+    Array<{
+      marketId: string;
+      tokenId: string;
+      outcome: string;
+      shares: string;
+      avgPrice: string;
+      currentPrice: string;
+      pnl: string;
+    }>
+  > {
+    const response = await fetch(`${API_BASE}/api/trade/positions`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get positions: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
 };

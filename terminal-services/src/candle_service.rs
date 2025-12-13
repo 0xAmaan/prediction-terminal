@@ -1,12 +1,17 @@
 //! Candle Service
 //!
 //! Aggregates trades into OHLCV (Open, High, Low, Close, Volume) candles for price history.
+//!
+//! Supports two modes:
+//! 1. **Trade-based**: Build candles from stored trades (limited by backfill depth)
+//! 2. **Hybrid**: Combine native price API data with trade volume data (complete coverage)
 
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use terminal_core::{Platform, PriceCandle, PriceHistory, PriceInterval, Trade};
+use terminal_core::{Platform, PriceCandle, PriceHistory, PriceInterval, Trade, TradeSide};
+use terminal_polymarket::PriceHistoryPoint;
 
 use crate::trade_storage::{TradeStorage, TradeStorageError};
 
@@ -88,6 +93,20 @@ impl CandleService {
             .min()
             .unwrap_or_default();
 
+        // Aggregate volumes by trade side
+        let buy_volume: Decimal = sorted_trades
+            .iter()
+            .filter(|t| t.side == Some(TradeSide::Buy))
+            .map(|t| t.quantity)
+            .sum();
+
+        let sell_volume: Decimal = sorted_trades
+            .iter()
+            .filter(|t| t.side == Some(TradeSide::Sell))
+            .map(|t| t.quantity)
+            .sum();
+
+        // Total volume includes trades with unknown side
         let volume = sorted_trades.iter().map(|t| t.quantity).sum();
 
         PriceCandle {
@@ -97,6 +116,8 @@ impl CandleService {
             low,
             close,
             volume,
+            buy_volume,
+            sell_volume,
         }
     }
 
@@ -150,6 +171,8 @@ impl CandleService {
                         low: prev_close,
                         close: prev_close,
                         volume: Decimal::ZERO,
+                        buy_volume: Decimal::ZERO,
+                        sell_volume: Decimal::ZERO,
                     });
                     gap_ts += interval_secs;
                 }
@@ -160,6 +183,165 @@ impl CandleService {
         }
 
         history.candles = filled_candles;
+    }
+
+    // ========================================================================
+    // Hybrid Candle Building (Native Prices + Trade Volumes)
+    // ========================================================================
+
+    /// Build candles from native price history with trade volume data
+    ///
+    /// Combines price data from the platform's native API (complete coverage)
+    /// with buy/sell volume data from stored trades (where available).
+    ///
+    /// # Arguments
+    /// * `platform` - The trading platform
+    /// * `market_id` - Market identifier
+    /// * `prices` - Price history points from native API
+    /// * `interval` - Candle interval (1m, 15m, 1h, 4h, 1d)
+    /// * `from_filter` - Optional: filter to only include prices after this timestamp
+    pub fn build_hybrid_candles(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        prices: Vec<PriceHistoryPoint>,
+        interval: PriceInterval,
+        from_filter: Option<DateTime<Utc>>,
+    ) -> Result<PriceHistory, CandleServiceError> {
+        // Apply time filter if provided
+        let filtered_prices: Vec<PriceHistoryPoint> = if let Some(from_time) = from_filter {
+            let from_ts = from_time.timestamp();
+            prices.into_iter().filter(|p| p.t >= from_ts).collect()
+        } else {
+            prices
+        };
+
+        if filtered_prices.is_empty() {
+            return Ok(PriceHistory {
+                market_id: market_id.to_string(),
+                platform,
+                interval,
+                candles: vec![],
+            });
+        }
+
+        let interval_secs = interval.to_seconds() as i64;
+
+        // Get time range from filtered price data
+        let from_ts = filtered_prices.iter().map(|p| p.t).min().unwrap_or(0);
+        let to_ts = filtered_prices.iter().map(|p| p.t).max().unwrap_or(0);
+        let from = DateTime::from_timestamp(from_ts, 0).unwrap_or_else(Utc::now);
+        let to = DateTime::from_timestamp(to_ts, 0).unwrap_or_else(Utc::now) + Duration::hours(1);
+
+        // Fetch trades for volume data
+        let trades = self.storage.get_trades(platform, market_id, from, to).unwrap_or_default();
+
+        // Group trades by candle bucket
+        let mut trade_buckets: BTreeMap<i64, Vec<&Trade>> = BTreeMap::new();
+        for trade in &trades {
+            let bucket = (trade.timestamp.timestamp() / interval_secs) * interval_secs;
+            trade_buckets.entry(bucket).or_default().push(trade);
+        }
+
+        // Group prices by candle bucket
+        let mut price_buckets: BTreeMap<i64, Vec<&PriceHistoryPoint>> = BTreeMap::new();
+        for price in &filtered_prices {
+            let bucket = (price.t / interval_secs) * interval_secs;
+            price_buckets.entry(bucket).or_default().push(price);
+        }
+
+        // Build candles from price buckets, enriched with trade volume
+        let candles: Vec<PriceCandle> = price_buckets
+            .into_iter()
+            .map(|(bucket_ts, bucket_prices)| {
+                let trades_for_bucket = trade_buckets.get(&bucket_ts);
+                self.build_candle_from_prices_and_trades(bucket_ts, &bucket_prices, trades_for_bucket)
+            })
+            .collect();
+
+        Ok(PriceHistory {
+            market_id: market_id.to_string(),
+            platform,
+            interval,
+            candles,
+        })
+    }
+
+    /// Build a single candle from price points and optional trade data
+    fn build_candle_from_prices_and_trades(
+        &self,
+        timestamp: i64,
+        prices: &[&PriceHistoryPoint],
+        trades: Option<&Vec<&Trade>>,
+    ) -> PriceCandle {
+        let mut sorted_prices: Vec<_> = prices.iter().collect();
+        sorted_prices.sort_by_key(|p| p.t);
+
+        let open = Decimal::try_from(sorted_prices.first().map(|p| p.p).unwrap_or(0.0))
+            .unwrap_or_default();
+        let close = Decimal::try_from(sorted_prices.last().map(|p| p.p).unwrap_or(0.0))
+            .unwrap_or_default();
+        let high = Decimal::try_from(
+            sorted_prices.iter().map(|p| p.p).fold(f64::MIN, f64::max),
+        ).unwrap_or_default();
+        let low = Decimal::try_from(
+            sorted_prices.iter().map(|p| p.p).fold(f64::MAX, f64::min),
+        ).unwrap_or_default();
+
+        // Get volume from trades if available
+        let (volume, buy_volume, sell_volume) = if let Some(bucket_trades) = trades {
+            let buy_vol: Decimal = bucket_trades
+                .iter()
+                .filter(|t| t.side == Some(TradeSide::Buy))
+                .map(|t| t.quantity)
+                .sum();
+            let sell_vol: Decimal = bucket_trades
+                .iter()
+                .filter(|t| t.side == Some(TradeSide::Sell))
+                .map(|t| t.quantity)
+                .sum();
+            let total_vol: Decimal = bucket_trades.iter().map(|t| t.quantity).sum();
+            (total_vol, buy_vol, sell_vol)
+        } else {
+            (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
+        };
+
+        PriceCandle {
+            timestamp: DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now),
+            open,
+            high,
+            low,
+            close,
+            volume,
+            buy_volume,
+            sell_volume,
+        }
+    }
+
+    /// Get hybrid candles for a specific timeframe preset
+    ///
+    /// # Arguments
+    /// * `platform` - The trading platform
+    /// * `market_id` - Market identifier
+    /// * `prices` - Price history points from native API
+    /// * `timeframe` - Timeframe preset ("1H", "24H", "7D", "30D", "ALL")
+    /// * `from_filter` - Optional: filter to only include prices after this timestamp
+    pub fn get_hybrid_candles_for_timeframe(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        prices: Vec<PriceHistoryPoint>,
+        timeframe: &str,
+        from_filter: Option<DateTime<Utc>>,
+    ) -> Result<PriceHistory, CandleServiceError> {
+        let interval = match timeframe.to_uppercase().as_str() {
+            "1H" => PriceInterval::OneMinute,
+            "24H" => PriceInterval::FifteenMinutes,
+            "7D" => PriceInterval::OneHour,
+            "30D" => PriceInterval::FourHours,
+            "ALL" | _ => PriceInterval::OneDay,
+        };
+        self.build_hybrid_candles(platform, market_id, prices, interval, from_filter)
     }
 }
 
@@ -179,7 +361,13 @@ mod tests {
     use rust_decimal_macros::dec;
     use terminal_core::{TradeOutcome, TradeSide};
 
-    fn create_test_trade(id: &str, market_id: &str, price: Decimal, timestamp: DateTime<Utc>) -> Trade {
+    fn create_test_trade(
+        id: &str,
+        market_id: &str,
+        price: Decimal,
+        timestamp: DateTime<Utc>,
+        side: TradeSide,
+    ) -> Trade {
         Trade {
             id: id.to_string(),
             market_id: market_id.to_string(),
@@ -188,7 +376,7 @@ mod tests {
             price,
             quantity: dec!(100),
             outcome: TradeOutcome::Yes,
-            side: Some(TradeSide::Buy),
+            side: Some(side),
             transaction_hash: None,
         }
     }
@@ -200,12 +388,12 @@ mod tests {
 
         let base_time = Utc::now() - Duration::hours(1);
 
-        // Create trades at different prices
+        // Create trades with mixed buy/sell sides
         let trades = vec![
-            create_test_trade("t1", "market1", dec!(0.50), base_time),
-            create_test_trade("t2", "market1", dec!(0.55), base_time + Duration::minutes(5)),
-            create_test_trade("t3", "market1", dec!(0.45), base_time + Duration::minutes(10)),
-            create_test_trade("t4", "market1", dec!(0.52), base_time + Duration::minutes(15)),
+            create_test_trade("t1", "market1", dec!(0.50), base_time, TradeSide::Buy),
+            create_test_trade("t2", "market1", dec!(0.55), base_time + Duration::minutes(5), TradeSide::Buy),
+            create_test_trade("t3", "market1", dec!(0.45), base_time + Duration::minutes(10), TradeSide::Sell),
+            create_test_trade("t4", "market1", dec!(0.52), base_time + Duration::minutes(15), TradeSide::Buy),
         ];
 
         for trade in &trades {
@@ -230,6 +418,9 @@ mod tests {
         assert_eq!(candle.low, dec!(0.45));
         assert_eq!(candle.close, dec!(0.52));
         assert_eq!(candle.volume, dec!(400)); // 4 trades * 100 quantity
+        assert_eq!(candle.buy_volume, dec!(300)); // 3 buy trades * 100 quantity
+        assert_eq!(candle.sell_volume, dec!(100)); // 1 sell trade * 100 quantity
+        assert!(candle.is_buy_pressure()); // More buys than sells
     }
 
     #[test]

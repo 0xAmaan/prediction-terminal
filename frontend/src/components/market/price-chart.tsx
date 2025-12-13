@@ -1,10 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, type IChartApi, ColorType, LineSeries } from "lightweight-charts";
+import {
+  createChart,
+  type IChartApi,
+  ColorType,
+  CandlestickSeries,
+  LineSeries,
+  type CandlestickData,
+  type LineData,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp } from "lucide-react";
 import { api } from "@/lib/api";
+import type { PriceCandle } from "@/lib/types";
 
 // Fey color tokens
 const fey = {
@@ -22,18 +32,14 @@ const fey = {
 // Types
 // ============================================================================
 
-interface PriceDataPoint {
-  time: number; // Unix timestamp in seconds
-  value: number;
-}
+type ColorMode = "sentiment" | "price";
+type ChartType = "candlestick" | "line";
 
 interface PriceChartProps {
   /** Platform for fetching price history */
   platform?: string;
   /** Market ID for fetching price history */
   marketId?: string;
-  /** Price history data for YES outcome (overrides API fetch if provided) */
-  data?: PriceDataPoint[];
   /** Current YES price for real-time updates */
   currentPrice?: number;
   /** Chart height */
@@ -42,58 +48,179 @@ interface PriceChartProps {
   isLoading?: boolean;
   /** Optional title */
   title?: string;
+  /** Color mode: "sentiment" (buy/sell volume) or "price" (close vs open) */
+  colorMode?: ColorMode;
+  /** Chart type: "candlestick" (default) or "line" */
+  chartType?: ChartType;
 }
 
 type TimeFrame = "1H" | "24H" | "7D" | "30D" | "ALL";
 
 // ============================================================================
-// Mock Data Generator (for demo purposes when no data is available)
+// Helper Functions
 // ============================================================================
 
-const generateMockData = (timeframe: TimeFrame, basePrice: number = 0.5): PriceDataPoint[] => {
+/**
+ * Determine candle color based on mode
+ * - sentiment: green if buy_volume >= sell_volume (net buying pressure)
+ *              falls back to price mode if no volume data
+ * - price: green if close >= open (price went up)
+ */
+const getCandleColor = (candle: PriceCandle, mode: ColorMode): string => {
+  const close = parseFloat(candle.close);
+  const open = parseFloat(candle.open);
+
+  if (mode === "sentiment") {
+    const buyVol = parseFloat(candle.buy_volume || "0");
+    const sellVol = parseFloat(candle.sell_volume || "0");
+
+    // If we have volume data, use it for coloring
+    if (buyVol > 0 || sellVol > 0) {
+      return buyVol >= sellVol ? fey.teal : fey.red;
+    }
+    // No volume data - fall back to price direction
+    return close >= open ? fey.teal : fey.red;
+  }
+  // price mode
+  return close >= open ? fey.teal : fey.red;
+};
+
+/**
+ * Generate mock candlestick data for demo purposes
+ */
+const generateMockCandleData = (
+  timeframe: TimeFrame,
+  basePrice: number = 0.5
+): CandlestickData<UTCTimestamp>[] => {
   const now = Math.floor(Date.now() / 1000);
-  const points: PriceDataPoint[] = [];
+  const candles: CandlestickData<UTCTimestamp>[] = [];
 
   let interval: number;
   let count: number;
 
   switch (timeframe) {
     case "1H":
-      interval = 60; // 1 minute
+      interval = 60;
       count = 60;
       break;
     case "24H":
-      interval = 60 * 15; // 15 minutes
+      interval = 60 * 15;
       count = 96;
       break;
     case "7D":
-      interval = 60 * 60; // 1 hour
+      interval = 60 * 60;
       count = 168;
       break;
     case "30D":
-      interval = 60 * 60 * 4; // 4 hours
+      interval = 60 * 60 * 4;
       count = 180;
       break;
     case "ALL":
-      interval = 60 * 60 * 24; // 1 day
+      interval = 60 * 60 * 24;
       count = 90;
       break;
   }
 
   let price = basePrice;
   for (let i = count; i >= 0; i--) {
-    // Random walk with mean reversion
-    const change = (Math.random() - 0.5) * 0.02;
+    const open = price;
+    const change = (Math.random() - 0.5) * 0.04;
     const reversion = (basePrice - price) * 0.1;
     price = Math.max(0.01, Math.min(0.99, price + change + reversion));
+    const close = price;
 
-    points.push({
-      time: now - i * interval,
-      value: price,
+    const high = Math.max(open, close) + Math.random() * 0.01;
+    const low = Math.min(open, close) - Math.random() * 0.01;
+
+    // Random buy/sell pressure for mock data
+    const isBuyPressure = Math.random() > 0.5;
+    const color = isBuyPressure ? fey.teal : fey.red;
+
+    candles.push({
+      time: (now - i * interval) as UTCTimestamp,
+      open,
+      high,
+      low,
+      close,
+      color,
+      wickColor: color,
     });
   }
 
-  return points;
+  return candles;
+};
+
+/**
+ * Transform API candle data to lightweight-charts candlestick format with colors
+ * Creates continuous candlesticks where each candle's open = previous candle's close
+ */
+const transformCandleData = (
+  candles: PriceCandle[],
+  colorMode: ColorMode
+): CandlestickData<UTCTimestamp>[] => {
+  const seen = new Set<number>();
+
+  // First pass: dedupe and sort
+  const sortedCandles = candles
+    .map((candle) => ({
+      candle,
+      time: Math.floor(new Date(candle.timestamp).getTime() / 1000),
+    }))
+    .filter((d) => {
+      if (seen.has(d.time)) return false;
+      seen.add(d.time);
+      return true;
+    })
+    .sort((a, b) => a.time - b.time);
+
+  // Second pass: create continuous candlesticks
+  let prevClose: number | null = null;
+
+  return sortedCandles.map(({ candle, time }) => {
+    const color = getCandleColor(candle, colorMode);
+
+    const originalOpen = parseFloat(candle.open);
+    const originalHigh = parseFloat(candle.high);
+    const originalLow = parseFloat(candle.low);
+    const close = parseFloat(candle.close);
+
+    // Make candles continuous: open = previous close
+    const open = prevClose !== null ? prevClose : originalOpen;
+    prevClose = close;
+
+    // Adjust high/low to include the continuous open
+    const high = Math.max(originalHigh, open, close);
+    const low = Math.min(originalLow, open, close);
+
+    return {
+      time: time as UTCTimestamp,
+      open,
+      high,
+      low,
+      close,
+      color,
+      wickColor: color,
+    };
+  });
+};
+
+/**
+ * Transform API candle data to lightweight-charts line format (close prices only)
+ */
+const transformLineData = (candles: PriceCandle[]): LineData<UTCTimestamp>[] => {
+  const seen = new Set<number>();
+
+  return candles
+    .map((candle) => ({
+      time: Math.floor(new Date(candle.timestamp).getTime() / 1000) as UTCTimestamp,
+      value: parseFloat(candle.close),
+    }))
+    .filter((d) => {
+      if (seen.has(d.time)) return false;
+      seen.add(d.time);
+      return true;
+    })
+    .sort((a, b) => a.time - b.time);
 };
 
 // ============================================================================
@@ -103,46 +230,48 @@ const generateMockData = (timeframe: TimeFrame, basePrice: number = 0.5): PriceD
 export const PriceChart = ({
   platform,
   marketId,
-  data,
   currentPrice,
-  height = 300,
+  height,
   isLoading = false,
   title = "Price History",
+  colorMode = "sentiment",
+  chartType = "candlestick",
 }: PriceChartProps) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<any>(null);
   const [timeframe, setTimeframe] = useState<TimeFrame>("30D");
-  const [chartData, setChartData] = useState<PriceDataPoint[]>([]);
+  const [activeColorMode, setActiveColorMode] = useState<ColorMode>(colorMode);
+  const [containerHeight, setContainerHeight] = useState<number>(height ?? 300);
+  const isLineChart = chartType === "line";
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Observe container size when height is not specified
+  useEffect(() => {
+    if (height !== undefined || !wrapperRef.current) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newHeight = entry.contentRect.height;
+        if (newHeight > 100) {
+          // Subtract header height (~60px)
+          setContainerHeight(Math.max(200, newHeight - 60));
+        }
+      }
+    });
+
+    resizeObserver.observe(wrapperRef.current);
+    return () => resizeObserver.disconnect();
+  }, [height]);
 
   // Fetch price history from API
   const { data: priceHistory, isLoading: historyLoading } = useQuery({
     queryKey: ["priceHistory", platform, marketId, timeframe],
     queryFn: () => api.getPriceHistory(platform!, marketId!, { timeframe }),
     enabled: !!platform && !!marketId,
-    staleTime: 5 * 60 * 1000, // Price history doesn't change rapidly
+    staleTime: 5 * 60 * 1000,
   });
-
-  // Generate chart data based on API response or fallback to props/mock
-  useEffect(() => {
-    // If API returned data, use it
-    if (priceHistory && priceHistory.candles.length > 0) {
-      const apiData: PriceDataPoint[] = priceHistory.candles.map((candle) => ({
-        time: Math.floor(new Date(candle.timestamp).getTime() / 1000),
-        value: parseFloat(candle.close),
-      }));
-      setChartData(apiData);
-    } else if (data && data.length > 0) {
-      // Use provided data
-      setChartData(data);
-    } else if (currentPrice) {
-      // Generate mock data for demo
-      setChartData(generateMockData(timeframe, currentPrice));
-    } else {
-      setChartData(generateMockData(timeframe, 0.5));
-    }
-  }, [priceHistory, data, currentPrice, timeframe]);
 
   // Combined loading state
   const isChartLoading = isLoading || historyLoading;
@@ -162,7 +291,7 @@ export const PriceChart = ({
         horzLines: { color: "rgba(255, 255, 255, 0.03)" },
       },
       width: chartContainerRef.current.clientWidth,
-      height: height,
+      height: containerHeight,
       rightPriceScale: {
         borderColor: "rgba(255, 255, 255, 0.1)",
         scaleMargins: {
@@ -198,47 +327,59 @@ export const PriceChart = ({
       },
     });
 
-    // Determine line color based on price trend (Fey colors)
-    const firstPrice = chartData[0]?.value ?? 0.5;
-    const lastPrice = chartData[chartData.length - 1]?.value ?? 0.5;
-    const isUp = lastPrice >= firstPrice;
-    const lineColor = isUp ? fey.teal : fey.red;
+    // Create series based on chart type
+    if (isLineChart) {
+      // Line chart for overview
+      const series = chart.addSeries(LineSeries, {
+        color: fey.teal,
+        lineWidth: 2,
+        priceFormat: {
+          type: "custom",
+          formatter: (price: number) => `${(price * 100).toFixed(1)}¢`,
+        },
+      });
 
-    const series = chart.addSeries(LineSeries, {
-      color: lineColor,
-      lineWidth: 2,
-      priceFormat: {
-        type: "custom",
-        formatter: (price: number) => `${(price * 100).toFixed(1)}¢`,
-      },
-    });
+      // Get line chart data
+      if (priceHistory && priceHistory.candles.length > 0) {
+        const lineData = transformLineData(priceHistory.candles);
+        series.setData(lineData);
+      }
 
-    // Format data for the chart - filter, dedupe by timestamp, and sort
-    const seen = new Set<number>();
-    const formattedData = chartData
-      .filter((d) => d.value !== undefined && d.value !== null && !isNaN(d.value))
-      .map((d) => ({
-        time: d.time as number,
-        value: d.value,
-      }))
-      .filter((d) => {
-        if (seen.has(d.time)) return false;
-        seen.add(d.time);
-        return true;
-      })
-      .sort((a, b) => a.time - b.time);
+      seriesRef.current = series;
+    } else {
+      // Candlestick chart for trading view
+      const series = chart.addSeries(CandlestickSeries, {
+        upColor: fey.teal,
+        downColor: fey.red,
+        wickUpColor: fey.teal,
+        wickDownColor: fey.red,
+        borderVisible: false,
+        priceFormat: {
+          type: "custom",
+          formatter: (price: number) => `${(price * 100).toFixed(1)}¢`,
+        },
+      });
 
-    series.setData(formattedData as any);
+      // Get candlestick chart data
+      let chartData: CandlestickData<UTCTimestamp>[];
+      if (priceHistory && priceHistory.candles.length > 0) {
+        chartData = transformCandleData(priceHistory.candles, activeColorMode);
+      } else {
+        chartData = generateMockCandleData(timeframe, currentPrice ?? 0.5);
+      }
+
+      series.setData(chartData);
+      seriesRef.current = series;
+    }
     chart.timeScale().fitContent();
-
     chartRef.current = chart;
-    seriesRef.current = series;
 
     // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
         chartRef.current.applyOptions({
           width: chartContainerRef.current.clientWidth,
+          height: containerHeight,
         });
       }
     };
@@ -251,25 +392,44 @@ export const PriceChart = ({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [chartData, height, isChartLoading]);
+  }, [priceHistory, containerHeight, isChartLoading, timeframe, currentPrice, activeColorMode, isLineChart]);
 
   // Update data when currentPrice changes (real-time updates)
   useEffect(() => {
-    if (seriesRef.current && currentPrice && chartData.length > 0) {
-      const now = Math.floor(Date.now() / 1000);
-      seriesRef.current.update({
-        time: now as any,
-        value: currentPrice,
-      });
+    if (seriesRef.current && currentPrice && priceHistory?.candles.length) {
+      const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
+      const lastCandle = priceHistory.candles[priceHistory.candles.length - 1];
+      const lastClose = parseFloat(lastCandle?.close || "0");
+
+      if (isLineChart) {
+        // Line chart: simple value update
+        seriesRef.current.update({
+          time: now,
+          value: currentPrice,
+        });
+      } else {
+        // Candlestick: full OHLC update
+        const color = currentPrice >= lastClose ? fey.teal : fey.red;
+        seriesRef.current.update({
+          time: now,
+          open: lastClose,
+          high: Math.max(lastClose, currentPrice),
+          low: Math.min(lastClose, currentPrice),
+          close: currentPrice,
+          color,
+          wickColor: color,
+        });
+      }
     }
-  }, [currentPrice, chartData.length]);
+  }, [currentPrice, priceHistory?.candles, isLineChart]);
 
   const timeframes: TimeFrame[] = ["1H", "24H", "7D", "30D", "ALL"];
 
   if (isChartLoading) {
     return (
       <div
-        className="rounded-lg"
+        ref={wrapperRef}
+        className="rounded-lg h-full flex flex-col"
         style={{
           backgroundColor: fey.bg300,
           border: `1px solid ${fey.border}`,
@@ -291,10 +451,10 @@ export const PriceChart = ({
             </span>
           </div>
         </div>
-        <div className="px-5 pb-5">
+        <div className="px-5 pb-5 flex-1">
           <div
-            className="animate-pulse rounded-lg"
-            style={{ height: `${height}px`, backgroundColor: fey.bg400 }}
+            className="animate-pulse rounded-lg h-full"
+            style={{ minHeight: "200px", backgroundColor: fey.bg400 }}
           />
         </div>
       </div>
@@ -303,13 +463,14 @@ export const PriceChart = ({
 
   return (
     <div
-      className="rounded-lg"
+      ref={wrapperRef}
+      className="rounded-lg h-full flex flex-col"
       style={{
         backgroundColor: fey.bg300,
         border: `1px solid ${fey.border}`,
       }}
     >
-      <div className="p-5 pb-2">
+      <div className="p-5 pb-2 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div
@@ -325,25 +486,57 @@ export const PriceChart = ({
               {title}
             </span>
           </div>
-          <div className="flex gap-1">
-            {timeframes.map((tf) => (
-              <button
-                key={tf}
-                className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
-                style={{
-                  backgroundColor: timeframe === tf ? "rgba(84, 187, 247, 0.1)" : "transparent",
-                  color: timeframe === tf ? fey.skyBlue : fey.grey500,
-                }}
-                onClick={() => setTimeframe(tf)}
-              >
-                {tf}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            {/* Color mode toggle - only show for candlestick charts */}
+            {!isLineChart && (
+              <div className="flex gap-1">
+                <button
+                  className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
+                  style={{
+                    backgroundColor:
+                      activeColorMode === "sentiment" ? "rgba(77, 190, 149, 0.1)" : "transparent",
+                    color: activeColorMode === "sentiment" ? fey.teal : fey.grey500,
+                  }}
+                  onClick={() => setActiveColorMode("sentiment")}
+                  title="Color by buy/sell pressure"
+                >
+                  Sentiment
+                </button>
+                <button
+                  className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
+                  style={{
+                    backgroundColor:
+                      activeColorMode === "price" ? "rgba(84, 187, 247, 0.1)" : "transparent",
+                    color: activeColorMode === "price" ? fey.skyBlue : fey.grey500,
+                  }}
+                  onClick={() => setActiveColorMode("price")}
+                  title="Color by price direction"
+                >
+                  Price
+                </button>
+              </div>
+            )}
+            {/* Timeframe selector */}
+            <div className="flex gap-1">
+              {timeframes.map((tf) => (
+                <button
+                  key={tf}
+                  className="h-7 px-2.5 text-xs font-medium rounded transition-colors"
+                  style={{
+                    backgroundColor: timeframe === tf ? "rgba(84, 187, 247, 0.1)" : "transparent",
+                    color: timeframe === tf ? fey.skyBlue : fey.grey500,
+                  }}
+                  onClick={() => setTimeframe(tf)}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
-      <div className="px-0 pb-4">
-        <div ref={chartContainerRef} className="w-full" />
+      <div className="px-0 pb-4 flex-1 min-h-0">
+        <div ref={chartContainerRef} className="w-full h-full" />
       </div>
     </div>
   );

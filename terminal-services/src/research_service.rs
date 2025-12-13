@@ -7,9 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
-    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis, OpenAIClient,
-    ResearchJob, ResearchProgress, ResearchStatus, ResearchStorage, ResearchUpdate,
-    ResearchVersion, SubQuestion, SynthesizedReport,
+    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis, MarketContext,
+    OpenAIClient, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress, ResearchStatus,
+    ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion, SynthesizedReport,
 };
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
@@ -154,20 +154,22 @@ impl ResearchService {
     async fn run_research_pipeline(
         &self,
         job: &ResearchJob,
-        market: &terminal_core::PredictionMarket,
+        _market: &terminal_core::PredictionMarket,
     ) -> Result<SynthesizedReport, TerminalError> {
         let job_id = &job.id;
 
-        // Step 1: Decompose question
+        // Build rich market context with real-time data
+        let context = self
+            .build_market_context(job.platform, &job.market_id)
+            .await?;
+
+        // Step 1: Decompose question (with market context)
         self.update_status(job_id, ResearchStatus::Decomposing)
             .await;
-        self.update_progress(job_id, "Analyzing market question...", 1, 4, None)
+        self.update_progress(job_id, "Analyzing market question...", 1, 5, None)
             .await;
 
-        let questions = self
-            .openai_client
-            .decompose_question(&market.title, market.description.as_deref().unwrap_or(""))
-            .await?;
+        let questions = self.openai_client.decompose_question(&context).await?;
 
         info!(
             "Decomposed into {} sub-questions",
@@ -175,17 +177,24 @@ impl ResearchService {
         );
 
         // Step 2: Execute searches
+        // Note: Exa API has a 5 requests/second rate limit. We add delays between
+        // requests to stay well under this limit and avoid 429 errors.
         self.update_status(job_id, ResearchStatus::Searching).await;
         let total_searches = questions.sub_questions.len() as u32;
 
         let mut search_results: Vec<(SubQuestion, Vec<ExaSearchResult>)> = Vec::new();
 
         for (i, question) in questions.sub_questions.iter().enumerate() {
+            // Rate limit: Wait 250ms between Exa API calls (max 4 req/sec, well under 5 req/sec limit)
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+
             self.update_progress(
                 job_id,
                 &format!("Searching: {}", question.category),
                 2,
-                4,
+                5,
                 Some(&question.search_query),
             )
             .await;
@@ -211,24 +220,32 @@ impl ResearchService {
 
         // Step 3: Analyze (included in synthesis)
         self.update_status(job_id, ResearchStatus::Analyzing).await;
-        self.update_progress(job_id, "Analyzing search results...", 3, 4, None)
+        self.update_progress(job_id, "Analyzing search results...", 3, 5, None)
             .await;
 
-        // Step 4: Synthesize report
+        // Step 4: Synthesize report (with market context)
         self.update_status(job_id, ResearchStatus::Synthesizing)
             .await;
-        self.update_progress(job_id, "Generating research report...", 4, 4, None)
+        self.update_progress(job_id, "Generating research report...", 4, 5, None)
             .await;
 
-        let report = self
+        let mut report = self
             .openai_client
-            .synthesize_report(
-                &market.title,
-                market.description.as_deref().unwrap_or(""),
-                &questions,
-                &search_results,
-            )
+            .synthesize_report(&context, &questions, &search_results)
             .await?;
+
+        // Step 5: Generate trading analysis
+        self.update_progress(job_id, "Generating trading analysis...", 5, 5, None)
+            .await;
+
+        let trading_analysis = self
+            .openai_client
+            .generate_trading_analysis(&context, &report, &search_results)
+            .await
+            .ok(); // Don't fail the whole job if trading analysis fails
+
+        // Attach trading analysis to report
+        report.trading_analysis = trading_analysis;
 
         Ok(report)
     }
@@ -347,6 +364,107 @@ impl ResearchService {
     pub async fn list_jobs(&self) -> Vec<ResearchJob> {
         let jobs = self.jobs.read().await;
         jobs.values().cloned().collect()
+    }
+
+    /// Build rich market context for AI research
+    ///
+    /// Fetches market details, recent trades, and order book to provide
+    /// the AI with accurate real-time market data.
+    #[instrument(skip(self))]
+    async fn build_market_context(
+        &self,
+        platform: Platform,
+        market_id: &str,
+    ) -> Result<MarketContext, TerminalError> {
+        // Fetch market details
+        let market = self.market_service.get_market(platform, market_id).await?;
+
+        // Fetch recent trades (best effort - don't fail if unavailable)
+        let trades = self
+            .market_service
+            .get_trades(platform, market_id, Some(10), None)
+            .await
+            .ok();
+
+        // Fetch order book (best effort)
+        let order_book = self
+            .market_service
+            .get_orderbook(platform, market_id)
+            .await
+            .ok();
+
+        // Convert Decimal to f64 for the context
+        let current_price = market
+            .yes_price
+            .to_string()
+            .parse::<f64>()
+            .ok();
+
+        let total_volume = market
+            .volume
+            .to_string()
+            .parse::<f64>()
+            .ok();
+
+        // Build recent trades list
+        let recent_trades: Vec<RecentTrade> = trades
+            .map(|th| {
+                th.trades
+                    .into_iter()
+                    .take(10)
+                    .map(|t| RecentTrade {
+                        price: t.price.to_string().parse().unwrap_or(0.0),
+                        size: t.quantity.to_string().parse().unwrap_or(0.0),
+                        side: t
+                            .side
+                            .map(|s| match s {
+                                terminal_core::TradeSide::Buy => "buy".to_string(),
+                                terminal_core::TradeSide::Sell => "sell".to_string(),
+                            })
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        timestamp: t.timestamp.to_rfc3339(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Build order book summary
+        let order_book_summary = order_book.map(|ob| {
+            let best_bid = ob.yes_bids.first().map(|l| {
+                l.price.to_string().parse::<f64>().unwrap_or(0.0)
+            });
+            let best_ask = ob.yes_asks.first().map(|l| {
+                l.price.to_string().parse::<f64>().unwrap_or(0.0)
+            });
+            let spread = match (best_bid, best_ask) {
+                (Some(bid), Some(ask)) => Some(ask - bid),
+                _ => None,
+            };
+
+            // Calculate depth within 10% of best price
+            let bid_depth_10pct = calculate_depth(&ob.yes_bids, best_bid, 0.10);
+            let ask_depth_10pct = calculate_depth(&ob.yes_asks, best_ask, 0.10);
+
+            OrderBookSummary {
+                best_bid,
+                best_ask,
+                spread,
+                bid_depth_10pct,
+                ask_depth_10pct,
+            }
+        });
+
+        Ok(MarketContext {
+            title: market.title,
+            description: market.description,
+            current_price,
+            price_24h_ago: None, // TODO: Could fetch from price history if needed
+            volume_24h: None,    // Not directly available from PredictionMarket
+            total_volume,
+            num_traders: None, // Not directly available from PredictionMarket
+            recent_trades,
+            order_book_summary,
+        })
     }
 
     /// Get cached research by platform and market ID (without starting new research)
@@ -590,18 +708,27 @@ impl ResearchService {
             market_id
         );
 
-        // Execute searches
+        // Execute searches with rate limiting (Exa API: 5 req/sec limit)
         let mut search_results: Vec<(String, Vec<ExaSearchResult>)> = Vec::new();
-        for query in &search_queries {
+        for (i, query) in search_queries.iter().enumerate() {
+            // Rate limit: Wait 250ms between Exa API calls
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
             let results = self.exa_client.search_news(query, 7, 5).await?;
             search_results.push((query.clone(), results.results));
         }
 
         // Update the report with new findings
-        let updated_report = self
+        let mut updated_report = self
             .openai_client
             .update_report(existing_report, &search_results, question)
             .await?;
+
+        // Preserve trading_analysis from existing report (it's not regenerated during follow-up)
+        if updated_report.trading_analysis.is_none() {
+            updated_report.trading_analysis = existing_report.trading_analysis.clone();
+        }
 
         // Generate a concise summary of the changes for the chat
         let summary = self
@@ -632,4 +759,26 @@ impl Clone for ResearchService {
             update_tx: self.update_tx.clone(),
         }
     }
+}
+
+/// Calculate the total depth (in dollars) within a percentage of the best price
+fn calculate_depth(
+    levels: &[terminal_core::OrderBookLevel],
+    best_price: Option<f64>,
+    pct_range: f64,
+) -> f64 {
+    let Some(best) = best_price else {
+        return 0.0;
+    };
+
+    let threshold = best * pct_range;
+
+    levels
+        .iter()
+        .filter(|l| {
+            let price = l.price.to_string().parse::<f64>().unwrap_or(0.0);
+            (price - best).abs() <= threshold
+        })
+        .map(|l| l.quantity.to_string().parse::<f64>().unwrap_or(0.0))
+        .sum()
 }

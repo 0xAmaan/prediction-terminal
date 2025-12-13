@@ -307,7 +307,7 @@ export const OrderBookV2 = ({
 
   return (
     <div
-      className="rounded-lg overflow-hidden"
+      className="rounded-lg overflow-hidden h-full flex flex-col"
       style={{
         backgroundColor: fey.bg300,
         border: `1px solid ${fey.border}`,
@@ -315,7 +315,7 @@ export const OrderBookV2 = ({
     >
       {/* Header */}
       <div
-        className="p-4 flex items-center justify-between"
+        className="p-4 flex items-center justify-between shrink-0"
         style={{ borderBottom: `1px solid ${fey.border}` }}
       >
         <div className="flex items-center gap-2">
@@ -356,7 +356,7 @@ export const OrderBookV2 = ({
 
       {/* Imbalance Meter */}
       {showImbalance && (
-        <div className="px-4 pt-3">
+        <div className="px-4 pt-3 shrink-0">
           <ImbalanceMeter
             imbalanceRatio={metrics.imbalanceRatio}
             bidQuantity={metrics.totalBidQty}
@@ -367,7 +367,7 @@ export const OrderBookV2 = ({
       )}
 
       {/* Order Book Content */}
-      <div className="p-4 pt-3">
+      <div className="p-4 pt-3 flex-1 min-h-0 overflow-y-auto">
         {/* Column Headers */}
         <div
           className="grid grid-cols-3 gap-2 px-2 pb-2 text-[10px] uppercase tracking-wider font-medium"
@@ -430,7 +430,7 @@ export const OrderBookV2 = ({
       {/* Footer - Quick Stats */}
       {proMode && (
         <div
-          className="px-4 py-3 flex items-center justify-between text-[10px]"
+          className="px-4 py-3 flex items-center justify-between text-[10px] shrink-0"
           style={{ borderTop: `1px solid ${fey.border}`, backgroundColor: fey.bg400 }}
         >
           <div className="flex items-center gap-4">
