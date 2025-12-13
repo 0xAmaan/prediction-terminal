@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Loader2, User, Bot, AlertCircle, Search } from "lucide-react";
+import { Send, Loader2, User, Bot, AlertCircle, Search, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -25,6 +25,7 @@ export function ResearchChat({
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -37,23 +38,25 @@ export function ResearchChat({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // Load chat history
+  const loadChat = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const history = await api.getChatHistory(platform, marketId);
+      setMessages(history.messages);
+    } catch (e) {
+      console.error("Failed to load chat history:", e);
+      setLoadError("Failed to load chat history. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [platform, marketId]);
+
   // Load chat history on mount
   useEffect(() => {
-    async function loadChat() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const history = await api.getChatHistory(platform, marketId);
-        setMessages(history.messages);
-      } catch (e) {
-        console.error("Failed to load chat history:", e);
-        setError("Failed to load chat history");
-      } finally {
-        setIsLoading(false);
-      }
-    }
     loadChat();
-  }, [platform, marketId]);
+  }, [loadChat]);
 
   // Handle sending a message
   const handleSend = async () => {
@@ -106,6 +109,7 @@ export function ResearchChat({
     }
     if (e.key === "Escape") {
       setInput("");
+      inputRef.current?.blur();
     }
   };
 
@@ -130,6 +134,20 @@ export function ResearchChat({
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-8">
+            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-500" />
+            <p className="text-sm text-red-400 mb-3">{loadError}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={loadChat}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
           </div>
         ) : messages.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">

@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, ArrowLeft, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, XCircle, RefreshCw, AlertCircle } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { useResearch } from "@/hooks/use-research";
 import { ResearchDocument } from "./research-document";
@@ -121,59 +123,105 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
 
         {/* Document Panel */}
         <div className="w-3/5 p-6 overflow-y-auto">
-          {/* Loading State */}
+          {/* Loading State - Skeleton UI */}
           {showLoading && (
-            <div className="flex items-center justify-center py-20">
-              <div className="text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">Starting research...</p>
+            <div className="space-y-6">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Starting research...</span>
+              </div>
+              {/* Skeleton cards */}
+              <div className="space-y-4">
+                <div className="border border-border/30 rounded-lg p-4">
+                  <Skeleton className="h-4 w-32 mb-3" />
+                  <Skeleton className="h-3 w-full mb-2" />
+                  <Skeleton className="h-3 w-4/5 mb-2" />
+                  <Skeleton className="h-3 w-3/4" />
+                </div>
+                <div className="border border-border/30 rounded-lg p-4">
+                  <Skeleton className="h-4 w-24 mb-3" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                </div>
+                <div className="border border-border/30 rounded-lg p-4">
+                  <Skeleton className="h-4 w-40 mb-3" />
+                  <Skeleton className="h-3 w-full mb-2" />
+                  <Skeleton className="h-3 w-5/6 mb-2" />
+                  <Skeleton className="h-3 w-full mb-2" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
               </div>
             </div>
           )}
 
           {/* External Error */}
           {error && !job && (
-            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <p className="text-red-400">{error}</p>
+            <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="h-5 w-5 text-red-500" />
+                <span className="font-medium text-red-400">Failed to Start Research</span>
+              </div>
+              <p className="text-red-400 text-sm mb-4">{error}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => startResearch(platform, marketId)}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Try Again
+              </Button>
             </div>
           )}
 
           {/* Progress Section */}
           {isRunning && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="text-sm font-medium">Research in progress</span>
+            <div className="border border-primary/30 bg-primary/5 rounded-lg p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="text-sm font-medium text-primary">Research in progress</span>
               </div>
               <Progress value={progressPercent} className="h-2" />
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span>{job.progress.current_step || "Initializing..."}</span>
-                <span>
-                  {job.progress.completed_steps}/{job.progress.total_steps} steps
+              <div className="flex justify-between text-sm">
+                <span className="text-foreground font-medium">{job.progress.current_step || "Initializing..."}</span>
+                <span className="text-muted-foreground">
+                  Step {job.progress.completed_steps} of {job.progress.total_steps}
                 </span>
               </div>
               {job.progress.current_query && (
-                <p className="text-sm italic text-muted-foreground">
-                  Searching: &quot;{job.progress.current_query}&quot;
-                </p>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded px-3 py-2">
+                  <span className="text-xs uppercase tracking-wide">Searching:</span>
+                  <span className="italic">&quot;{job.progress.current_query}&quot;</span>
+                </div>
               )}
               {job.progress.searches_total > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Searches: {job.progress.searches_completed}/
-                  {job.progress.searches_total}
-                </p>
+                <div className="text-sm text-muted-foreground">
+                  Web searches: {job.progress.searches_completed} of {job.progress.searches_total} complete
+                </div>
               )}
             </div>
           )}
 
           {/* Error Display */}
           {isFailed && (
-            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-lg">
+              <div className="flex items-center gap-2 mb-3">
                 <XCircle className="h-5 w-5 text-red-500" />
                 <span className="font-medium text-red-400">Research Failed</span>
               </div>
-              <p className="text-red-400">{job?.error || "Research failed"}</p>
+              <p className="text-red-400 text-sm mb-4">{job?.error || "An error occurred during research"}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => startResearch(platform, marketId)}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry Research
+              </Button>
             </div>
           )}
 
