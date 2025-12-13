@@ -5,6 +5,7 @@
 
 pub mod aggregator;
 pub mod candle_service;
+pub mod discord_aggregator;
 pub mod market_cache;
 pub mod market_service;
 pub mod market_stats;
@@ -17,6 +18,7 @@ pub mod websocket;
 
 pub use aggregator::{AggregatorConfig, AggregatorHealth, ConnectionHealth, MarketDataAggregator};
 pub use candle_service::CandleService;
+pub use discord_aggregator::{DiscordAggregator, DiscordAggregatorError};
 pub use market_cache::{CacheStats, MarketCache, MarketCacheError, RefreshRequest};
 pub use market_service::{MarketService, OutcomePriceHistory};
 pub use market_stats::{MarketStats, MarketStatsService, Timeframe};

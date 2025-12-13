@@ -13,9 +13,9 @@ use std::sync::Arc;
 use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
-    AggregatorConfig, CandleService, MarketCache, MarketDataAggregator, MarketService,
-    MarketStatsService, ResearchService, TradeCollector, TradeCollectorConfig, TradeStorage,
-    WebSocketState,
+    AggregatorConfig, CandleService, DiscordAggregator, MarketCache, MarketDataAggregator,
+    MarketService, MarketStatsService, ResearchService, TradeCollector, TradeCollectorConfig,
+    TradeStorage, WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -174,6 +174,30 @@ async fn main() -> anyhow::Result<()> {
     let news_service = terminal_services::NewsService::new(exa_api_key.clone(), firecrawl_api_key, news_config);
     let news_service = Some(Arc::new(news_service));
     info!("News service initialized (RSS feeds + Google News)");
+
+    // Initialize Discord integration (optional)
+    // Requires DISCORD_BOT_TOKEN and DISCORD_SERVERS environment variables
+    match terminal_news::discord::DiscordConfig::from_env() {
+        Ok(Some(discord_config)) => {
+            info!(
+                "Discord integration enabled with {} server(s)",
+                discord_config.servers.len()
+            );
+            let discord_aggregator = Arc::new(DiscordAggregator::new(
+                discord_config,
+                ws_state.clone(),
+            ));
+            tokio::spawn(async move {
+                discord_aggregator.start().await;
+            });
+        }
+        Ok(None) => {
+            info!("Discord integration not configured (DISCORD_BOT_TOKEN not set)");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load Discord configuration: {}. Discord integration disabled.", e);
+        }
+    }
 
     // Initialize research service (optional - may fail if API keys not set)
     let research_service = match ResearchService::new(market_service_arc.clone()).await {

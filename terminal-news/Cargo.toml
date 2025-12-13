@@ -21,3 +21,14 @@ rss = { workspace = true }
 atom_syndication = { workspace = true }
 quick-xml = { workspace = true }
 urlencoding = "2.1"
+
+# Discord Integration (optional)
+twilight-gateway = { workspace = true, optional = true }
+twilight-http = { workspace = true, optional = true }
+twilight-model = { workspace = true, optional = true }
+twilight-cache-inmemory = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
+
+[features]
+default = []
+discord = ["twilight-gateway", "twilight-http", "twilight-model", "twilight-cache-inmemory", "dashmap"]

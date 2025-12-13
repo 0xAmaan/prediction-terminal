@@ -101,3 +101,10 @@ regex = { version = "1.11" }
 rss = { version = "2.0" }
 atom_syndication = { version = "0.12" }
 quick-xml = { version = "0.37" }
+
+# Discord Integration
+twilight-gateway = { version = "0.15" }
+twilight-http = { version = "0.15" }
+twilight-model = { version = "0.15" }
+twilight-cache-inmemory = { version = "0.15" }
+dashmap = { version = "6.0" }
