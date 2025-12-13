@@ -12,7 +12,7 @@
 //! - `research/{platform}/{market_id}/chat.json` - chat history (Phase 3)
 
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_sdk_s3::{operation::get_object::GetObjectError, primitives::ByteStream, Client};
 use chrono::DateTime;
 use terminal_core::{Platform, TerminalError};
 use tracing::{info, instrument, warn};
@@ -109,9 +109,15 @@ impl ResearchStorage {
                 Ok(Some(job))
             }
             Err(e) => {
+                // Check for NoSuchKey using proper SDK error matching
+                if let Some(GetObjectError::NoSuchKey(_)) = e.as_service_error() {
+                    info!("Cache miss for key: {}", key);
+                    return Ok(None);
+                }
+
+                // Fallback: also check error string for backwards compatibility
                 let error_str = e.to_string();
-                // NoSuchKey means not cached, not an error
-                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") {
+                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") || error_str.contains("404") {
                     info!("Cache miss for key: {}", key);
                     Ok(None)
                 } else {
@@ -274,8 +280,15 @@ impl ResearchStorage {
                 Ok(Some(job))
             }
             Err(e) => {
+                // Check for NoSuchKey using proper SDK error matching
+                if let Some(GetObjectError::NoSuchKey(_)) = e.as_service_error() {
+                    info!("Version not found: {}", full_key);
+                    return Ok(None);
+                }
+
+                // Fallback: also check error string for backwards compatibility
                 let error_str = e.to_string();
-                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") {
+                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") || error_str.contains("404") {
                     info!("Version not found: {}", full_key);
                     Ok(None)
                 } else {
@@ -335,9 +348,15 @@ impl ResearchStorage {
                 Ok(history)
             }
             Err(e) => {
+                // Check for NoSuchKey using proper SDK error matching
+                if let Some(GetObjectError::NoSuchKey(_)) = e.as_service_error() {
+                    info!("No chat history for {}/{}, returning empty", platform, market_id);
+                    return Ok(ChatHistory::new());
+                }
+
+                // Fallback: also check error string for backwards compatibility
                 let error_str = e.to_string();
-                // NoSuchKey means no chat exists yet, return empty
-                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") {
+                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") || error_str.contains("404") {
                     info!("No chat history for {}/{}, returning empty", platform, market_id);
                     Ok(ChatHistory::new())
                 } else {
