@@ -287,13 +287,30 @@ export interface ResearchProgress {
   searches_total: number;
 }
 
+/** Rich source information with metadata for inline citations */
+export interface SourceInfo {
+  /** 1-indexed ID for citation references in content */
+  id: number;
+  /** The source URL */
+  url: string;
+  /** Page title */
+  title: string | null;
+  /** Site/publisher name */
+  site_name: string | null;
+  /** Favicon URL */
+  favicon_url: string | null;
+}
+
 export interface SynthesizedReport {
   title: string;
   executive_summary: string;
   sections: ReportSection[];
   key_factors: KeyFactor[];
   confidence_assessment: string;
-  sources: string[];
+  /** Rich source info for inline citations */
+  sources: SourceInfo[];
+  /** Sources that aren't cited inline but are still relevant */
+  general_sources?: string[];
   trading_analysis?: TradingAnalysis;
 }
 
