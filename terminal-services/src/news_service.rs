@@ -439,20 +439,38 @@ impl NewsService {
                             return false;
                         }
 
+                        // Check for league/championship keywords (always relevant if present)
+                        let league_keywords = [
+                            "stanley cup", "super bowl", "world series", "nba finals",
+                            "world cup", "olympics", "championship", "playoffs"
+                        ];
+                        let has_league_keyword = league_keywords.iter().any(|kw| text.contains(kw));
+
                         // Count how many key terms match
                         let match_count = must_match_terms
                             .iter()
                             .filter(|term| text.contains(&term.to_lowercase()))
                             .count();
 
-                        // More lenient matching: require fewer matches if we already verified geography
-                        let required_matches = if must_match_terms.len() <= 2 {
-                            1 // For markets with few terms, just need 1
+                        // Determine if this is a multi-outcome market (many options like sports teams)
+                        let is_multi_outcome = outcome_titles.as_ref().map_or(false, |outcomes| outcomes.len() > 10);
+
+                        // Smart matching thresholds
+                        let required_matches = if has_league_keyword && is_multi_outcome {
+                            // Sports/championship articles are always relevant if they mention the event
+                            0
+                        } else if is_multi_outcome {
+                            // Multi-outcome markets (sports, elections): very lenient
+                            1
+                        } else if must_match_terms.len() <= 2 {
+                            // Few terms: just need 1
+                            1
                         } else if has_required_geography && must_match_terms.len() >= 3 {
-                            // If geography is correct, be more lenient (1-2 terms)
+                            // Geography verified: lenient
                             if must_match_terms.len() >= 5 { 2 } else { 1 }
                         } else {
-                            2 // Default: need 2 matches
+                            // Default: need 2 matches
+                            2
                         };
 
                         let is_relevant = match_count >= required_matches;
