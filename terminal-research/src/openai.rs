@@ -30,6 +30,9 @@ pub struct SubQuestion {
     pub question: String,
     pub category: String, // "news", "analysis", "historical", "expert_opinion"
     pub search_query: String,
+    /// Purpose of this question for trading analysis
+    #[serde(default)]
+    pub purpose: Option<String>, // "base_rate", "market_pricing", "catalyst", "contrarian", "resolution", "information_asymmetry"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +43,9 @@ pub struct SynthesizedReport {
     pub key_factors: Vec<KeyFactor>,
     pub confidence_assessment: String,
     pub sources: Vec<String>,
+    /// Trading-specific analysis (fair value, catalysts, resolution, contrarian view)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trading_analysis: Option<crate::types::TradingAnalysis>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,37 +83,56 @@ impl OpenAIClient {
         &self,
         context: &MarketContext,
     ) -> Result<DecomposedQuestions, TerminalError> {
-        let system_prompt = r#"You are a research analyst specializing in prediction markets.
-Your task is to decompose a market question into sub-questions that will help gather comprehensive information.
+        let system_prompt = r#"You are a quantitative prediction market analyst. Your job is to find EDGE—where the market price might be wrong.
 
-You will receive:
-1. Market title and description
-2. Current market data (price, volume, recent trades)
+You will receive a market question with current price and trading data. Decompose it into 5-6 sub-questions designed to find trading edge, NOT just general information.
 
-Use the market data to inform your sub-questions. For example:
-- If price recently moved significantly, ask "What caused the recent price movement?"
-- If volume is high, consider what's driving interest
-- Look at trade flow to understand market sentiment
+REQUIRED sub-question types (include at least one of each):
 
-For each sub-question, assign a category:
-- "news": Recent news and developments
-- "analysis": Expert analysis and opinions
-- "historical": Historical precedents and data
-- "expert_opinion": Domain expert perspectives
+1. BASE RATE: "What is the historical frequency of [this type of event]?"
+   - Category: "historical"
+   - Purpose: "base_rate"
+   - Example: "What percentage of incumbent presidents win re-election historically?"
+
+2. MARKET PRICING: "What assumptions is the market making at [current price]?"
+   - Category: "analysis"
+   - Purpose: "market_pricing"
+   - Helps understand what's priced in
+
+3. CATALYSTS: "What upcoming events could move this market significantly?"
+   - Category: "news"
+   - Purpose: "catalyst"
+   - Focus on dated, scheduled events
+
+4. CONTRARIAN: "What's the case against the current market consensus?"
+   - Category: "analysis"
+   - Purpose: "contrarian"
+   - If market is high, search for bear case; if low, search for bull case
+
+5. RESOLUTION: "How exactly does this market resolve and what are edge cases?"
+   - Category: "analysis"
+   - Purpose: "resolution"
+   - Focus on the specific resolution criteria
+
+6. INFORMATION ASYMMETRY: "What might informed traders know that isn't public?"
+   - Category: "news"
+   - Purpose: "information_asymmetry"
+   - Recent insider activity, smart money movements
 
 Respond with valid JSON in this exact format:
 {
-  "main_question": "The original question",
+  "main_question": "The original market question",
   "sub_questions": [
     {
-      "question": "A specific sub-question",
-      "category": "news",
-      "search_query": "Optimized search query for this question"
+      "question": "Specific sub-question",
+      "category": "news|analysis|historical|expert_opinion",
+      "search_query": "Optimized search query for this question",
+      "purpose": "base_rate|market_pricing|catalyst|contrarian|resolution|information_asymmetry"
     }
   ]
 }
 
-Generate 4-6 diverse sub-questions covering different angles."#;
+Generate exactly 6 sub-questions, one for each purpose."#;
 
         let user_prompt = format!(
             r#"## Market
@@ -733,6 +758,222 @@ Format your response as:
             .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
 
         Ok(content.trim().to_string())
+    }
+
+    /// Generate trading-focused analysis from research results
+    ///
+    /// Takes the market context, synthesized report, and search results to produce
+    /// actionable trading intelligence including fair value estimates, catalysts,
+    /// resolution analysis, and contrarian viewpoints.
+    #[instrument(skip(self, context, report, search_results))]
+    pub async fn generate_trading_analysis(
+        &self,
+        context: &MarketContext,
+        report: &SynthesizedReport,
+        search_results: &[(SubQuestion, Vec<crate::exa::ExaSearchResult>)],
+    ) -> Result<crate::types::TradingAnalysis, TerminalError> {
+        let system_prompt = r#"You are a quantitative trading analyst for prediction markets.
+Your job is to translate research into actionable trading intelligence.
+
+You will receive:
+1. Market context (current price, volume, order flow)
+2. A research report with findings
+3. Raw search results
+
+Your task is to produce a TradingAnalysis with:
+
+1. FAIR VALUE ESTIMATE
+   - Estimate a probability RANGE (not a point estimate)
+   - Be specific: "0.52 to 0.58" not "around 0.55"
+   - Consider base rates, current evidence, and uncertainty
+   - Compare to current market price to identify edge
+   - If genuinely uncertain, use a wide range (e.g., 0.40 to 0.60)
+
+2. CATALYSTS
+   - List specific upcoming events with dates when known
+   - Estimate impact level (high/medium/low)
+   - Indicate likely direction if event is favorable
+
+3. RESOLUTION ANALYSIS
+   - Summarize EXACTLY how this market resolves
+   - Flag ANY ambiguities in resolution criteria
+   - Note historical edge cases from similar markets
+
+4. CONTRARIAN ANALYSIS
+   - State what the market consensus appears to be
+   - Make the strongest case AGAINST that consensus
+   - List specific reasons the crowd might be wrong
+   - What would need to happen for the contrarian view to win
+
+Be intellectually honest. If there's no edge, say so. If uncertainty is high, reflect that in a wide fair value range.
+
+Respond with valid JSON matching this exact schema:
+{
+  "fair_value_low": 0.52,
+  "fair_value_high": 0.58,
+  "current_price": 0.55,
+  "implied_edge": 0.0,
+  "estimate_confidence": "high|medium|low",
+  "fair_value_reasoning": "Explanation of fair value estimate",
+  "catalysts": [
+    {
+      "date": "2025-01-15 or null if unknown",
+      "event": "Description of the event",
+      "expected_impact": "high|medium|low",
+      "direction_if_positive": "bullish|bearish or null"
+    }
+  ],
+  "resolution_analysis": {
+    "resolution_summary": "Plain English summary of how this market resolves",
+    "resolution_source": "The exact source used for resolution or null",
+    "ambiguity_flags": ["List of potential ambiguities"],
+    "historical_edge_cases": ["Historical edge cases from similar markets"]
+  },
+  "contrarian_case": {
+    "consensus_view": "What the market consensus appears to be",
+    "contrarian_case": "The case for why consensus might be wrong",
+    "mispricing_reasons": ["Specific reasons the crowd could be wrong"],
+    "contrarian_triggers": ["What would need to happen for contrarian view to win"]
+  }
+}"#;
+
+        // Build search findings summary
+        let search_findings = search_results
+            .iter()
+            .take(10)
+            .map(|(q, results)| {
+                let findings: String = results
+                    .iter()
+                    .take(2)
+                    .filter_map(|r| r.text.as_ref())
+                    .map(|t| {
+                        if t.len() > 200 {
+                            format!("{}...", &t[..200])
+                        } else {
+                            t.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                format!("Q: {}\nFindings: {}", q.question, findings)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Format key factors
+        let key_factors_str = report
+            .key_factors
+            .iter()
+            .map(|f| format!("- {} ({}, {} confidence)", f.factor, f.impact, f.confidence))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Format trade flow summary
+        let trade_flow = if context.recent_trades.is_empty() {
+            "No recent trades".to_string()
+        } else {
+            let buys: Vec<_> = context
+                .recent_trades
+                .iter()
+                .filter(|t| t.side == "buy")
+                .collect();
+            let sells: Vec<_> = context
+                .recent_trades
+                .iter()
+                .filter(|t| t.side == "sell")
+                .collect();
+            let buy_volume: f64 = buys.iter().map(|t| t.size).sum();
+            let sell_volume: f64 = sells.iter().map(|t| t.size).sum();
+            let flow_direction = if buy_volume > sell_volume * 1.5 {
+                "bullish flow"
+            } else if sell_volume > buy_volume * 1.5 {
+                "bearish flow"
+            } else {
+                "balanced"
+            };
+            format!(
+                "{} buys (${:.0}), {} sells (${:.0}) - {}",
+                buys.len(),
+                buy_volume,
+                sells.len(),
+                sell_volume,
+                flow_direction
+            )
+        };
+
+        let user_prompt = format!(
+            r#"## Market
+Title: {title}
+Current Price: {price}
+
+## Market Data
+- 24h Volume: {volume}
+- Recent Trade Flow: {trade_flow}
+- Order Book: {orderbook}
+
+## Research Report Summary
+{executive_summary}
+
+## Key Factors Found
+{key_factors}
+
+## Raw Search Findings
+{search_findings}
+
+Generate a TradingAnalysis for this market."#,
+            title = context.title,
+            price = format_price(context.current_price),
+            volume = format_volume(context.volume_24h),
+            trade_flow = trade_flow,
+            orderbook = format_order_book(&context.order_book_summary),
+            executive_summary = report.executive_summary,
+            key_factors = key_factors_str,
+            search_findings = search_findings,
+        );
+
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(&self.model)
+            .messages([
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(user_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+            ])
+            .temperature(0.4)
+            .max_tokens(2000u32)
+            .build()
+            .map_err(|e| TerminalError::internal(e.to_string()))?;
+
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| TerminalError::api(format!("OpenAI API error: {}", e)))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_ref())
+            .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
+
+        let json_str = extract_json(content)?;
+
+        let mut analysis: crate::types::TradingAnalysis = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse trading analysis: {}", e)))?;
+
+        // Calculate implied edge and set current price
+        let fair_value_midpoint = (analysis.fair_value_low + analysis.fair_value_high) / 2.0;
+        analysis.current_price = context.current_price.unwrap_or(0.0);
+        analysis.implied_edge = fair_value_midpoint - analysis.current_price;
+
+        Ok(analysis)
     }
 }
 

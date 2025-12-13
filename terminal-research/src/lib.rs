@@ -15,7 +15,8 @@ pub use openai::{
 };
 pub use storage::ResearchStorage;
 pub use types::{
-    ChatHistory, ChatMessage, ChatRole, DocumentEdit, DocumentEditOperation, FollowUpRequest,
-    FollowUpResponse, MarketContext, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress,
-    ResearchStatus, ResearchUpdate, ResearchVersion, ResearchVersionList,
+    Catalyst, CatalystImpact, ChatHistory, ChatMessage, ChatRole, ContrarianAnalysis, Direction,
+    DocumentEdit, DocumentEditOperation, EstimateConfidence, FollowUpRequest, FollowUpResponse,
+    MarketContext, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress, ResearchStatus,
+    ResearchUpdate, ResearchVersion, ResearchVersionList, ResolutionAnalysis, TradingAnalysis,
 };
