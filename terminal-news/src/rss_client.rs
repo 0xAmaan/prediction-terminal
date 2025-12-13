@@ -504,11 +504,27 @@ impl RssClient {
                 let title = item.title()?.to_string();
                 let url = item.link()?.to_string();
 
-                // Parse publication date
+                // Parse publication date - try multiple formats
                 let published_at = item
                     .pub_date()
-                    .and_then(|d| DateTime::parse_from_rfc2822(d).ok())
-                    .map(|d| d.with_timezone(&Utc))
+                    .and_then(|d| {
+                        // Try RFC 2822 format first (most common for RSS)
+                        DateTime::parse_from_rfc2822(d)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .or_else(|| {
+                                // Try RFC 3339 / ISO 8601 format (used by Atom feeds)
+                                DateTime::parse_from_rfc3339(d)
+                                    .ok()
+                                    .map(|dt| dt.with_timezone(&Utc))
+                            })
+                            .or_else(|| {
+                                // Try custom date format parsing
+                                chrono::NaiveDateTime::parse_from_str(d, "%Y-%m-%d %H:%M:%S")
+                                    .ok()
+                                    .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                            })
+                    })
                     .or_else(|| {
                         // Try extracting from URL
                         extract_date_from_url(&url)
