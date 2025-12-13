@@ -2,20 +2,55 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, Lock } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
+import { VersionHistory } from "./version-history";
 import type { SynthesizedReport, KeyFactor } from "@/lib/types";
 
 interface ResearchDocumentProps {
   report: SynthesizedReport;
   isStreaming?: boolean;
   streamingContent?: string | null;
+  platform?: string;
+  marketId?: string;
+  selectedVersion?: string | null;
+  onVersionChange?: (versionKey: string | null) => void;
+  isViewingHistorical?: boolean;
 }
 
-export function ResearchDocument({ report, isStreaming = false, streamingContent }: ResearchDocumentProps) {
+export function ResearchDocument({
+  report,
+  isStreaming = false,
+  streamingContent,
+  platform,
+  marketId,
+  selectedVersion,
+  onVersionChange,
+  isViewingHistorical = false,
+}: ResearchDocumentProps) {
+  const showVersionHistory = platform && marketId && onVersionChange;
+
   return (
     <div className={cn("space-y-6", isStreaming && "animate-pulse-subtle")}>
+      {/* Document Header with Version History */}
+      {showVersionHistory && (
+        <div className="flex items-center justify-between">
+          <VersionHistory
+            platform={platform}
+            marketId={marketId}
+            selectedVersion={selectedVersion ?? null}
+            onVersionChange={onVersionChange}
+            disabled={isStreaming}
+          />
+          {isViewingHistorical && (
+            <Badge variant="outline" className="flex items-center gap-1.5 text-amber-400 border-amber-500/30 bg-amber-500/10">
+              <Lock className="h-3 w-3" />
+              Read Only
+            </Badge>
+          )}
+        </div>
+      )}
       {/* Streaming indicator */}
       {isStreaming && (
         <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/30 rounded-lg">
