@@ -243,6 +243,11 @@ const MarketPageContent = ({
             </Link>
 
             <div className="flex items-center gap-3">
+              <ResearchButton
+                platform={market.platform}
+                marketId={market.id}
+                marketTitle={market.title}
+              />
               {activeTab === "trading" && (
                 <ProModeToggle proMode={proMode} onToggle={toggleProMode} size="sm" />
               )}
