@@ -217,9 +217,24 @@ impl NewsService {
         let all_items = self.get_rss_items().await.map_err(NewsServiceError::Rss)?;
         let markets = self.get_trending_markets().await;
 
+        // Filter for recent articles only (last 30 days)
+        let now = chrono::Utc::now();
+        let thirty_days_ago = now - chrono::Duration::days(30);
+        let total_count = all_items.len();
+        let recent_items: Vec<NewsItem> = all_items
+            .into_iter()
+            .filter(|item| item.published_at >= thirty_days_ago)
+            .collect();
+
+        info!(
+            "Filtered to {} recent articles (last 30 days) from {} total",
+            recent_items.len(),
+            total_count
+        );
+
         // If no markets, just return top news by recency
         let items: Vec<NewsItem> = if markets.is_empty() {
-            all_items.into_iter().take(params.limit).collect()
+            recent_items.into_iter().take(params.limit).collect()
         } else {
             // Extract key entities from trending markets
             let entities = extract_market_entities(&markets);
@@ -230,7 +245,7 @@ impl NewsService {
             );
 
             // STRICT FILTER: Only include articles that mention an entity IN THE TITLE
-            let mut matched_items: Vec<(NewsItem, f64, String)> = all_items
+            let mut matched_items: Vec<(NewsItem, f64, String)> = recent_items
                 .into_iter()
                 .filter_map(|item| {
                     let title_lower = item.title.to_lowercase();
@@ -654,10 +669,19 @@ impl NewsService {
             market_title, must_match_terms
         );
 
-        // Require at least one must-match term to be present
+        // Filter for recent articles (last 30 days) and matching terms
+        let now = chrono::Utc::now();
+        let thirty_days_ago = now - chrono::Duration::days(30);
+
         let mut matched: Vec<NewsItem> = all_items
             .into_iter()
             .filter(|item| {
+                // Filter out articles older than 30 days
+                if item.published_at < thirty_days_ago {
+                    return false;
+                }
+
+                // Require at least one must-match term to be present
                 if must_match_terms.is_empty() {
                     return true;
                 }
@@ -666,7 +690,6 @@ impl NewsService {
                     .iter()
                     .any(|term| text.contains(&term.to_lowercase()))
             })
-            .take(limit)
             .map(|mut item| {
                 item.related_market_ids.push(market_id.to_string());
                 item.search_query = Some(market_title.to_string());
@@ -674,7 +697,12 @@ impl NewsService {
             })
             .collect();
 
+        // Sort by recency (newest first)
         matched.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+
+        // Take only the requested number
+        matched.truncate(limit);
+
         Ok(matched)
     }
 
