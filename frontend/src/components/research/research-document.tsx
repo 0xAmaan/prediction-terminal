@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { VersionHistory } from "./version-history";
+import { TradingAnalysisPanel } from "./trading-analysis";
 import type { SynthesizedReport, KeyFactor } from "@/lib/types";
 
 // Custom components for ReactMarkdown to improve section rendering
@@ -171,6 +172,13 @@ export function ResearchDocument({
           </CardContent>
         </Card>
       </div>
+
+      {/* Trading Analysis */}
+      {report.trading_analysis && (
+        <div className={cn(contentFlash && "animate-content-flash")}>
+          <TradingAnalysisPanel analysis={report.trading_analysis} />
+        </div>
+      )}
 
       {/* Key Factors */}
       <Card className="border-border/30">
