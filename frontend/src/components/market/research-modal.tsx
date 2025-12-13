@@ -173,16 +173,16 @@ export function ResearchModal({
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2 text-sm">
-                  {job.report.sources.map((source, i) => (
-                    <li key={i} className="flex items-start gap-2">
+                  {job.report.sources.map((source) => (
+                    <li key={source.id} className="flex items-start gap-2">
                       <ExternalLink className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
                       <a
-                        href={source}
+                        href={source.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-primary hover:underline break-all"
                       >
-                        {source}
+                        {source.title || source.url}
                       </a>
                     </li>
                   ))}
