@@ -149,6 +149,7 @@ impl NewsAggregator {
             limit: self.config.articles_per_poll,
             time_range: Some("24h".to_string()),
             market_id: None,
+            skip_embeddings: false,
         };
 
         let feed = self

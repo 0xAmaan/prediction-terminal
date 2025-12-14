@@ -12,6 +12,7 @@ members = [
     "terminal-kalshi",
     "terminal-polymarket",
     "terminal-news",
+    "terminal-embedding",
     "terminal-services",
     "terminal-api",
     "terminal-research",
@@ -31,6 +32,7 @@ terminal-core = { path = "./terminal-core", version = "0.1.0" }
 terminal-kalshi = { path = "./terminal-kalshi", version = "0.1.0" }
 terminal-polymarket = { path = "./terminal-polymarket", version = "0.1.0" }
 terminal-news = { path = "./terminal-news", version = "0.1.0" }
+terminal-embedding = { path = "./terminal-embedding", version = "0.1.0" }
 terminal-services = { path = "./terminal-services", version = "0.1.0" }
 terminal-research = { path = "./terminal-research", version = "0.1.0" }
 terminal-trading = { path = "./terminal-trading", version = "0.1.0" }

@@ -173,9 +173,34 @@ async fn main() -> anyhow::Result<()> {
     let exa_api_key = std::env::var("EXA_API_KEY").ok();
     let firecrawl_api_key = std::env::var("FIRECRAWL_API_KEY").ok();
     let news_config = terminal_services::news_service::NewsServiceConfig::default();
-    let news_service = terminal_services::NewsService::new(exa_api_key.clone(), firecrawl_api_key, news_config);
-    let news_service = Some(Arc::new(news_service));
+    let mut news_service_instance = terminal_services::NewsService::new(exa_api_key.clone(), firecrawl_api_key, news_config);
+
+    // Set market service for news service
+    news_service_instance.set_market_service(market_service_arc.clone());
+
+    let news_service = Some(Arc::new(news_service_instance));
     info!("News service initialized (RSS feeds + Google News)");
+
+    // Auto-generate market embeddings on startup if needed
+    if let Some(news_svc) = &news_service {
+        let news_svc_for_embeddings = Arc::clone(news_svc);
+        tokio::spawn(async move {
+            // Small delay to let server start
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            info!("Checking if market embeddings need to be generated...");
+            match news_svc_for_embeddings.generate_market_embeddings().await {
+                Ok(count) => {
+                    info!("✅ Successfully generated {} market embeddings", count);
+                }
+                Err(e) => {
+                    // This is expected if OPENAI_API_KEY is not set
+                    info!("Market embeddings not generated: {}", e);
+                    info!("Set OPENAI_API_KEY to enable semantic news matching");
+                }
+            }
+        });
+    }
 
     // Initialize Discord integration (optional)
     // Requires DISCORD_BOT_TOKEN and DISCORD_SERVERS environment variables

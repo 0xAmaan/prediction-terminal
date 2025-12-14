@@ -51,18 +51,47 @@ export const NewsFeed = ({
   // Support both 'limit' (backward compat) and 'itemsPerPage'
   const perPage = itemsPerPage ?? limit ?? 10;
 
-  // REST API for initial data and periodic refresh (RSS polls every 5 seconds)
-  const { data, isLoading, error } = useQuery({
+  // PROGRESSIVE LOADING: Load first page immediately, rest in background
+  // This speeds up initial render since backend embedding generation is slow
+
+  // Query 1: Initial batch (just enough for page 1) - fast, priority
+  // Skip embeddings for speed - we'll get them in the background query
+  const {
+    data: initialData,
+    isLoading: initialLoading,
+    error: initialError,
+  } = useQuery({
     queryKey: market
-      ? ["market-news", market.platform, market.marketId]
-      : ["global-news"],
+      ? ["market-news-initial", market.platform, market.marketId]
+      : ["global-news-initial"],
     queryFn: () =>
       market
-        ? api.getMarketNews(market.platform, market.marketId, totalItems)
-        : api.getGlobalNews({ limit: totalItems }),
-    staleTime: 5 * 1000, // 5 seconds (match RSS polling)
-    refetchInterval: 5 * 1000, // 5 seconds (match RSS polling)
+        ? api.getMarketNews(market.platform, market.marketId, perPage, true)
+        : api.getGlobalNews({ limit: perPage, skip_embeddings: true }),
+    staleTime: 5 * 1000,
+    refetchInterval: 5 * 1000,
   });
+
+  // Query 2: Remaining items (for pagination) - loads in background
+  // Includes embeddings for semantic market matching
+  const { data: backgroundData } = useQuery({
+    queryKey: market
+      ? ["market-news-background", market.platform, market.marketId]
+      : ["global-news-background"],
+    queryFn: () =>
+      market
+        ? api.getMarketNews(market.platform, market.marketId, totalItems, false)
+        : api.getGlobalNews({ limit: totalItems, skip_embeddings: false }),
+    staleTime: 5 * 1000,
+    refetchInterval: 5 * 1000,
+    // Only fetch background data after initial data loads
+    enabled: !initialLoading && !!initialData,
+  });
+
+  // Use background data if available, otherwise fall back to initial data
+  const data = backgroundData ?? initialData;
+  const isLoading = initialLoading;
+  const error = initialError;
 
   // WebSocket for real-time updates
   const { news: liveNews } = useNewsStream({
@@ -74,10 +103,21 @@ export const NewsFeed = ({
   });
 
   // Merge REST data with live updates (live takes priority)
+  // Use Map to ensure complete deduplication by ID
   const restNews = data?.items ?? [];
-  const liveIds = new Set(liveNews.map((n) => n.id));
-  const uniqueRestNews = restNews.filter((n) => !liveIds.has(n.id));
-  const allNews = [...liveNews, ...uniqueRestNews];
+  const newsMap = new Map<string, NewsItem>();
+
+  // Add REST news first
+  restNews.forEach((item) => {
+    newsMap.set(item.id, item);
+  });
+
+  // Live news overwrites REST news (live takes priority)
+  liveNews.forEach((item) => {
+    newsMap.set(item.id, item);
+  });
+
+  const allNews = Array.from(newsMap.values());
 
   // Pagination logic
   const totalPages = Math.ceil(allNews.length / perPage);

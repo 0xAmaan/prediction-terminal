@@ -21,6 +21,9 @@ pub struct NewsQuery {
     pub limit: Option<usize>,
     /// Time range (e.g., "24h", "7d", "30d")
     pub time_range: Option<String>,
+    /// Skip expensive embedding generation for faster responses
+    #[serde(default)]
+    pub skip_embeddings: bool,
 }
 
 /// Query parameters for article content
@@ -63,6 +66,7 @@ async fn get_global_news(
         limit: params.limit.unwrap_or(20),
         time_range: params.time_range.or_else(|| Some("24h".to_string())),
         market_id: None,
+        skip_embeddings: params.skip_embeddings,
     };
 
     match news_service.search_global_news(&search_params).await {
@@ -117,6 +121,7 @@ async fn search_news(
         limit: params.limit.unwrap_or(20),
         time_range: params.time_range,
         market_id: None,
+        skip_embeddings: params.skip_embeddings,
     };
 
     match news_service.search_global_news(&search_params).await {
@@ -279,6 +284,7 @@ async fn get_market_news(
 
     let limit = params.limit.unwrap_or(10);
 
+    // Use keyword-only matching for market-specific news (faster, more precise)
     match news_service
         .get_market_news(&market.title, &id, limit, outcome_titles)
         .await
