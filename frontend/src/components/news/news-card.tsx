@@ -1,12 +1,21 @@
 "use client";
 
-import type { NewsItem } from "@/lib/types";
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import type { NewsItem, PredictionMarket } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { api } from "@/lib/api";
 
 interface NewsCardProps {
   item: NewsItem;
   compact?: boolean;
+}
+
+interface MarketInfo {
+  id: string;
+  platform: string;
+  title: string;
 }
 
 const formatTimeAgo = (dateStr: string): string => {
@@ -25,6 +34,37 @@ const formatTimeAgo = (dateStr: string): string => {
 };
 
 export const NewsCard = ({ item, compact = false }: NewsCardProps) => {
+  const [markets, setMarkets] = useState<MarketInfo[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!item.related_market_ids || item.related_market_ids.length === 0) return;
+
+    setLoading(true);
+
+    // Fetch market details for all related market IDs (Polymarket only)
+    const fetchMarkets = async () => {
+      const marketPromises = item.related_market_ids!.map(async (marketId) => {
+        try {
+          const market = await api.getMarket("polymarket", marketId);
+          return { id: marketId, platform: "polymarket", title: market.title };
+        } catch {
+          return null;
+        }
+      });
+
+      const results = await Promise.all(marketPromises);
+      const validMarkets = results.filter((m): m is MarketInfo => m !== null);
+      setMarkets(validMarkets);
+      setLoading(false);
+    };
+
+    fetchMarkets();
+  }, [item.related_market_ids]);
+
+  const displayedMarkets = expanded ? markets : markets.slice(0, 2);
+
   return (
     <Card className="border-border/30 hover:border-border/60 transition-all hover:shadow-lg bg-card/50 backdrop-blur-sm">
       <CardContent className={compact ? "p-3" : "p-4"}>
@@ -34,76 +74,82 @@ export const NewsCard = ({ item, compact = false }: NewsCardProps) => {
           rel="noopener noreferrer"
           className="block group"
         >
-          <div className="flex gap-4">
-            {/* Thumbnail - always show */}
-            <div className="shrink-0 w-32 h-32 rounded-lg overflow-hidden bg-gradient-to-br from-primary/10 to-primary/5">
-              {item.image_url ? (
+          <div className="space-y-3">
+            {/* Source and time */}
+            <div className="flex items-center gap-2">
+              {item.source.favicon_url && (
                 <img
-                  src={item.image_url}
+                  src={item.source.favicon_url}
                   alt=""
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  className="w-4 h-4 rounded"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                   }}
                 />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-muted-foreground/30">
-                  <svg
-                    className="w-12 h-12"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"
-                    />
-                  </svg>
-                </div>
               )}
+              <span className="text-sm font-medium text-muted-foreground">
+                {item.source.name}
+              </span>
+              <span className="text-xs text-muted-foreground/60">•</span>
+              <span className="text-xs text-muted-foreground/80">
+                {formatTimeAgo(item.published_at)}
+              </span>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 min-w-0">
-              {/* Source and time */}
-              <div className="flex items-center gap-2 mb-2">
-                {item.source.favicon_url && (
-                  <img
-                    src={item.source.favicon_url}
-                    alt=""
-                    className="w-4 h-4 rounded"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                )}
-                <span className="text-sm font-medium text-muted-foreground">
-                  {item.source.name}
-                </span>
-                <span className="text-xs text-muted-foreground/60">
-                  •
-                </span>
-                <span className="text-xs text-muted-foreground/80">
-                  {formatTimeAgo(item.published_at)}
-                </span>
-              </div>
+            {/* Title */}
+            <h3 className="font-semibold text-base leading-snug group-hover:text-primary transition-colors">
+              {item.title}
+            </h3>
 
-              {/* Title */}
-              <h3 className="font-semibold text-base leading-snug mb-2 line-clamp-2 group-hover:text-primary transition-colors">
-                {item.title}
-              </h3>
-
-              {/* Summary */}
-              {!compact && item.summary && (
-                <p className="text-sm text-muted-foreground/90 line-clamp-2 leading-relaxed">
-                  {item.summary}
-                </p>
-              )}
-            </div>
+            {/* Summary */}
+            {!compact && item.summary && (
+              <p className="text-sm text-muted-foreground/90 line-clamp-2 leading-relaxed">
+                {item.summary}
+              </p>
+            )}
           </div>
         </a>
+
+        {/* Related Markets - Outside the article link */}
+        {item.related_market_ids && item.related_market_ids.length > 0 && (
+          <div className="flex items-start gap-2 flex-wrap pt-3 mt-3 border-t border-border/20" onClick={(e) => e.stopPropagation()}>
+            <span className="text-xs text-muted-foreground/60 pt-1">
+              Related markets:
+            </span>
+            {loading ? (
+              <span className="text-xs text-muted-foreground/60">Loading...</span>
+            ) : (
+              <>
+                {displayedMarkets.map((market) => (
+                  <Link
+                    key={market.id}
+                    href={`/market/${market.platform}/${market.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Badge
+                      variant="outline"
+                      className="text-xs px-2 py-1 bg-primary/5 border-primary/20 text-primary hover:bg-primary/15 cursor-pointer transition-colors max-w-[300px] truncate"
+                    >
+                      {market.title}
+                    </Badge>
+                  </Link>
+                ))}
+                {markets.length > 2 && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setExpanded(!expanded);
+                    }}
+                    className="text-xs text-primary hover:text-primary/80 transition-colors"
+                  >
+                    {expanded ? "Show less" : `+${markets.length - 2} more`}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

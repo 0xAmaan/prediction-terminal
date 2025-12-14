@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
 use terminal_core::{NewsFeed, NewsItem, NewsSearchParams, PredictionMarket};
+use terminal_embedding::{EmbeddingClient, EmbeddingStore, NewsEmbedding, find_similar_markets};
 use terminal_news::{
     ArticleContent, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError, RssClient,
 };
@@ -78,6 +79,10 @@ pub struct NewsService {
     news_cache: RwLock<HashMap<String, CacheEntry<NewsFeed>>>,
     /// Cache for article content
     article_cache: RwLock<HashMap<String, CacheEntry<String>>>,
+    /// Embedding client for semantic matching (optional)
+    embedding_client: Option<Arc<EmbeddingClient>>,
+    /// Embedding store for market embeddings (optional)
+    embedding_store: Option<Arc<EmbeddingStore>>,
 }
 
 impl NewsService {
@@ -87,11 +92,29 @@ impl NewsService {
         firecrawl_api_key: Option<String>,
         config: NewsServiceConfig,
     ) -> Self {
+        // Initialize embedding client if OpenAI API key is available
+        let embedding_client = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .map(|key| {
+                info!("Initializing embedding client with OpenAI API");
+                Arc::new(EmbeddingClient::new(key))
+            });
+
+        // Initialize embedding store
+        let embedding_store = EmbeddingStore::new("data/embeddings.db")
+            .map(|store| {
+                info!("Initialized embedding store at data/embeddings.db");
+                Arc::new(store)
+            })
+            .ok();
+
         info!(
-            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {})",
+            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
             exa_api_key.is_some(),
-            firecrawl_api_key.is_some()
+            firecrawl_api_key.is_some(),
+            embedding_client.is_some() && embedding_store.is_some()
         );
+
         Self {
             rss: RssClient::new(),
             google_news: GoogleNewsClient::new(),
@@ -103,6 +126,8 @@ impl NewsService {
             market_cache: RwLock::new(None),
             news_cache: RwLock::new(HashMap::new()),
             article_cache: RwLock::new(HashMap::new()),
+            embedding_client,
+            embedding_store,
         }
     }
 
@@ -409,9 +434,12 @@ impl NewsService {
         let mut sorted_items = items;
         sorted_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
 
+        // SEMANTIC ENHANCEMENT: Add related market IDs to each article
+        let enhanced_items = self.add_semantic_market_tags(sorted_items).await;
+
         let feed = NewsFeed {
-            total_count: sorted_items.len(),
-            items: sorted_items,
+            total_count: enhanced_items.len(),
+            items: enhanced_items,
             next_cursor: None,
         };
 
@@ -428,6 +456,96 @@ impl NewsService {
         }
 
         Ok(feed)
+    }
+
+    /// Add semantic market tags to news items (populates related_market_ids)
+    ///
+    /// For each news article, finds all markets it's semantically similar to
+    /// and populates the related_market_ids field.
+    async fn add_semantic_market_tags(&self, items: Vec<NewsItem>) -> Vec<NewsItem> {
+        let (Some(client), Some(store)) = (&self.embedding_client, &self.embedding_store) else {
+            debug!("Semantic tagging not available, returning items unchanged");
+            return items;
+        };
+
+        // Load all market embeddings
+        let market_embeddings = match store.load_all_market_embeddings() {
+            Ok(embs) if !embs.is_empty() => embs,
+            _ => {
+                debug!("No market embeddings available for semantic tagging");
+                return items;
+            }
+        };
+
+        let mut tagged_items = Vec::new();
+        let total_items = items.len();
+
+        for item in items {
+            let mut tagged_item = item.clone();
+
+            // Generate/retrieve embedding for this article
+            let article_id = format!("{:x}", md5::compute(&item.url));
+
+            let news_embedding = if let Ok(Some(cached)) = store.get_news_embedding(&article_id) {
+                cached.embedding
+            } else {
+                match client.embed_news(&item.title, &item.summary).await {
+                    Ok(emb) => {
+                        // Cache it
+                        let news_emb = NewsEmbedding::new(
+                            article_id.clone(),
+                            format!("{} {}", item.title, item.summary),
+                            emb.clone(),
+                        );
+                        let _ = store.save_news_embedding(&news_emb);
+                        emb
+                    }
+                    Err(e) => {
+                        debug!("Failed to generate embedding for '{}': {}", item.title, e);
+                        tagged_items.push(tagged_item);
+                        continue;
+                    }
+                }
+            };
+
+            // Find similar markets
+            let matches = find_similar_markets(
+                &news_embedding,
+                &market_embeddings,
+                25,   // top 25 markets for better coverage
+                0.38, // 38% similarity threshold - balanced to get 40-50 relevant articles
+            );
+
+            if !matches.is_empty() {
+                // Populate related market IDs
+                tagged_item.related_market_ids = matches
+                    .iter()
+                    .map(|m| m.market_id.clone())
+                    .collect();
+
+                info!(
+                    "Tagged article '{}' with {} related markets (best score: {:.2})",
+                    item.title,
+                    tagged_item.related_market_ids.len(),
+                    matches[0].score
+                );
+            } else {
+                debug!("No matches for article: {}", item.title);
+            }
+
+            // Only include articles that match at least one market
+            if !tagged_item.related_market_ids.is_empty() {
+                tagged_items.push(tagged_item);
+            }
+        }
+
+        info!(
+            "Filtered to {} market-related articles (from {} total)",
+            tagged_items.len(),
+            total_items
+        );
+
+        tagged_items
     }
 
     /// Get contextual news for a specific market using Google News RSS
@@ -867,6 +985,262 @@ impl NewsService {
         }
 
         Ok(feed)
+    }
+
+    /// Get market news with semantic matching enhancement
+    ///
+    /// This method combines:
+    /// 1. Keyword-based matching (existing get_market_news)
+    /// 2. Semantic embedding matching (finds related articles by meaning)
+    ///
+    /// Requires OPENAI_API_KEY environment variable for semantic matching
+    #[instrument(skip(self, outcome_titles))]
+    pub async fn get_market_news_with_semantics(
+        &self,
+        market_title: &str,
+        market_id: &str,
+        limit: usize,
+        outcome_titles: Option<Vec<String>>,
+    ) -> Result<NewsFeed, NewsServiceError> {
+        // 1. Get keyword-based results (existing logic)
+        let keyword_feed = self
+            .get_market_news(market_title, market_id, limit, outcome_titles.clone())
+            .await?;
+
+        // 2. If semantic search is not enabled, return keyword results only
+        let (Some(client), Some(store)) = (&self.embedding_client, &self.embedding_store) else {
+            debug!("Semantic matching not available, returning keyword results only");
+            return Ok(keyword_feed);
+        };
+
+        info!("Enhancing with semantic matching for market: {}", market_id);
+
+        // 3. Load all market embeddings from database
+        let market_embeddings = match store.load_all_market_embeddings() {
+            Ok(embs) => embs,
+            Err(e) => {
+                debug!("Failed to load market embeddings: {}, falling back to keyword-only", e);
+                return Ok(keyword_feed);
+            }
+        };
+
+        if market_embeddings.is_empty() {
+            info!("No market embeddings found, skipping semantic matching");
+            return Ok(keyword_feed);
+        }
+
+        // 4. Get RSS items to search through
+        let rss_items = match self.get_rss_items().await {
+            Ok(items) => items,
+            Err(e) => {
+                debug!("Failed to get RSS items: {}, falling back to keyword-only", e);
+                return Ok(keyword_feed);
+            }
+        };
+
+        // 5. Find semantically similar articles
+        let mut semantic_items: Vec<NewsItem> = Vec::new();
+
+        for item in rss_items.iter().take(100) {
+            // Generate embedding for this article (check cache first)
+            let article_id = format!("{:x}", md5::compute(&item.url));
+
+            let news_embedding = if let Ok(Some(cached)) = store.get_news_embedding(&article_id) {
+                cached.embedding
+            } else {
+                // Generate new embedding
+                match client.embed_news(&item.title, &item.summary).await {
+                    Ok(emb) => {
+                        // Cache it
+                        let news_emb = NewsEmbedding::new(
+                            article_id.clone(),
+                            format!("{} {}", item.title, item.summary),
+                            emb.clone(),
+                        );
+                        let _ = store.save_news_embedding(&news_emb);
+                        emb
+                    }
+                    Err(e) => {
+                        debug!("Failed to generate embedding for '{}': {}", item.title, e);
+                        continue;
+                    }
+                }
+            };
+
+            // Find similar markets
+            let matches = find_similar_markets(
+                &news_embedding,
+                &market_embeddings,
+                10,   // top 10 markets
+                0.70, // 70% similarity threshold
+            );
+
+            if !matches.is_empty() {
+                // Collect all related market IDs
+                let related_markets: Vec<String> = matches
+                    .iter()
+                    .map(|m| m.market_id.clone())
+                    .collect();
+
+                // Check if our target market is in the matches
+                for similarity_match in &matches {
+                    if similarity_match.market_id == market_id {
+                        let mut item_copy = item.clone();
+                        item_copy.relevance_score = similarity_match.score;
+                        item_copy.search_query = Some(format!("semantic:{:.2}", similarity_match.score));
+                        item_copy.related_market_ids = related_markets.clone();
+
+                        info!(
+                            "Semantic match found: '{}' (score: {:.3}, {} related markets)",
+                            item.title,
+                            similarity_match.score,
+                            related_markets.len()
+                        );
+
+                        semantic_items.push(item_copy);
+                        break;
+                    }
+                }
+            }
+        }
+
+        info!(
+            "Found {} semantic matches for market '{}'",
+            semantic_items.len(),
+            market_id
+        );
+
+        // 6. Combine keyword and semantic results
+        let combined_feed = self.combine_news_results(keyword_feed, semantic_items, limit);
+
+        Ok(combined_feed)
+    }
+
+    /// Generate embeddings for all active markets (run this periodically)
+    ///
+    /// This should be called:
+    /// - On startup (if embeddings DB is empty)
+    /// - Daily via background job
+    /// - When new markets are added
+    pub async fn generate_market_embeddings(&self) -> Result<usize, NewsServiceError> {
+        let (Some(client), Some(store)) = (&self.embedding_client, &self.embedding_store) else {
+            return Err(NewsServiceError::NotConfigured(
+                "Embedding client/store not configured".to_string(),
+            ));
+        };
+
+        let Some(market_service) = &self.market_service else {
+            return Err(NewsServiceError::NotConfigured(
+                "Market service not set".to_string(),
+            ));
+        };
+
+        info!("Generating embeddings for all active markets...");
+
+        // Get all markets (limit to 500 most active)
+        let markets = market_service
+            .get_all_markets(Some(500))
+            .await
+            .map_err(|e| NewsServiceError::Rss(terminal_news::NewsError::RequestFailed(e.to_string())))?;
+
+        let mut generated = 0;
+
+        for market in markets {
+            // Extract outcome titles
+            let outcome_titles: Option<Vec<String>> = market.options_json.as_ref().and_then(|json| {
+                serde_json::from_str::<Vec<serde_json::Value>>(json)
+                    .ok()
+                    .map(|options| {
+                        options
+                            .iter()
+                            .filter_map(|opt| {
+                                opt.get("title")
+                                    .or_else(|| opt.get("name"))
+                                    .or_else(|| opt.get("outcome"))
+                                    .and_then(|n| n.as_str())
+                                    .map(String::from)
+                            })
+                            .collect()
+                    })
+            });
+
+            // Generate embedding
+            match client
+                .embed_market(
+                    &market.title,
+                    market.description.as_deref(),
+                    outcome_titles.as_ref(),
+                )
+                .await
+            {
+                Ok(embedding) => {
+                    let market_emb = terminal_embedding::MarketEmbedding::new(
+                        market.id.clone(),
+                        market.platform.to_string(),
+                        market.title.clone(),
+                        embedding,
+                    );
+
+                    if let Err(e) = store.save_market_embedding(&market_emb) {
+                        debug!("Failed to save embedding for {}: {}", market.id, e);
+                    } else {
+                        generated += 1;
+                        if generated % 10 == 0 {
+                            info!("Generated {} market embeddings...", generated);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to generate embedding for {}: {}", market.id, e);
+                }
+            }
+
+            // Small delay to avoid rate limiting
+            if generated % 50 == 0 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+
+        info!("Completed: Generated {} market embeddings", generated);
+        Ok(generated)
+    }
+
+    /// Combine keyword and semantic news results
+    fn combine_news_results(
+        &self,
+        keyword_feed: NewsFeed,
+        semantic_items: Vec<NewsItem>,
+        limit: usize,
+    ) -> NewsFeed {
+        let mut combined_map: HashMap<String, NewsItem> = HashMap::new();
+
+        // Add keyword results (higher priority)
+        for item in keyword_feed.items {
+            combined_map.insert(item.id.clone(), item);
+        }
+
+        // Add semantic results (only if not already present)
+        for item in semantic_items {
+            combined_map.entry(item.id.clone()).or_insert(item);
+        }
+
+        // Sort by relevance score, then by published date
+        let mut items: Vec<NewsItem> = combined_map.into_values().collect();
+        items.sort_by(|a, b| {
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.published_at.cmp(&a.published_at))
+        });
+
+        // Limit results
+        items.truncate(limit);
+
+        NewsFeed {
+            total_count: items.len(),
+            items,
+            next_cursor: None,
+        }
     }
 
     /// Try Exa.ai semantic search (optional fallback)

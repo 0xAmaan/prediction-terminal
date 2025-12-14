@@ -279,6 +279,7 @@ async fn get_market_news(
 
     let limit = params.limit.unwrap_or(10);
 
+    // Use keyword-only matching for market-specific news (faster, more precise)
     match news_service
         .get_market_news(&market.title, &id, limit, outcome_titles)
         .await

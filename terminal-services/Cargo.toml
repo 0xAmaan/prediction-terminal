@@ -10,6 +10,7 @@ terminal-core = { workspace = true }
 terminal-kalshi = { workspace = true }
 terminal-polymarket = { workspace = true }
 terminal-news = { workspace = true, features = ["discord"] }
+terminal-embedding = { workspace = true }
 terminal-research = { path = "../terminal-research" }
 
 # Async
@@ -41,6 +42,9 @@ parking_lot = "0.12"
 
 # Database
 rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Hashing
+md5 = "0.7"
 
 # Error handling
 thiserror = { workspace = true }

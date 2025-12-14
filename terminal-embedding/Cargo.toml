@@ -1,0 +1,39 @@
+[package]
+name = "terminal-embedding"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# OpenAI client
+async-openai = "0.25"
+
+# Vector operations
+ndarray = "0.16"
+
+# Database
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1.3"
+
+# Time
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Encoding
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+# Terminal core types
+terminal-core = { path = "../terminal-core" }
