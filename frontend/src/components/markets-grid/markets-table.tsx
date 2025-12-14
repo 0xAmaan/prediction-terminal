@@ -113,13 +113,14 @@ export const MarketsTable = ({
   const sortedMarkets = sortMarkets(markets);
 
   // Fetch market stats for the selected timeframe
+  // Use a higher limit to ensure we get stats for all markets that might be shown after filtering
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ["market-stats", timeframe],
     queryFn: () =>
       api.getMarketStats({
         timeframe,
         platform: "polymarket",
-        limit: 100,
+        limit: 200, // Increased from 100 to cover filtered markets
       }),
     staleTime: 30_000, // 30 seconds
     refetchInterval: 60_000, // Refetch every minute

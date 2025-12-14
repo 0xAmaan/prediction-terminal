@@ -10,6 +10,7 @@ pub mod market_cache;
 pub mod market_service;
 pub mod market_stats;
 pub mod news_aggregator;
+pub mod news_cache;
 pub mod news_service;
 pub mod research_service;
 pub mod trade_collector;
@@ -23,6 +24,7 @@ pub use market_cache::{CacheStats, MarketCache, MarketCacheError, RefreshRequest
 pub use market_service::{MarketService, OutcomePriceHistory};
 pub use market_stats::{MarketStats, MarketStatsService, Timeframe};
 pub use news_aggregator::NewsAggregator;
+pub use news_cache::{NewsCache, NewsCacheError};
 pub use news_service::{NewsService, NewsServiceError};
 pub use research_service::ResearchService;
 pub use trade_collector::{TradeCollector, TradeCollectorConfig};

@@ -439,7 +439,13 @@ impl NewsService {
         let enhanced_items = if params.skip_embeddings {
             sorted_items
         } else {
-            self.add_semantic_market_tags(sorted_items).await
+            let tagged_items = self.add_semantic_market_tags(sorted_items).await;
+
+            // Filter out articles with no related markets
+            // Only show news that's relevant to at least one market
+            tagged_items.into_iter()
+                .filter(|item| !item.related_market_ids.is_empty())
+                .collect()
         };
 
         let feed = NewsFeed {
@@ -522,9 +528,10 @@ impl NewsService {
             );
 
             if !matches.is_empty() {
-                // Populate related market IDs
+                // Populate related market IDs (limit to 5 most relevant)
                 tagged_item.related_market_ids = matches
                     .iter()
+                    .take(5)
                     .map(|m| m.market_id.clone())
                     .collect();
 
@@ -1081,9 +1088,10 @@ impl NewsService {
             );
 
             if !matches.is_empty() {
-                // Collect all related market IDs
+                // Collect related market IDs (limit to 5 most relevant)
                 let related_markets: Vec<String> = matches
                     .iter()
+                    .take(5)
                     .map(|m| m.market_id.clone())
                     .collect();
 
