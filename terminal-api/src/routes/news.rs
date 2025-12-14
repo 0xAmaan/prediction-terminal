@@ -43,6 +43,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// GET /api/news - Get latest global prediction market news from RSS feeds
+/// Returns cached data instantly, refreshes in background if needed
 async fn get_global_news(
     State(state): State<AppState>,
     Query(params): Query<NewsQuery>,
@@ -60,17 +61,36 @@ async fn get_global_news(
         }
     };
 
-    // RSS feeds don't take queries - just fetch latest items
+    let limit = params.limit.unwrap_or(20);
+
+    // Try to get cached news first (instant response)
+    if let Ok(cached_feed) = state.news_cache.get_cached_global_news(limit) {
+        if !cached_feed.items.is_empty() {
+            // Return cached data immediately
+            // Background refresh task will update cache if needed
+            return (StatusCode::OK, Json(cached_feed)).into_response();
+        }
+    }
+
+    // No cache available - fetch directly (only happens on first request)
     let search_params = terminal_core::NewsSearchParams {
         query: None,
-        limit: params.limit.unwrap_or(20),
+        limit,
         time_range: params.time_range.or_else(|| Some("24h".to_string())),
         market_id: None,
         skip_embeddings: params.skip_embeddings,
     };
 
     match news_service.search_global_news(&search_params).await {
-        Ok(feed) => (StatusCode::OK, Json(feed)).into_response(),
+        Ok(feed) => {
+            // Store in cache for next time
+            if let Err(e) = state.news_cache.store_news_items("global", &feed.items) {
+                error!("Failed to cache news items: {}", e);
+            } else {
+                state.news_cache.mark_refreshed().await;
+            }
+            (StatusCode::OK, Json(feed)).into_response()
+        }
         Err(e) => {
             error!("Failed to fetch global news: {}", e);
             (

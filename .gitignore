@@ -13,3 +13,5 @@ data/
 .env.local
 *.pem
 data/trades.db
+
+TASKS.md

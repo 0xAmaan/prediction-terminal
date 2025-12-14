@@ -14,7 +14,7 @@ use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
     AggregatorConfig, CandleService, DiscordAggregator, MarketCache, MarketDataAggregator,
-    MarketService, MarketStatsService, ResearchService, TradeCollector, TradeCollectorConfig,
+    MarketService, MarketStatsService, NewsCache, ResearchService, TradeCollector, TradeCollectorConfig,
     TradeStorage, WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -33,6 +33,7 @@ pub struct AppState {
     pub aggregator: Arc<MarketDataAggregator>,
     pub market_stats_service: Arc<MarketStatsService>,
     pub news_service: Option<Arc<terminal_services::NewsService>>,
+    pub news_cache: Arc<NewsCache>,
     /// Research service (optional - requires EXA_API_KEY and OPENAI_API_KEY)
     pub research_service: Option<Arc<ResearchService>>,
     /// Trading state (optional - requires TRADING_PRIVATE_KEY)
@@ -78,10 +79,17 @@ async fn main() -> anyhow::Result<()> {
     // Initialize market cache (in-memory + SQLite for instant lookups)
     let cache_db_path = std::env::var("CACHE_DB_PATH").unwrap_or_else(|_| "data/cache.db".to_string());
     info!("Initializing market cache at: {}", cache_db_path);
-    let market_cache = MarketCache::new(&cache_db_path, market_service.clone())
-        .await
-        .expect("Failed to initialize market cache");
-    let market_cache = Arc::new(market_cache);
+    let market_cache = match MarketCache::new(&cache_db_path, market_service.clone()).await {
+        Ok(cache) => Arc::new(cache),
+        Err(e) => {
+            tracing::error!("Failed to initialize market cache at '{}': {}", cache_db_path, e);
+            tracing::error!("Please ensure:");
+            tracing::error!("  1. The 'data' directory exists and is writable");
+            tracing::error!("  2. You have sufficient disk space");
+            tracing::error!("  3. SQLite is properly installed");
+            return Err(e.into());
+        }
+    };
 
     // Refresh markets in background on startup
     let cache_for_refresh = Arc::clone(&market_cache);
@@ -109,9 +117,17 @@ async fn main() -> anyhow::Result<()> {
     // Initialize trade storage (SQLite database)
     let db_path = std::env::var("TRADES_DB_PATH").unwrap_or_else(|_| "data/trades.db".to_string());
     info!("Initializing trade storage at: {}", db_path);
-    let trade_storage = Arc::new(
-        TradeStorage::new(&db_path).expect("Failed to initialize trade storage"),
-    );
+    let trade_storage = match TradeStorage::new(&db_path) {
+        Ok(storage) => Arc::new(storage),
+        Err(e) => {
+            tracing::error!("Failed to initialize trade storage at '{}': {}", db_path, e);
+            tracing::error!("Please ensure:");
+            tracing::error!("  1. The 'data' directory exists and is writable");
+            tracing::error!("  2. You have sufficient disk space");
+            tracing::error!("  3. SQLite is properly installed");
+            return Err(e.into());
+        }
+    };
 
     // Initialize candle service
     let candle_service = Arc::new(CandleService::new(trade_storage.clone()));
@@ -181,6 +197,18 @@ async fn main() -> anyhow::Result<()> {
     let news_service = Some(Arc::new(news_service_instance));
     info!("News service initialized (RSS feeds + Google News)");
 
+    // Initialize news cache for persistent storage
+    let news_db_path = std::env::var("NEWS_DB_PATH").unwrap_or_else(|_| "data/news.db".to_string());
+    info!("Initializing news cache at: {}", news_db_path);
+    let news_cache = match NewsCache::new(&news_db_path) {
+        Ok(cache) => Arc::new(cache),
+        Err(e) => {
+            tracing::error!("Failed to initialize news cache at '{}': {}", news_db_path, e);
+            tracing::error!("Please ensure the 'data' directory exists and is writable");
+            return Err(e.into());
+        }
+    };
+
     // Auto-generate market embeddings on startup if needed
     if let Some(news_svc) = &news_service {
         let news_svc_for_embeddings = Arc::clone(news_svc);
@@ -198,6 +226,56 @@ async fn main() -> anyhow::Result<()> {
                     info!("Market embeddings not generated: {}", e);
                     info!("Set OPENAI_API_KEY to enable semantic news matching");
                 }
+            }
+        });
+
+        // Background task to refresh news cache periodically
+        let news_svc_for_cache = Arc::clone(news_svc);
+        let news_cache_for_refresh = Arc::clone(&news_cache);
+        tokio::spawn(async move {
+            use terminal_core::NewsSearchParams;
+
+            // Initial delay before first refresh (much shorter - just let server start)
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            loop {
+                // Check if refresh is needed
+                if !news_cache_for_refresh.needs_refresh().await {
+                    // Wait 1 minute before checking again
+                    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                    continue;
+                }
+
+                info!("Refreshing news cache...");
+                let search_params = NewsSearchParams {
+                    query: None,
+                    limit: 100,
+                    time_range: Some("24h".to_string()),
+                    market_id: None,
+                    skip_embeddings: false, // Generate embeddings for related markets
+                };
+                match news_svc_for_cache.search_global_news(&search_params).await {
+                    Ok(feed) => {
+                        // Store in cache
+                        if let Err(e) = news_cache_for_refresh.store_news_items("global", &feed.items) {
+                            tracing::error!("Failed to store news in cache: {}", e);
+                        } else {
+                            news_cache_for_refresh.mark_refreshed().await;
+                            info!("✅ News cache refreshed with {} items (with embeddings)", feed.items.len());
+
+                            // Cleanup old items
+                            if let Err(e) = news_cache_for_refresh.cleanup_old_items() {
+                                tracing::warn!("Failed to cleanup old news items: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to refresh news cache: {}", e);
+                    }
+                }
+
+                // Wait 5 minutes before next refresh
+                tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
             }
         });
     }
@@ -275,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
         aggregator,
         market_stats_service,
         news_service,
+        news_cache,
         research_service,
         trading_state,
     };

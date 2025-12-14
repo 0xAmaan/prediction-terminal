@@ -6,6 +6,8 @@ import { AnimatedNumber } from "@/components/ui/animated-number";
 import { marketBarVariants } from "@/lib/motion";
 import { ChevronDown, Crown, Zap, Check } from "lucide-react";
 import type { MarketOption, Trade } from "@/lib/types";
+import { ConnectionIndicator } from "../connection-indicator";
+import type { ConnectionState } from "@/hooks/use-websocket";
 
 // Fey color tokens
 const fey = {
@@ -31,7 +33,7 @@ export interface MultiOutcomeMarketBarProps {
   onOutcomeSelect?: (outcome: MarketOption) => void;
   volume24h?: string | null;
   lastTrade?: Trade | null;
-  isConnected?: boolean;
+  connectionState?: ConnectionState;
   latency?: number | null;
 }
 
@@ -244,7 +246,7 @@ export const MultiOutcomeMarketBar = ({
   onOutcomeSelect,
   volume24h,
   lastTrade,
-  isConnected = true,
+  connectionState = "connected",
   latency,
 }: MultiOutcomeMarketBarProps) => {
   const leadingOutcome = getLeadingOutcome(options);
@@ -342,35 +344,11 @@ export const MultiOutcomeMarketBar = ({
             )}
 
             {/* Connection Status */}
-            <div className="flex items-center gap-1.5">
-              <div className="relative">
-                <div
-                  className="h-2 w-2 rounded-full"
-                  style={{
-                    backgroundColor: isConnected ? fey.teal : fey.red,
-                  }}
-                />
-                {isConnected && (
-                  <motion.div
-                    className="absolute inset-0 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: fey.teal }}
-                    animate={{ scale: [1, 1.5, 1], opacity: [1, 0, 1] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  />
-                )}
-              </div>
-              <span className="text-xs" style={{ color: fey.grey500 }}>
-                {isConnected ? "Live" : "Offline"}
-              </span>
-              {latency !== null && latency !== undefined && (
-                <span
-                  className="text-[10px] font-mono"
-                  style={{ color: fey.grey500 }}
-                >
-                  {latency}ms
-                </span>
-              )}
-            </div>
+            <ConnectionIndicator
+              state={connectionState}
+              latency={latency}
+              showLabel={true}
+            />
           </div>
         </div>
       </div>

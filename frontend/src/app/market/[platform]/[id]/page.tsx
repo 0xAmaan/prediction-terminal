@@ -194,8 +194,6 @@ const MarketPageContent = ({
   const currentYesPrice = livePrices?.yesPrice ?? market.yes_price;
   const currentNoPrice = livePrices?.noPrice ?? market.no_price;
 
-  const isConnected = connectionState === "connected";
-
   // Calculate spread for MarketBar
   const spread = useMemo(() => {
     if (!orderBook || orderBook.yes_bids.length === 0 || orderBook.yes_asks.length === 0) {
@@ -359,7 +357,7 @@ const MarketPageContent = ({
             onOutcomeSelect={handleOutcomeClick}
             volume24h={market.volume}
             lastTrade={trades[0] ?? null}
-            isConnected={isConnected}
+            connectionState={connectionState}
             latency={latency}
           />
         ) : (
@@ -369,7 +367,7 @@ const MarketPageContent = ({
             spread={spread}
             volume24h={market.volume}
             lastTrade={trades[0] ?? null}
-            isConnected={isConnected}
+            connectionState={connectionState}
             latency={latency}
           />
         )
@@ -529,11 +527,6 @@ const MarketPage = () => {
 
   if (error || !market) {
     return <ErrorState message={error?.message || "Market not found"} />;
-  }
-
-  // Update document title with market name
-  if (typeof document !== "undefined" && market.title) {
-    document.title = `${market.title} | Prediction Terminal`;
   }
 
   // Merge WebSocket data with REST data

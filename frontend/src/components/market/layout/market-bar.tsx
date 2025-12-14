@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { AnimatedNumber } from "@/components/ui/animated-number";
 import { marketBarVariants } from "@/lib/motion";
 import { TrendingUp, TrendingDown, Minus, Activity, Zap } from "lucide-react";
+import { ConnectionIndicator } from "../connection-indicator";
+import type { ConnectionState } from "@/hooks/use-websocket";
 
 // Fey color tokens
 const fey = {
@@ -38,7 +40,7 @@ interface MarketBarProps {
   volume24h?: string | null;
   lastTrade?: Trade | null;
   change24h?: number;
-  isConnected?: boolean;
+  connectionState?: ConnectionState;
   latency?: number | null;
 }
 
@@ -179,7 +181,7 @@ export const MarketBar = ({
   volume24h,
   lastTrade,
   change24h,
-  isConnected = true,
+  connectionState = "connected",
   latency,
 }: MarketBarProps) => {
   // Extract last trade info
@@ -318,32 +320,11 @@ export const MarketBar = ({
             )}
 
             {/* Connection Status */}
-            <div className="flex items-center gap-1.5">
-              <div className="relative">
-                <div
-                  className="h-2 w-2 rounded-full"
-                  style={{
-                    backgroundColor: isConnected ? fey.teal : fey.red,
-                  }}
-                />
-                {isConnected && (
-                  <motion.div
-                    className="absolute inset-0 h-2 w-2 rounded-full"
-                    style={{ backgroundColor: fey.teal }}
-                    animate={{ scale: [1, 1.5, 1], opacity: [1, 0, 1] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  />
-                )}
-              </div>
-              <span className="text-xs" style={{ color: fey.grey500 }}>
-                {isConnected ? "Live" : "Offline"}
-              </span>
-              {latency !== null && latency !== undefined && (
-                <span className="text-[10px] font-mono" style={{ color: fey.grey500 }}>
-                  {latency}ms
-                </span>
-              )}
-            </div>
+            <ConnectionIndicator
+              state={connectionState}
+              latency={latency}
+              showLabel={true}
+            />
           </div>
         </div>
       </div>
