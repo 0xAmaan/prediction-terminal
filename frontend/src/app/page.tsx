@@ -21,6 +21,7 @@ const fey = {
 const HomePage = () => {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"markets" | "news">("markets");
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
@@ -84,21 +85,66 @@ const HomePage = () => {
         </div>
       </header>
 
+      {/* Tab Navigation */}
+      <div
+        className="shrink-0"
+        style={{
+          backgroundColor: fey.bg100,
+          borderBottom: `1px solid ${fey.border}`,
+        }}
+      >
+        <div className="mx-auto px-8" style={{ maxWidth: "1600px" }}>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setActiveTab("markets")}
+              className="px-6 py-3 text-sm font-medium transition-colors relative"
+              style={{
+                color: activeTab === "markets" ? fey.grey100 : fey.grey500,
+              }}
+            >
+              Markets
+              {activeTab === "markets" && (
+                <div
+                  className="absolute bottom-0 left-0 right-0 h-0.5"
+                  style={{ backgroundColor: fey.skyBlue }}
+                />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab("news")}
+              className="px-6 py-3 text-sm font-medium transition-colors relative"
+              style={{
+                color: activeTab === "news" ? fey.grey100 : fey.grey500,
+              }}
+            >
+              News Feed
+              {activeTab === "news" && (
+                <div
+                  className="absolute bottom-0 left-0 right-0 h-0.5"
+                  style={{ backgroundColor: fey.skyBlue }}
+                />
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main content - scrollable */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-8 pt-8 pb-6 space-y-8" style={{ maxWidth: "1600px" }}>
-          <MarketsGrid search={debouncedSearch} />
-
-          {/* News Feed Section */}
-          <div>
-            <h2
-              className="text-lg font-semibold mb-4"
-              style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
-            >
-              Market News
-            </h2>
-            <NewsFeed />
-          </div>
+        <div className="mx-auto px-8 pt-8 pb-6" style={{ maxWidth: "1600px" }}>
+          {activeTab === "markets" ? (
+            <MarketsGrid search={debouncedSearch} />
+          ) : (
+            <div>
+              <h2
+                className="text-lg font-semibold mb-6"
+                style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+              >
+                Market News
+              </h2>
+              <NewsFeed />
+            </div>
+          )}
         </div>
       </main>
 

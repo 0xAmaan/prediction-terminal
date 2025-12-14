@@ -37,7 +37,7 @@ impl RssFeed {
 
 /// Curated list of RSS feeds for prediction markets
 pub fn get_curated_feeds() -> Vec<RssFeed> {
-    vec![
+    let mut feeds = vec![
         // Wire Services - Most reliable for breaking news
         RssFeed::new(
             "AP News",
@@ -76,6 +76,15 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
             "https://api.axios.com/feed/",
             "https://axios.com",
             &["politics", "tech", "business"],
+        ),
+        // Prediction Markets & Election Odds
+        // Note: ElectionBettingOdds RSS feed is currently unavailable (404)
+        // Replaced with RealClearPolitics which aggregates polls and betting odds
+        RssFeed::new(
+            "RealClearPolitics",
+            "https://www.realclearpolitics.com/rss/articles.xml",
+            "https://realclearpolitics.com",
+            &["elections", "politics", "polls"],
         ),
         // General News
         RssFeed::new(
@@ -121,7 +130,7 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
             "https://technologyreview.com",
             &["tech", "ai", "science"],
         ),
-        // Crypto specific
+        // Crypto specific - CryptoPanic (loaded from env) + major crypto news sites
         RssFeed::new(
             "CoinDesk",
             "https://www.coindesk.com/arc/outboundfeeds/rss/",
@@ -129,10 +138,10 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
             &["crypto", "bitcoin", "ethereum", "defi"],
         ),
         RssFeed::new(
-            "Cointelegraph",
-            "https://cointelegraph.com/rss",
-            "https://cointelegraph.com",
-            &["crypto", "bitcoin", "ethereum", "defi"],
+            "Decrypt",
+            "https://decrypt.co/feed",
+            "https://decrypt.co",
+            &["crypto", "blockchain", "web3", "nft"],
         ),
         // Sports (for sports betting markets)
         RssFeed::new(
@@ -166,18 +175,25 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
             "https://nasa.gov",
             &["space", "science"],
         ),
-        // Economics
+        // Economics & Regulation
         RssFeed::new(
             "Federal Reserve",
             "https://www.federalreserve.gov/feeds/press_all.xml",
             "https://federalreserve.gov",
             &["economics", "finance", "interest-rates", "fed"],
         ),
-        // International News - for non-US markets
         RssFeed::new(
-            "Reuters World",
-            "https://www.reutersagency.com/feed/?taxonomy=best-regions&post_type=best",
-            "https://reuters.com",
+            "SEC Press Releases",
+            "https://www.sec.gov/news/pressreleases.rss",
+            "https://sec.gov",
+            &["regulation", "securities", "finance", "crypto", "enforcement"],
+        ),
+        // International News - for non-US markets
+        // Using RSSHub proxy for AP World News (reliable aggregator)
+        RssFeed::new(
+            "AP World News",
+            "https://rsshub.app/apnews/topics/world",
+            "https://apnews.com",
             &["world", "international", "politics"],
         ),
         RssFeed::new(
@@ -198,7 +214,26 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
             "https://dw.com",
             &["world", "international", "europe", "politics"],
         ),
-    ]
+    ];
+
+    // Add CryptoPanic if API key is configured
+    // CryptoPanic aggregates tweets and news from major crypto accounts
+    if let Ok(api_key) = std::env::var("CRYPTOPANIC_API_KEY") {
+        if !api_key.is_empty() && api_key != "YOUR_API_KEY_HERE" {
+            feeds.push(RssFeed::new(
+                "CryptoPanic",
+                &format!(
+                    "https://cryptopanic.com/api/developer/v2/posts/?auth_token={}&public=true&kind=news&format=rss",
+                    api_key
+                ),
+                "https://cryptopanic.com",
+                &["crypto", "bitcoin", "ethereum", "defi", "solana"],
+            ));
+            tracing::info!("✓ CryptoPanic feed enabled with API key");
+        }
+    }
+
+    feeds
 }
 
 /// RSS feed client

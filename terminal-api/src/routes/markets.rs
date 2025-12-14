@@ -69,7 +69,8 @@ pub struct RelatedMarketsQuery {
 /// Query parameters for price history
 #[derive(Debug, Deserialize)]
 pub struct PriceHistoryQuery {
-    /// Candle interval (1m, 5m, 15m, 1h, 4h, 1d)
+    /// Candle interval (1m, 5m, 15m, 1h, 4h, 1d) - reserved for future use
+    #[allow(dead_code)]
     pub interval: Option<String>,
     /// Timeframe preset (1H, 24H, 7D, 30D, ALL)
     pub timeframe: Option<String>,

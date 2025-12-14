@@ -13,6 +13,10 @@ pub mod google_news;
 pub mod rss_client;
 pub mod types;
 
+// Discord integration (optional feature)
+#[cfg(feature = "discord")]
+pub mod discord;
+
 pub use error::NewsError;
 pub use exa::ExaClient;
 pub use firecrawl::FirecrawlClient;
