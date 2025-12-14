@@ -75,6 +75,9 @@ pub struct NewsSearchParams {
     /// Related market ID (for contextual news)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub market_id: Option<String>,
+    /// Skip expensive embedding generation for faster responses
+    #[serde(default)]
+    pub skip_embeddings: bool,
 }
 
 fn default_limit() -> usize {

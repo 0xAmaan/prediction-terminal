@@ -435,7 +435,12 @@ impl NewsService {
         sorted_items.sort_by(|a, b| b.published_at.cmp(&a.published_at));
 
         // SEMANTIC ENHANCEMENT: Add related market IDs to each article
-        let enhanced_items = self.add_semantic_market_tags(sorted_items).await;
+        // Skip if requested for faster initial loads
+        let enhanced_items = if params.skip_embeddings {
+            sorted_items
+        } else {
+            self.add_semantic_market_tags(sorted_items).await
+        };
 
         let feed = NewsFeed {
             total_count: enhanced_items.len(),
@@ -1264,6 +1269,7 @@ impl NewsService {
             limit: limit * 4,
             time_range: Some("30d".to_string()),
             market_id: Some(market_id.to_string()),
+            skip_embeddings: false,
         };
 
         let results = exa

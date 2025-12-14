@@ -301,6 +301,9 @@ export const api = {
     if (params.time_range) {
       searchParams.set("time_range", params.time_range);
     }
+    if (params.skip_embeddings) {
+      searchParams.set("skip_embeddings", "true");
+    }
 
     const url = `${API_BASE}/api/news${searchParams.toString() ? `?${searchParams}` : ""}`;
     const response = await fetch(url);
@@ -353,10 +356,14 @@ export const api = {
     platform: string,
     id: string,
     limit?: number,
+    skipEmbeddings?: boolean,
   ): Promise<NewsFeed> {
     const searchParams = new URLSearchParams();
     if (limit) {
       searchParams.set("limit", limit.toString());
+    }
+    if (skipEmbeddings) {
+      searchParams.set("skip_embeddings", "true");
     }
 
     const url = `${API_BASE}/api/markets/${platform}/${encodeURIComponent(id)}/news${searchParams.toString() ? `?${searchParams}` : ""}`;

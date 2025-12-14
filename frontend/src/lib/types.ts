@@ -249,6 +249,7 @@ export interface NewsSearchParams {
   query?: string;
   limit?: number;
   time_range?: string;
+  skip_embeddings?: boolean;
 }
 
 // ============================================================================
