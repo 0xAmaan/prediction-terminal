@@ -3,6 +3,7 @@
 //! Handles WebSocket upgrade and connection management.
 
 use axum::{
+    body::Bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
@@ -45,16 +46,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         while let Some(Ok(msg)) = receiver.next().await {
             let tungstenite_msg = match msg {
                 Message::Text(text) => {
-                    tokio_tungstenite::tungstenite::Message::Text(text.into())
+                    tokio_tungstenite::tungstenite::Message::Text(text.to_string().into())
                 }
                 Message::Binary(data) => {
-                    tokio_tungstenite::tungstenite::Message::Binary(data.into())
+                    tokio_tungstenite::tungstenite::Message::Binary(data.to_vec().into())
                 }
                 Message::Ping(data) => {
-                    tokio_tungstenite::tungstenite::Message::Ping(data.into())
+                    tokio_tungstenite::tungstenite::Message::Ping(data.to_vec().into())
                 }
                 Message::Pong(data) => {
-                    tokio_tungstenite::tungstenite::Message::Pong(data.into())
+                    tokio_tungstenite::tungstenite::Message::Pong(data.to_vec().into())
                 }
                 Message::Close(_) => {
                     break;
@@ -72,16 +73,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         while let Some(msg) = response_rx.recv().await {
             let axum_msg = match msg {
                 tokio_tungstenite::tungstenite::Message::Text(text) => {
-                    Message::Text(text.to_string())
+                    Message::Text(text.to_string().into())
                 }
                 tokio_tungstenite::tungstenite::Message::Binary(data) => {
-                    Message::Binary(data.to_vec())
+                    Message::Binary(Bytes::from(data.to_vec()))
                 }
                 tokio_tungstenite::tungstenite::Message::Ping(data) => {
-                    Message::Ping(data.to_vec())
+                    Message::Ping(Bytes::from(data.to_vec()))
                 }
                 tokio_tungstenite::tungstenite::Message::Pong(data) => {
-                    Message::Pong(data.to_vec())
+                    Message::Pong(Bytes::from(data.to_vec()))
                 }
                 tokio_tungstenite::tungstenite::Message::Close(_) => {
                     break;

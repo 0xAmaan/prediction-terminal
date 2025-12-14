@@ -137,16 +137,16 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/markets", get(list_markets))
         .route("/markets/stats", get(get_market_stats))
-        .route("/markets/:platform/:id", get(get_market))
-        .route("/markets/:platform/:id/orderbook", get(get_orderbook))
-        .route("/markets/:platform/:id/trades", get(get_trades))
-        .route("/markets/:platform/:id/history", get(get_price_history))
-        .route("/markets/:platform/:id/related", get(get_related_markets))
+        .route("/markets/{platform}/{id}", get(get_market))
+        .route("/markets/{platform}/{id}/orderbook", get(get_orderbook))
+        .route("/markets/{platform}/{id}/trades", get(get_trades))
+        .route("/markets/{platform}/{id}/history", get(get_price_history))
+        .route("/markets/{platform}/{id}/related", get(get_related_markets))
         // Multi-outcome / outcome-specific routes
-        .route("/markets/:platform/:id/prices-history", get(get_multi_outcome_prices))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/orderbook", get(get_outcome_orderbook))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/trades", get(get_outcome_trades))
-        .route("/markets/:platform/:id/outcomes/:outcome_id/prices-history", get(get_outcome_prices))
+        .route("/markets/{platform}/{id}/prices-history", get(get_multi_outcome_prices))
+        .route("/markets/{platform}/{id}/outcomes/{outcome_id}/orderbook", get(get_outcome_orderbook))
+        .route("/markets/{platform}/{id}/outcomes/{outcome_id}/trades", get(get_outcome_trades))
+        .route("/markets/{platform}/{id}/outcomes/{outcome_id}/prices-history", get(get_outcome_prices))
 }
 
 /// List markets with optional filtering

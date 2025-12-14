@@ -22,20 +22,20 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // Most specific routes first (with extra path segments after :market_id)
         .route(
-            "/research/:platform/:market_id/versions/:version_key",
+            "/research/{platform}/{market_id}/versions/{version_key}",
             get(get_version),
         )
         .route(
-            "/research/:platform/:market_id/versions",
+            "/research/{platform}/{market_id}/versions",
             get(list_versions),
         )
-        .route("/research/:platform/:market_id/chat", get(get_chat))
-        .route("/research/:platform/:market_id/chat", post(send_chat))
+        .route("/research/{platform}/{market_id}/chat", get(get_chat))
+        .route("/research/{platform}/{market_id}/chat", post(send_chat))
         // Less specific routes last
-        .route("/research/:platform/:market_id", post(start_research))
-        .route("/research/:platform/:market_id", get(get_research))
+        .route("/research/{platform}/{market_id}", post(start_research))
+        .route("/research/{platform}/{market_id}", get(get_research))
         // Static routes (no wildcards in the middle)
-        .route("/research/job/:job_id", get(get_job))
+        .route("/research/job/{job_id}", get(get_job))
         .route("/research/jobs", get(list_jobs))
 }
 
