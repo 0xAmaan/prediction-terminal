@@ -1,25 +1,19 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
 import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/types";
 
-// Existing components
-import { ConnectionIndicator } from "@/components/market/connection-indicator";
-import { RelatedMarkets } from "@/components/market/related-markets";
-import { MultiOutcomeChart } from "@/components/market/multi-outcome-chart";
-import { OutcomeAccordion } from "@/components/market/outcome-accordion";
-import { ResearchButton } from "@/components/market/research-button";
-
 // New view components
 import { TradingView } from "@/components/market/views/trading-view";
 import { OverviewView } from "@/components/market/views/overview-view";
 import { MultiOutcomeOverviewView } from "@/components/market/views/multi-outcome-overview-view";
 import { MultiOutcomeTradingView } from "@/components/market/views/multi-outcome-trading-view";
+import { ResearchView } from "@/components/market/views/research-view";
 import { MarketTabs, type MarketTab } from "@/components/market/market-tabs";
 import { MarketBar } from "@/components/market/layout/market-bar";
 import { MultiOutcomeMarketBar } from "@/components/market/layout/multi-outcome-market-bar";
@@ -126,6 +120,7 @@ interface MarketPageContentProps {
   latency: number | null;
   livePrices: { yesPrice: string; noPrice: string } | null;
   priceHistory: number[];
+  initialTab?: MarketTab;
 }
 
 const MarketPageContent = ({
@@ -140,9 +135,10 @@ const MarketPageContent = ({
   latency,
   livePrices,
   priceHistory,
+  initialTab = "overview",
 }: MarketPageContentProps) => {
-  // Tab state - Overview is default
-  const [activeTab, setActiveTab] = useState<MarketTab>("overview");
+  // Tab state - use initialTab from URL query param or default to overview
+  const [activeTab, setActiveTab] = useState<MarketTab>(initialTab);
 
   // Parse multi-outcome options early (needed for state initialization)
   const options = parseOptions(market.options_json ?? null);
@@ -234,13 +230,7 @@ const MarketPageContent = ({
               <ArrowLeft className="h-5 w-5" />
             </Link>
 
-            <div className="flex items-center gap-3">
-              <ResearchButton
-                platform={market.platform}
-                marketId={market.id}
-                marketTitle={market.title}
-              />
-              {market.url && (
+            {market.url && (
                 <a
                   href={market.url}
                   target="_blank"
@@ -250,8 +240,7 @@ const MarketPageContent = ({
                 >
                   <ExternalLink className="h-4 w-4" />
                 </a>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </motion.header>
@@ -330,18 +319,11 @@ const MarketPageContent = ({
             transition={{ duration: 0.2 }}
             className="flex-1 flex flex-col min-h-0"
           >
-            {/* Research tab content - reserved for future feature */}
-            <div className="flex-1 overflow-auto">
-              <div className="px-6 lg:px-8 py-8 pb-24">
-                <div className="max-w-4xl mx-auto">
-                  <div className="flex items-center justify-center h-64">
-                    <p style={{ color: fey.grey500 }}>
-                      Research features coming soon
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <ResearchView
+              platform={market.platform}
+              marketId={market.id}
+              market={market}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -452,8 +434,16 @@ const ErrorState = ({ message }: { message: string }) => (
 
 const MarketPage = () => {
   const params = useParams();
+  const searchParams = useSearchParams();
   const platform = params.platform as Platform;
   const id = params.id as string;
+
+  // Get initial tab from URL query param
+  const tabParam = searchParams.get("tab");
+  const initialTab: MarketTab =
+    tabParam === "research" ? "research" :
+    tabParam === "trading" ? "trading" :
+    "overview";
 
   // Fetch market data
   const {
@@ -563,6 +553,7 @@ const MarketPage = () => {
         wsPrices ? { yesPrice: wsPrices.yesPrice, noPrice: wsPrices.noPrice } : null
       }
       priceHistory={priceHistory}
+      initialTab={initialTab}
     />
   );
 };
