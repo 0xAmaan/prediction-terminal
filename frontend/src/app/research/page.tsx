@@ -47,7 +47,7 @@ export default function ResearchPage() {
               <ArrowLeft className="h-5 w-5" />
             </Link>
             <Link href="/" className="text-xl font-bold">
-              Prediction Terminal
+              Premonition
             </Link>
             <span className="text-muted-foreground">/</span>
             <h1 className="text-lg font-semibold">Research</h1>

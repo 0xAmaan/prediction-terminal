@@ -3,14 +3,11 @@
 import { useState } from "react";
 import { MarketsGrid } from "@/components/markets-grid";
 import { NewsFeed } from "@/components/news";
-import { Activity, Search } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Navbar } from "@/components/layout/navbar";
 
 // Fey color tokens
 const fey = {
   bg100: "#070709",
-  bg200: "#101116",
-  bg300: "#131419",
   grey100: "#EEF0F1",
   grey500: "#7D8B96",
   skyBlue: "#54BBF7",
@@ -30,60 +27,8 @@ const HomePage = () => {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" style={{ backgroundColor: fey.bg100 }}>
-      {/* Header - Fey style */}
-      <header
-        className="shrink-0 z-50"
-        style={{
-          backgroundColor: fey.bg100,
-          borderBottom: `1px solid ${fey.border}`,
-        }}
-      >
-        <div className="mx-auto px-8 py-4" style={{ maxWidth: "1600px" }}>
-          <div className="flex items-center justify-between gap-8">
-            {/* Left: Logo + Title */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div
-                className="p-2.5 rounded-lg"
-                style={{ backgroundColor: "rgba(84, 187, 247, 0.1)" }}
-              >
-                <Activity className="h-6 w-6" style={{ color: fey.skyBlue }} />
-              </div>
-              <h1
-                className="text-xl font-semibold"
-                style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
-              >
-                Prediction Terminal
-              </h1>
-            </div>
-
-            {/* Center: Search - Fey style */}
-            <div className="flex-1 max-w-2xl">
-              <div className="relative">
-                <Search
-                  className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5"
-                  style={{ color: fey.grey500 }}
-                />
-                <Input
-                  placeholder="Search markets..."
-                  value={search}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  className="search-input h-11 pl-12 pr-4 text-base rounded-lg focus-visible:ring-0 focus-visible:border-transparent"
-                  style={{
-                    backgroundColor: fey.bg200,
-                    border: `1px solid ${fey.border}`,
-                    color: fey.grey100,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Right: Account */}
-            <div className="shrink-0">
-              <button className="gradient-orb h-9 w-9 rounded-full" aria-label="Account" />
-            </div>
-          </div>
-        </div>
-      </header>
+      {/* Header */}
+      <Navbar search={search} onSearchChange={handleSearchChange} />
 
       {/* Tab Navigation */}
       <div

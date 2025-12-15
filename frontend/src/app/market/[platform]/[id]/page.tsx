@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, Info } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Platform, PredictionMarket, MarketOption, Trade } from "@/lib/types";
 
@@ -17,6 +18,7 @@ import { ResearchView } from "@/components/market/views/research-view";
 import { MarketTabs, type MarketTab } from "@/components/market/market-tabs";
 import { MarketBar } from "@/components/market/layout/market-bar";
 import { MultiOutcomeMarketBar } from "@/components/market/layout/multi-outcome-market-bar";
+import { Navbar } from "@/components/layout/navbar";
 
 // Hooks
 import { useMarketStream } from "@/hooks/use-market-stream";
@@ -24,8 +26,6 @@ import type { ConnectionState } from "@/hooks/use-websocket";
 
 // Animation variants
 import { staggerContainer, staggerItem } from "@/lib/motion";
-
-import { ArrowLeft, ExternalLink, Info } from "lucide-react";
 
 // Fey color tokens
 const fey = {
@@ -218,32 +218,8 @@ const MarketPageContent = ({
       animate="visible"
       variants={staggerContainer}
     >
-      {/* Minimal Header - Always show back button */}
-      <motion.header
-        className="sticky top-0 z-50"
-        style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
-        variants={staggerItem}
-      >
-        <div className="px-6 lg:px-8 py-3">
-          <div className="flex items-center justify-between">
-            <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
-              <ArrowLeft className="h-5 w-5" />
-            </Link>
-
-            {market.url && (
-                <a
-                  href={market.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
-                  style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-            )}
-          </div>
-        </div>
-      </motion.header>
+      {/* Header */}
+      <Navbar />
 
       {/* Tab Navigation */}
       <MarketTabs activeTab={activeTab} onTabChange={setActiveTab} />

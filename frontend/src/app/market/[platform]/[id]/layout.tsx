@@ -20,7 +20,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
     if (!response.ok) {
       return {
-        title: "Market | Prediction Terminal",
+        title: "Market | Premonition",
       };
     }
 
@@ -28,13 +28,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const marketTitle = data.market?.title || "Market";
 
     return {
-      title: `${marketTitle} | Prediction Terminal`,
+      title: `${marketTitle} | Premonition`,
       description: data.market?.description || `Prediction market: ${marketTitle}`,
     };
   } catch (error) {
     console.error("Failed to fetch market metadata:", error);
     return {
-      title: "Market | Prediction Terminal",
+      title: "Market | Premonition",
     };
   }
 }

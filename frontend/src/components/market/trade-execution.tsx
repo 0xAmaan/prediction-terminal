@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { toast } from "sonner";
 import type { Trade } from "@/lib/types";
 import { api } from "@/lib/api";
 import { useTradingBalance } from "@/hooks/use-trading-balance";
@@ -94,7 +95,10 @@ export const TradeExecution = ({
 
   // Validation
   const isValidAmount = parsedAmount > 0;
-  const isValidPrice = orderPrice >= 0.01 && orderPrice <= 0.99;
+  // For market orders, we trust the market price; for limit orders, enforce 1-99 cents range
+  const isValidPrice = orderType === "market"
+    ? currentPrice > 0 && currentPrice <= 1
+    : orderPrice >= 0.01 && orderPrice <= 0.99;
   const hasSufficientBalance = isBuy ? usdcBalance >= estimatedCost : true; // Selling doesn't require USDC
   const canTrade =
     tokenId &&
@@ -155,6 +159,8 @@ export const TradeExecution = ({
     setSubmitError(null);
     setSubmitSuccess(null);
 
+    const toastId = toast.loading("Submitting order...");
+
     try {
       const result = await api.submitOrder({
         tokenId,
@@ -165,17 +171,20 @@ export const TradeExecution = ({
       });
 
       if (result.success) {
-        setSubmitSuccess(`Order placed! ID: ${result.orderId?.slice(0, 8)}...`);
+        toast.success(`Order placed! ID: ${result.orderId?.slice(0, 8)}...`, { id: toastId });
         setAmount("");
         setLimitPrice("");
         onOrderSubmitted?.();
         // Refetch balance after successful order
         refetchBalance();
       } else {
+        toast.error(result.error || "Order failed", { id: toastId });
         setSubmitError(result.error || "Order failed");
       }
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Order submission failed");
+      const errorMsg = err instanceof Error ? err.message : "Order submission failed";
+      toast.error(errorMsg, { id: toastId });
+      setSubmitError(errorMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -190,18 +199,24 @@ export const TradeExecution = ({
     setApprovalError(null);
     setApprovalSuccess(null);
 
+    const toastId = toast.loading("Approving USDC...");
+
     try {
       const result = await api.approveUsdc();
 
       if (result.success) {
+        toast.success(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`, { id: toastId });
         setApprovalSuccess(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`);
         // Refetch balance to update allowance state
         setTimeout(() => refetchBalance(), 2000); // Wait for chain confirmation
       } else {
+        toast.error(result.error || "Approval failed", { id: toastId });
         setApprovalError(result.error || "Approval failed");
       }
     } catch (err) {
-      setApprovalError(err instanceof Error ? err.message : "Approval failed");
+      const errorMsg = err instanceof Error ? err.message : "Approval failed";
+      toast.error(errorMsg, { id: toastId });
+      setApprovalError(errorMsg);
     } finally {
       setIsApproving(false);
     }
@@ -492,7 +507,7 @@ export const TradeExecution = ({
       )}
 
       {/* Amount Input */}
-      <div className="px-4 pt-4 flex-1">
+      <div className="px-4 pt-4 flex-1 overflow-y-auto min-h-0">
         <div className="flex items-center justify-between mb-2">
           <label className="text-sm font-medium" style={{ color: fey.grey500 }}>
             SHARES
@@ -600,7 +615,7 @@ export const TradeExecution = ({
       </div>
 
       {/* Submit Button */}
-      <div className="p-4">
+      <div className="p-4 flex-shrink-0">
         <button
           onClick={handleSubmitClick}
           disabled={!canTrade}

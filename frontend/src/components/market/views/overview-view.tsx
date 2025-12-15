@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import Image from "next/image";
+import { ExternalLink } from "lucide-react";
 import type { PredictionMarket, Trade } from "@/lib/types";
 
 // Components
@@ -176,7 +177,7 @@ export const OverviewView = ({
                 {market.title}
               </h1>
 
-              {/* Platform badge and status */}
+              {/* Platform badge, status, and external link */}
               <div className="flex items-center gap-3">
                 <PlatformBadge platform={market.platform} />
                 <span
@@ -191,6 +192,17 @@ export const OverviewView = ({
                 >
                   {market.status === "open" ? "Open" : market.status}
                 </span>
+                {market.url && (
+                  <a
+                    href={market.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
+                    style={{ color: fey.grey500, border: `1px solid ${fey.border}` }}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                )}
               </div>
             </div>
           </motion.div>
