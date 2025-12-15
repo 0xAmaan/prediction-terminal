@@ -4,7 +4,7 @@
 //! direct eth_call to the ERC20 contract. Also provides USDC approval
 //! functionality for the CTF Exchange.
 
-use crate::types::{Result, TradingError, CTF_EXCHANGE_ADDRESS, USDC_ADDRESS};
+use crate::types::{Result, TradingError, CTF_EXCHANGE_ADDRESS, NEG_RISK_ADAPTER_ADDRESS, NEG_RISK_CTF_EXCHANGE_ADDRESS, USDC_ADDRESS};
 use crate::wallet::TradingWallet;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
@@ -192,6 +192,47 @@ pub async fn approve_usdc_for_ctf_exchange(wallet: &TradingWallet) -> Result<App
     let amount = U256::from(1_000_000_000_000_000u64);
 
     approve_usdc(wallet, spender, amount).await
+}
+
+/// Approve USDC spending for ALL required Polymarket contracts
+///
+/// This approves USDC for:
+/// 1. CTF Exchange (binary markets)
+/// 2. Neg Risk CTF Exchange (multi-outcome markets)
+/// 3. Neg Risk Adapter (required for multi-outcome trading)
+pub async fn approve_usdc_for_all_exchanges(wallet: &TradingWallet) -> Result<Vec<ApprovalResponse>> {
+    let amount = U256::from(1_000_000_000_000_000u64); // 1 billion USDC
+    let mut results = Vec::new();
+
+    let contracts = [
+        (CTF_EXCHANGE_ADDRESS, "CTF Exchange"),
+        (NEG_RISK_CTF_EXCHANGE_ADDRESS, "Neg Risk CTF Exchange"),
+        (NEG_RISK_ADAPTER_ADDRESS, "Neg Risk Adapter"),
+    ];
+
+    for (address, name) in contracts {
+        info!("Approving USDC for {}: {}", name, address);
+        let spender = Address::from_str(address)
+            .map_err(|e| TradingError::Api(format!("Invalid {} address: {}", name, e)))?;
+
+        match approve_usdc(wallet, spender, amount).await {
+            Ok(response) => {
+                info!("{} approval successful: {:?}", name, response.transaction_hash);
+                results.push(response);
+            }
+            Err(e) => {
+                // If already approved, we might get an error - continue anyway
+                info!("{} approval result: {}", name, e);
+                results.push(ApprovalResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(results)
 }
 
 /// Approve USDC spending for a specific spender using alloy Provider

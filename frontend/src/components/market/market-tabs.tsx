@@ -33,7 +33,6 @@ export const MarketTabs = ({
 
   return (
     <div
-      className="sticky top-[57px] z-40"
       style={{
         backgroundColor: fey.bg100,
         borderBottom: `1px solid ${fey.border}`,

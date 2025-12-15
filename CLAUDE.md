@@ -24,7 +24,7 @@ bun run lint             # ESLint
 cargo build                    # Build all crates
 cargo build -p terminal-api    # Build just the API server
 cargo run -p terminal-api      # Run the API server
-cargo watch -w terminal-api -w terminal-core -w terminal-services -w terminal-kalshi -w terminal-polymarket -x 'run -p terminal-api'  # Dev with hot reload
+cargo watch -w terminal-api -w terminal-core -w terminal-services -w terminal-kalshi -w terminal-polymarket -w terminal-trading -x 'run -p terminal-api'  # Dev with hot reload
 
 # Testing
 cargo test                     # Run all tests
@@ -35,11 +35,31 @@ cargo fmt                      # Format all code (uses rustfmt.toml: edition 202
 ```
 
 ### Environment
-- Backend expects `.env.local` at repository root with API credentials
-- `TRADES_DB_PATH` defaults to `data/trades.db` (SQLite)
-- `SERVER_PORT` defaults to 3001
-- Frontend uses `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:3001`)
-- `KALSHI_PRIVATE_KEY_FILE` - path to RSA private key PEM file for Kalshi auth
+Backend expects `.env.local` at repository root:
+```bash
+# Server
+TRADES_DB_PATH=data/trades.db    # SQLite database path (default)
+SERVER_PORT=3001                  # API server port (default)
+
+# Polymarket (required for trading)
+POLY_API_KEY=your_key
+POLY_SECRET=your_secret
+POLY_PASSPHRASE=your_passphrase
+POLY_WALLET_PRIVATE_KEY=0x...    # Ethereum private key for signing
+
+# Kalshi (optional)
+KALSHI_API_KEY=your_key
+KALSHI_PRIVATE_KEY_FILE=kalshi_private_key.pem
+
+# Research features
+OPENAI_API_KEY=sk-...            # For deep research agent
+EXA_API_KEY=...                  # For web search
+AWS_ACCESS_KEY_ID=...            # For S3 report storage
+AWS_SECRET_ACCESS_KEY=...
+
+# Frontend
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
 
 ## Architecture
 
@@ -59,6 +79,15 @@ The workspace contains two ecosystems:
 - `terminal-kalshi/` - Kalshi API client (REST + WebSocket, RSA-PSS auth)
 - `terminal-polymarket/` - Polymarket API client (REST + WebSocket, HMAC auth)
 - `terminal-news/` - News aggregation (RSS feeds, Google News, Exa.ai, Firecrawl)
+- `terminal-embedding/` - Vector embeddings for market similarity (OpenAI embeddings, SQLite storage)
+- `terminal-research/` - Deep research agent for market analysis (OpenAI GPT-4, Exa search, S3 storage)
+- `terminal-trading/` - Polymarket trading execution:
+  - `ClobClient` - CLOB API client with HMAC auth
+  - `wallet.rs` - Ethereum wallet management with Alloy
+  - `eip712.rs` - EIP-712 typed data signing for orders
+  - `order.rs` - Order creation and management
+  - `positions.rs` - Position tracking
+  - `balance.rs` - Balance queries
 - `terminal-services/` - Business logic layer:
   - `MarketService` - Unified market data access
   - `MarketDataAggregator` - WebSocket connections to exchanges, broadcasts to frontend
@@ -106,12 +135,27 @@ frontend/src/
 
 ### Key API Endpoints
 
+**Markets**
 - `GET /api/markets` - List markets (filters: platform, search, limit)
 - `GET /api/markets/:platform/:id` - Single market
 - `GET /api/markets/:platform/:id/orderbook` - Order book
 - `GET /api/markets/:platform/:id/trades` - Recent trades
 - `GET /api/markets/:platform/:id/history` - Price candles
-- `GET /api/markets/:platform/:id/news` - Market-specific news (Google News + filtering)
+- `GET /api/markets/:platform/:id/news` - Market-specific news
+
+**Trading (Polymarket)**
+- `GET /api/trading/balance` - Get USDC balance
+- `GET /api/trading/positions` - Get open positions
+- `POST /api/trading/order` - Place a limit order
+- `DELETE /api/trading/order/:id` - Cancel an order
+- `GET /api/trading/orders` - List open orders
+
+**Research**
+- `POST /api/research/start` - Start deep research on a market
+- `GET /api/research/:id/status` - Check research status
+- `GET /api/research/:id/report` - Get completed report
+
+**News & WebSocket**
 - `GET /api/news` - Global news feed (RSS with round-robin diversification)
 - `WS /ws` - Real-time subscriptions (orderbook, trades, market updates, news)
 
@@ -129,6 +173,20 @@ Server broadcasts updates:
 {"type": "OrderbookUpdate", "update_type": "Snapshot", "orderbook": {...}}
 {"type": "TradeUpdate", "trade": {...}}
 ```
+
+### Trading Architecture (Polymarket)
+
+The trading system uses Polymarket's CLOB (Central Limit Order Book) API:
+
+1. **Authentication**: HMAC-SHA256 signing with API key/secret/passphrase
+2. **Order Signing**: EIP-712 typed data signatures using Ethereum wallet (Alloy library)
+3. **Order Flow**:
+   - Frontend → `terminal-api/routes/trading.rs` → `terminal-trading/ClobClient`
+   - Orders are signed locally, then submitted to CLOB API
+4. **Key Types** (in `terminal-trading/src/types.rs`):
+   - `OrderPayload` - Order parameters (token_id, price, size, side)
+   - `SignedOrder` - Order with EIP-712 signature
+   - `OpenOrder`, `Position`, `Balance` - Account state
 
 ## Current Focus
 

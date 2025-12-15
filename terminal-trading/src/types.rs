@@ -1,14 +1,79 @@
 //! Shared types for Polymarket trading
 
 use alloy::primitives::{Address, U256};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+// ============================================================================
+// Custom serialization for U256 fields (Polymarket requirement)
+// ============================================================================
+
+/// Serialize U256 as a decimal string (e.g., "1000000" not "0xf4240")
+/// Used for: tokenId, makerAmount, takerAmount, expiration, nonce, feeRateBps
+fn serialize_u256_as_decimal<S>(value: &U256, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
+/// Deserialize U256 from a decimal string
+fn deserialize_u256_from_decimal<'de, D>(deserializer: D) -> std::result::Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    U256::from_str_radix(&s, 10).map_err(serde::de::Error::custom)
+}
+
+/// Serialize salt as a plain u64 number (not a string)
+/// Polymarket expects salt as an integer, not a string
+fn serialize_salt_as_u64<S>(value: &U256, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // Convert U256 to u64 - salt should fit in u64
+    let salt_u64: u64 = value.try_into().map_err(|_| {
+        serde::ser::Error::custom("Salt value too large for u64")
+    })?;
+    serializer.serialize_u64(salt_u64)
+}
+
+/// Deserialize salt from a u64 number
+fn deserialize_salt_from_u64<'de, D>(deserializer: D) -> std::result::Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let n: u64 = Deserialize::deserialize(deserializer)?;
+    Ok(U256::from(n))
+}
+
+/// Serialize Address as checksum format (e.g., "0xeFa7Cd2E9BFa38F04Af95df90da90B194e4ed191")
+/// Polymarket expects checksum addresses, not lowercase
+fn serialize_address_checksum<S>(value: &Address, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_checksum(None))
+}
+
+/// Deserialize Address from any format (checksum or lowercase)
+fn deserialize_address<'de, D>(deserializer: D) -> std::result::Result<Address, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
 
 // ============================================================================
 // Contract Addresses (Polygon Mainnet)
 // ============================================================================
 
-/// Polymarket CTF Exchange contract address (Neg Risk CTF Exchange)
-pub const CTF_EXCHANGE_ADDRESS: &str = "0xC5d563A36AE78145C45a50134d48A1215220f80a";
+/// Polymarket CTF Exchange contract address (for simple binary markets)
+pub const CTF_EXCHANGE_ADDRESS: &str = "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e";
+
+/// Polymarket Neg Risk CTF Exchange address (for multi-outcome markets - most markets use this)
+pub const NEG_RISK_CTF_EXCHANGE_ADDRESS: &str = "0xC5d563A36AE78145C45a50134d48A1215220f80a";
 
 /// Polymarket Neg Risk Adapter address
 pub const NEG_RISK_ADAPTER_ADDRESS: &str = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296";
@@ -65,33 +130,79 @@ impl Side {
             Side::Sell => 1,
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Side::Buy => "BUY",
+            Side::Sell => "SELL",
+        }
+    }
+}
+
+/// Serialize side as BUY/SELL string for API
+fn serialize_side_as_string<S>(value: &u8, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let side_str = match value {
+        0 => "BUY",
+        1 => "SELL",
+        _ => return Err(serde::ser::Error::custom("Invalid side value")),
+    };
+    serializer.serialize_str(side_str)
+}
+
+/// Deserialize side from BUY/SELL string
+fn deserialize_side_from_string<'de, D>(deserializer: D) -> std::result::Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    match s.as_str() {
+        "BUY" => Ok(0),
+        "SELL" => Ok(1),
+        _ => Err(serde::de::Error::custom(format!("Invalid side: {}", s))),
+    }
 }
 
 /// Polymarket order structure for signing
+/// Salt is serialized as u64 integer, other numeric fields as decimal strings
+/// Addresses are serialized in checksum format (mixed case)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Order {
-    /// Random salt for uniqueness
+    /// Random salt for uniqueness - serialized as integer (not string)
+    #[serde(serialize_with = "serialize_salt_as_u64", deserialize_with = "deserialize_salt_from_u64")]
     pub salt: U256,
-    /// Maker address (our wallet)
+    /// Maker address (our wallet) - checksum format
+    #[serde(serialize_with = "serialize_address_checksum", deserialize_with = "deserialize_address")]
     pub maker: Address,
-    /// Signer address (same as maker for EOA)
+    /// Signer address (same as maker for EOA) - checksum format
+    #[serde(serialize_with = "serialize_address_checksum", deserialize_with = "deserialize_address")]
     pub signer: Address,
-    /// Taker address (zero for public orders)
+    /// Taker address (zero for public orders) - checksum format
+    #[serde(serialize_with = "serialize_address_checksum", deserialize_with = "deserialize_address")]
     pub taker: Address,
     /// Token ID (CLOB token ID for the outcome)
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub token_id: U256,
     /// Amount maker is offering (in smallest units)
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub maker_amount: U256,
     /// Amount maker wants to receive (in smallest units)
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub taker_amount: U256,
     /// Expiration timestamp (0 for no expiry)
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub expiration: U256,
     /// Nonce for order uniqueness
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub nonce: U256,
     /// Fee rate in basis points
+    #[serde(serialize_with = "serialize_u256_as_decimal", deserialize_with = "deserialize_u256_from_decimal")]
     pub fee_rate_bps: U256,
-    /// Order side (0 = Buy, 1 = Sell)
+    /// Order side (0 = Buy, 1 = Sell) - serialized as "BUY" or "SELL" string for API
+    #[serde(serialize_with = "serialize_side_as_string", deserialize_with = "deserialize_side_from_string")]
     pub side: u8,
     /// Signature type
     pub signature_type: u8,
@@ -245,3 +356,38 @@ pub enum TradingError {
 }
 
 pub type Result<T> = std::result::Result<T, TradingError>;
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+    use alloy::primitives::{Address, U256};
+    use std::str::FromStr;
+
+    #[test]
+    fn test_order_json_format() {
+        let order = Order {
+            salt: U256::from(12345u64),
+            maker: Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
+            signer: Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
+            taker: Address::ZERO,
+            token_id: U256::from(123456789u64),
+            maker_amount: U256::from(1000000u64),
+            taker_amount: U256::from(500000u64),
+            expiration: U256::ZERO,
+            nonce: U256::ZERO,
+            fee_rate_bps: U256::ZERO,
+            side: 0,
+            signature_type: 0,
+        };
+
+        let json = serde_json::to_string_pretty(&order).unwrap();
+        println!("Order JSON:\n{}", json);
+        
+        // Check that the JSON is what Polymarket expects
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        
+        // Polymarket expects string values for amounts, not numbers
+        println!("\nmakerAmount type: {:?}", parsed["makerAmount"]);
+        println!("tokenId type: {:?}", parsed["tokenId"]);
+    }
+}

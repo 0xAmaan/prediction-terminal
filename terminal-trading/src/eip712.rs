@@ -4,11 +4,12 @@
 //! 1. L1 Authentication (deriving/creating API keys)
 //! 2. Order signing
 
-use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::primitives::{Address, U256};
 use alloy::sol;
 use alloy::sol_types::{eip712_domain, SolStruct};
 
-use crate::types::{Order, Result, CTF_EXCHANGE_ADDRESS, NEG_RISK_ADAPTER_ADDRESS, POLYGON_CHAIN_ID};
+use crate::types::{Result, POLYGON_CHAIN_ID};
+use crate::types::{CTF_EXCHANGE_ADDRESS, NEG_RISK_CTF_EXCHANGE_ADDRESS};
 use crate::wallet::TradingWallet;
 
 // ============================================================================
@@ -18,55 +19,27 @@ use crate::wallet::TradingWallet;
 /// The fixed message for CLOB auth
 const CLOB_AUTH_MESSAGE: &str = "This message attests that I control the given wallet";
 
-/// EIP-712 type hash for ClobAuth
-/// keccak256("ClobAuth(address address,string timestamp,uint256 nonce,string message)")
-/// IMPORTANT: Field name must be "address" not "address_" to match Polymarket's expectation
-fn clob_auth_type_hash() -> B256 {
-    keccak256("ClobAuth(address address,string timestamp,uint256 nonce,string message)")
-}
-
-/// EIP-712 domain type hash (without verifyingContract)
-/// keccak256("EIP712Domain(string name,string version,uint256 chainId)")
-fn domain_type_hash() -> B256 {
-    keccak256("EIP712Domain(string name,string version,uint256 chainId)")
-}
-
 // ============================================================================
-// EIP-712 Domain for Polymarket CTF Exchange
+// EIP-712 Struct Definitions using sol! macro
 // ============================================================================
 
-/// Get the EIP-712 domain for CTF Exchange (used for order signing)
-pub fn ctf_exchange_domain() -> alloy::sol_types::Eip712Domain {
-    let exchange_address: Address = CTF_EXCHANGE_ADDRESS.parse().unwrap();
-
-    eip712_domain! {
-        name: "Polymarket CTF Exchange",
-        version: "1",
-        chain_id: POLYGON_CHAIN_ID,
-        verifying_contract: exchange_address,
+// Define ClobAuth using sol! macro
+// IMPORTANT: Alloy's sol! macro allows "address address;" syntax which produces
+// the correct EIP-712 type hash "ClobAuth(address address,string timestamp,uint256 nonce,string message)"
+sol! {
+    struct ClobAuth {
+        address address;
+        string timestamp;
+        uint256 nonce;
+        string message;
     }
 }
 
-/// Get the EIP-712 domain for Neg Risk CTF Exchange
-pub fn neg_risk_ctf_exchange_domain() -> alloy::sol_types::Eip712Domain {
-    let adapter_address: Address = NEG_RISK_ADAPTER_ADDRESS.parse().unwrap();
-
-    eip712_domain! {
-        name: "Polymarket CTF Exchange",
-        version: "1",
-        chain_id: POLYGON_CHAIN_ID,
-        verifying_contract: adapter_address,
-    }
-}
-
-// ============================================================================
-// Polymarket Order Type Definition (EIP-712)
-// ============================================================================
-
-// Define the Order struct for EIP-712 signing using alloy's sol! macro
+// Define Order struct for EIP-712 signing
+// IMPORTANT: The struct MUST be named "Order" (not "PolymarketOrder") for correct type hash
 sol! {
     #[derive(Debug)]
-    struct PolymarketOrder {
+    struct Order {
         uint256 salt;
         address maker;
         address signer;
@@ -82,70 +55,41 @@ sol! {
     }
 }
 
-// NOTE: ClobAuth is NOT defined in sol! macro because we need the field name
-// to be "address" not "address_" (which sol! forces due to keyword conflict).
-// We manually implement EIP-712 for ClobAuth below.
+// ============================================================================
+// EIP-712 Domains
+// ============================================================================
 
-/// Compute the EIP-712 domain separator for CLOB Auth
-/// Domain: { name: "ClobAuthDomain", version: "1", chainId: 137 }
-fn compute_clob_auth_domain_separator() -> B256 {
-    // EIP-712 domain separator = keccak256(abi.encode(
-    //     DOMAIN_TYPE_HASH,
-    //     keccak256("ClobAuthDomain"),
-    //     keccak256("1"),
-    //     chainId
-    // ))
-    let mut encoded = Vec::with_capacity(128);
-
-    // Domain type hash
-    encoded.extend_from_slice(domain_type_hash().as_slice());
-
-    // keccak256("ClobAuthDomain")
-    encoded.extend_from_slice(keccak256("ClobAuthDomain").as_slice());
-
-    // keccak256("1")
-    encoded.extend_from_slice(keccak256("1").as_slice());
-
-    // chainId (137) as uint256
-    encoded.extend_from_slice(U256::from(POLYGON_CHAIN_ID).to_be_bytes::<32>().as_slice());
-
-    keccak256(&encoded)
+/// Get the EIP-712 domain for ClobAuth (L1 authentication)
+fn clob_auth_domain() -> alloy::sol_types::Eip712Domain {
+    eip712_domain! {
+        name: "ClobAuthDomain",
+        version: "1",
+        chain_id: POLYGON_CHAIN_ID,
+    }
 }
 
-/// Compute the EIP-712 struct hash for ClobAuth
-/// This manually encodes with field name "address" (not "address_")
-fn compute_clob_auth_struct_hash(
-    address: Address,
-    timestamp: &str,
-    nonce: u64,
-    message: &str,
-) -> B256 {
-    // Struct hash = keccak256(abi.encode(
-    //     TYPE_HASH,
-    //     address,           // address is encoded directly (padded to 32 bytes)
-    //     keccak256(timestamp), // string is encoded as hash
-    //     nonce,             // uint256
-    //     keccak256(message) // string is encoded as hash
-    // ))
-    let mut encoded = Vec::with_capacity(160);
+/// Get the EIP-712 domain for CTF Exchange (binary markets)
+pub fn ctf_exchange_domain() -> alloy::sol_types::Eip712Domain {
+    let exchange_address: Address = CTF_EXCHANGE_ADDRESS.parse().unwrap();
 
-    // Type hash
-    encoded.extend_from_slice(clob_auth_type_hash().as_slice());
+    eip712_domain! {
+        name: "Polymarket CTF Exchange",
+        version: "1",
+        chain_id: POLYGON_CHAIN_ID,
+        verifying_contract: exchange_address,
+    }
+}
 
-    // Address (padded to 32 bytes - 12 zero bytes + 20 byte address)
-    encoded.extend_from_slice(&[0u8; 12]);
-    encoded.extend_from_slice(address.as_slice());
+/// Get the EIP-712 domain for Neg Risk CTF Exchange (multi-outcome markets)
+pub fn neg_risk_ctf_exchange_domain() -> alloy::sol_types::Eip712Domain {
+    let exchange_address: Address = NEG_RISK_CTF_EXCHANGE_ADDRESS.parse().unwrap();
 
-    // keccak256(timestamp)
-    encoded.extend_from_slice(keccak256(timestamp).as_slice());
-
-    // nonce as uint256
-    encoded.extend_from_slice(U256::from(nonce).to_be_bytes::<32>().as_slice());
-
-    // keccak256(message)
-    encoded.extend_from_slice(keccak256(message).as_slice());
-
-    keccak256(&encoded)
+    eip712_domain! {
+        name: "Polymarket CTF Exchange",
+        version: "1",
+        chain_id: POLYGON_CHAIN_ID,
+        verifying_contract: exchange_address,
+    }
 }
 
 
@@ -157,9 +101,9 @@ impl TradingWallet {
     /// Sign an order using EIP-712
     ///
     /// This produces the signature needed for submitting orders to the CLOB.
-    pub async fn sign_order(&self, order: &Order, is_neg_risk: bool) -> Result<String> {
-        // Convert our Order to the EIP-712 struct
-        let eip712_order = PolymarketOrder {
+    pub async fn sign_order(&self, order: &crate::types::Order, is_neg_risk: bool) -> Result<String> {
+        // Convert our types::Order to the EIP-712 Order struct
+        let eip712_order = Order {
             salt: order.salt,
             maker: order.maker,
             signer: order.signer,
@@ -184,8 +128,10 @@ impl TradingWallet {
         // Calculate the EIP-712 signing hash
         let signing_hash = eip712_order.eip712_signing_hash(&domain);
 
+        tracing::debug!("Order signing hash: 0x{}", hex::encode(signing_hash));
+
         // Sign the hash
-        let signature = self.sign_hash(signing_hash).await?;
+        let signature = self.sign_hash(signing_hash.into()).await?;
 
         // Return as hex string
         Ok(format!("0x{}", hex::encode(signature.as_bytes())))
@@ -194,45 +140,38 @@ impl TradingWallet {
     /// Sign an L1 authentication message using EIP-712 typed data
     ///
     /// Used for creating or deriving API keys.
-    /// This manually computes the EIP-712 hash to ensure the field name is "address"
-    /// (not "address_" which the sol! macro would force).
+    /// Uses the sol! macro approach for proper EIP-712 type hash.
     pub async fn sign_l1_auth(&self, timestamp: u64, nonce: u64) -> Result<String> {
         let address = self.address();
         let timestamp_str = timestamp.to_string();
 
-        tracing::info!("L1 auth EIP-712 signing (manual implementation):");
-        tracing::info!("  Address: {}", address);
-        tracing::info!("  Timestamp: {}", timestamp_str);
-        tracing::info!("  Nonce: {}", nonce);
-        tracing::info!("  Message: {}", CLOB_AUTH_MESSAGE);
+        tracing::debug!("L1 auth EIP-712 signing:");
+        tracing::debug!("  Address: {}", address);
+        tracing::debug!("  Timestamp: {}", timestamp_str);
+        tracing::debug!("  Nonce: {}", nonce);
+        tracing::debug!("  Message: {}", CLOB_AUTH_MESSAGE);
 
-        // 1. Compute domain separator
-        let domain_separator = compute_clob_auth_domain_separator();
-        tracing::info!("  Domain separator: 0x{}", hex::encode(domain_separator));
-
-        // 2. Compute struct hash with correct field name "address"
-        let struct_hash = compute_clob_auth_struct_hash(
+        // Create the ClobAuth struct for EIP-712 signing
+        let clob_auth = ClobAuth {
             address,
-            &timestamp_str,
-            nonce,
-            CLOB_AUTH_MESSAGE,
-        );
-        tracing::info!("  Struct hash: 0x{}", hex::encode(struct_hash));
+            timestamp: timestamp_str,
+            nonce: U256::from(nonce),
+            message: CLOB_AUTH_MESSAGE.to_string(),
+        };
 
-        // 3. Compute final EIP-712 hash: keccak256("\x19\x01" + domain_separator + struct_hash)
-        let mut data = Vec::with_capacity(66);
-        data.extend_from_slice(&[0x19, 0x01]);
-        data.extend_from_slice(domain_separator.as_slice());
-        data.extend_from_slice(struct_hash.as_slice());
-        let signing_hash = keccak256(&data);
+        // Get the domain
+        let domain = clob_auth_domain();
 
-        tracing::info!("  Final EIP-712 hash: 0x{}", hex::encode(signing_hash));
+        // Calculate the EIP-712 signing hash using Alloy's built-in functionality
+        let signing_hash = clob_auth.eip712_signing_hash(&domain);
 
-        // 4. Sign the hash
+        tracing::debug!("  EIP-712 signing hash: 0x{}", hex::encode(signing_hash));
+
+        // Sign the hash
         let signature = self.sign_hash(signing_hash.into()).await?;
 
         let sig_hex = format!("0x{}", hex::encode(signature.as_bytes()));
-        tracing::info!("  Signature: {}", sig_hex);
+        tracing::debug!("  Signature: {}", sig_hex);
 
         Ok(sig_hex)
     }
@@ -243,11 +182,18 @@ impl TradingWallet {
 // ============================================================================
 
 /// Generate a random salt for order uniqueness
+/// Salt is generated as a u64 value (not full 256-bit) per Polymarket convention
 pub fn generate_salt() -> U256 {
     use rand::Rng;
     let mut rng = rand::rng();
-    let bytes: [u8; 32] = rng.random();
-    U256::from_be_bytes(bytes)
+    // Generate timestamp * random factor, similar to official clients
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as f64;
+    let random_factor: f64 = rng.random();
+    let salt = (timestamp * random_factor) as u64;
+    U256::from(salt)
 }
 
 /// Generate a nonce (typically timestamp-based)
@@ -279,21 +225,11 @@ mod tests {
     }
 
     #[test]
-    fn test_clob_auth_type_hash() {
-        // Verify the type hash is computed correctly
-        // This is the hash of "ClobAuth(address address,string timestamp,uint256 nonce,string message)"
-        let type_hash = clob_auth_type_hash();
-        // Just verify it's not empty and is 32 bytes
-        assert_eq!(type_hash.len(), 32);
-        println!("ClobAuth type hash: 0x{}", hex::encode(type_hash));
-    }
-
-    #[test]
-    fn test_domain_separator() {
-        // Verify domain separator computation
-        let domain_sep = compute_clob_auth_domain_separator();
-        assert_eq!(domain_sep.len(), 32);
-        println!("Domain separator: 0x{}", hex::encode(domain_sep));
+    fn test_domains() {
+        // Just verify domains can be created without panicking
+        let _clob_domain = clob_auth_domain();
+        let _ctf_domain = ctf_exchange_domain();
+        let _neg_risk_domain = neg_risk_ctf_exchange_domain();
     }
 
     #[tokio::test]

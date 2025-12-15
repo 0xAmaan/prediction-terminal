@@ -571,8 +571,8 @@ impl ClobOrderbookResponse {
         let mut order_book = OrderBook::new(market_id.to_string(), Platform::Polymarket);
         order_book.timestamp = Utc::now();
 
-        // Convert bid levels
-        let bids: Vec<OrderBookLevel> = self.bids
+        // Convert bid levels and sort descending (best/highest bid first)
+        let mut bids: Vec<OrderBookLevel> = self.bids
             .iter()
             .filter_map(|level| {
                 let price = Decimal::from_str(&level.price).ok()?;
@@ -580,9 +580,10 @@ impl ClobOrderbookResponse {
                 Some(OrderBookLevel::new(price, quantity))
             })
             .collect();
+        bids.sort_by(|a, b| b.price.cmp(&a.price)); // Descending: best bid first
 
-        // Convert ask levels
-        let asks: Vec<OrderBookLevel> = self.asks
+        // Convert ask levels and sort ascending (best/lowest ask first)
+        let mut asks: Vec<OrderBookLevel> = self.asks
             .iter()
             .filter_map(|level| {
                 let price = Decimal::from_str(&level.price).ok()?;
@@ -590,6 +591,7 @@ impl ClobOrderbookResponse {
                 Some(OrderBookLevel::new(price, quantity))
             })
             .collect();
+        asks.sort_by(|a, b| a.price.cmp(&b.price)); // Ascending: best ask first
 
         if is_yes_token {
             order_book.yes_bids = bids;

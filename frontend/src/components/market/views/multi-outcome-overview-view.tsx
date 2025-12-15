@@ -10,7 +10,7 @@ import { OutcomeSummaryGrid } from "@/components/market/overview/outcome-summary
 import { ResolutionStrategyCard } from "@/components/market/overview/resolution-strategy-card";
 import { HistoricalAnalysisCard } from "@/components/market/overview/historical-analysis-card";
 import { NewsFeedCard } from "@/components/market/overview/news-feed-card";
-import { PlatformBadge } from "@/components/platform-badge";
+import { PolymarketIcon } from "@/components/icons/polymarket-icon";
 
 // Animation variants
 import { staggerContainer, staggerItem } from "@/lib/motion";
@@ -140,57 +140,67 @@ export const MultiOutcomeOverviewView = ({
           initial="hidden"
           animate="visible"
         >
-          {/* 1. Market Header - Title, image, platform, status */}
-          <motion.div variants={staggerItem} className="flex items-start gap-5">
-            {/* Market Image */}
+          {/* 1. Market Header - Image and title with status above title */}
+          <motion.div variants={staggerItem} className="flex items-center gap-5">
+            {/* Market Image with Platform Indicator */}
             {market.image_url && (
-              <div
-                className="flex-shrink-0 rounded-xl overflow-hidden"
-                style={{
-                  width: 80,
-                  height: 80,
-                  backgroundColor: fey.bg300,
-                  border: `1px solid ${fey.border}`,
-                }}
-              >
-                <Image
-                  src={market.image_url}
-                  alt={market.title}
-                  width={80}
-                  height={80}
-                  className="object-cover w-full h-full"
-                />
+              <div className="flex-shrink-0 relative">
+                <div
+                  className="rounded-xl overflow-hidden"
+                  style={{
+                    width: 80,
+                    height: 80,
+                    backgroundColor: fey.bg300,
+                    border: "2px solid #2E5CFF",
+                  }}
+                >
+                  <Image
+                    src={market.image_url}
+                    alt={market.title}
+                    width={80}
+                    height={80}
+                    className="object-cover w-full h-full"
+                  />
+                </div>
+                {/* Platform logo badge - positioned half in, half out */}
+                <div
+                  className="absolute -bottom-3.5 -right-3.5 rounded-md flex items-center justify-center"
+                  style={{
+                    backgroundColor: "#2E5CFF",
+                    width: 28,
+                    height: 28,
+                  }}
+                >
+                  <PolymarketIcon size={18} />
+                </div>
               </div>
             )}
 
-            {/* Title and metadata */}
-            <div className="flex-1 min-w-0">
-              <h1
-                className="text-2xl md:text-3xl font-bold leading-tight mb-3"
+            {/* Title */}
+            <h1
+              className="flex-1 text-2xl md:text-3xl font-bold leading-tight"
+              style={{
+                color: fey.grey100,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {market.title}
+            </h1>
+
+            {/* Status */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span
+                className="text-xs font-medium px-2 py-1 rounded"
                 style={{
-                  color: fey.grey100,
-                  letterSpacing: "-0.02em",
+                  backgroundColor:
+                    market.status === "open"
+                      ? `${fey.teal}15`
+                      : `${fey.grey500}15`,
+                  color: market.status === "open" ? fey.teal : fey.grey500,
                 }}
               >
-                {market.title}
-              </h1>
-
-              {/* Platform badge and status */}
-              <div className="flex items-center gap-3">
-                <PlatformBadge platform={market.platform} />
-                <span
-                  className="text-xs font-medium px-2 py-1 rounded"
-                  style={{
-                    backgroundColor:
-                      market.status === "open"
-                        ? `${fey.teal}15`
-                        : `${fey.grey500}15`,
-                    color: market.status === "open" ? fey.teal : fey.grey500,
-                  }}
-                >
-                  {market.status === "open" ? "Open" : market.status}
-                </span>
-              </div>
+                {market.status === "open" ? "Open" : market.status}
+              </span>
             </div>
           </motion.div>
 

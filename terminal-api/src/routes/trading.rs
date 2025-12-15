@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use terminal_trading::{
-    approve_usdc_for_ctf_exchange, get_matic_balance, ClobClient, OrderBuilder, OrderType, Side,
+    approve_usdc_for_all_exchanges, get_matic_balance, ClobClient, OrderBuilder, OrderType, Side,
 };
 
 use crate::AppState;
@@ -37,6 +37,9 @@ pub struct SubmitOrderRequest {
     /// Order type: "GTC", "GTD", or "FOK"
     #[serde(default = "default_order_type")]
     pub order_type: String,
+    /// Whether this is a neg_risk market (multi-outcome). Default: false (binary market)
+    #[serde(default)]
+    pub neg_risk: bool,
 }
 
 fn default_order_type() -> String {
@@ -303,7 +306,9 @@ async fn submit_order(
     };
 
     // Build and sign order
-    let builder = OrderBuilder::new(&req.token_id, req.price, req.size, side);
+    // Use neg_risk from request (defaults to false for binary markets)
+    let builder = OrderBuilder::new(&req.token_id, req.price, req.size, side)
+        .with_neg_risk(req.neg_risk);
     let signed_order = match builder.build_and_sign(client.wallet()).await {
         Ok(o) => o,
         Err(e) => {
@@ -321,7 +326,7 @@ async fn submit_order(
     };
 
     // Submit to CLOB
-    match client.post_order(signed_order, order_type).await {
+    match client.post_order(signed_order.clone(), order_type.clone()).await {
         Ok(response) => {
             info!("Order submitted: {:?}", response.order_id);
             (
@@ -335,13 +340,73 @@ async fn submit_order(
             )
         }
         Err(e) => {
+            let error_str = format!("{}", e);
+
+            // Check if this is a 401 Unauthorized error - credentials may be stale
+            if error_str.contains("401") || error_str.contains("Unauthorized") || error_str.contains("Invalid api key") {
+                info!("Got 401 error, refreshing API credentials and retrying...");
+
+                // Drop the read lock and get a write lock to refresh credentials
+                drop(state);
+
+                let mut state = trading_state.write().await;
+                if let Some(client) = state.client_mut() {
+                    // Clear stale credentials
+                    client.wallet_mut().clear_api_credentials();
+
+                    // Re-derive API key
+                    if let Err(derive_err) = client.derive_api_key().await {
+                        error!("Failed to refresh API key: {}", derive_err);
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            Json(SubmitOrderResponse {
+                                success: false,
+                                order_id: None,
+                                error: Some(format!("Authentication failed: {}. Original error: {}", derive_err, error_str)),
+                                transaction_hashes: vec![],
+                            }),
+                        );
+                    }
+
+                    info!("API credentials refreshed, retrying order submission...");
+
+                    // Retry the order submission
+                    match client.post_order(signed_order, order_type).await {
+                        Ok(response) => {
+                            info!("Order submitted on retry: {:?}", response.order_id);
+                            return (
+                                StatusCode::OK,
+                                Json(SubmitOrderResponse {
+                                    success: response.success,
+                                    order_id: response.order_id,
+                                    error: response.error_msg,
+                                    transaction_hashes: response.transaction_hashes,
+                                }),
+                            );
+                        }
+                        Err(retry_err) => {
+                            error!("Order submission failed on retry: {}", retry_err);
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(SubmitOrderResponse {
+                                    success: false,
+                                    order_id: None,
+                                    error: Some(format!("{}", retry_err)),
+                                    transaction_hashes: vec![],
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+
             error!("Order submission failed: {}", e);
             (
                 StatusCode::BAD_REQUEST,
                 Json(SubmitOrderResponse {
                     success: false,
                     order_id: None,
-                    error: Some(format!("{}", e)),
+                    error: Some(error_str),
                     transaction_hashes: vec![],
                 }),
             )
@@ -735,16 +800,30 @@ async fn approve_usdc(State(state): State<AppState>) -> impl IntoResponse {
         }
     }
 
-    // Execute the approval
-    match approve_usdc_for_ctf_exchange(client.wallet()).await {
-        Ok(approval) => {
-            info!("USDC approval successful: {:?}", approval.transaction_hash);
+    // Execute approvals for ALL required contracts (CTF Exchange, Neg Risk CTF, Neg Risk Adapter)
+    match approve_usdc_for_all_exchanges(client.wallet()).await {
+        Ok(approvals) => {
+            // Collect all transaction hashes
+            let tx_hashes: Vec<_> = approvals
+                .iter()
+                .filter_map(|a| a.transaction_hash.clone())
+                .collect();
+            let all_success = approvals.iter().all(|a| a.success);
+            let errors: Vec<_> = approvals
+                .iter()
+                .filter_map(|a| a.error.clone())
+                .collect();
+
+            info!("USDC approvals completed: {} successes, {} transactions",
+                  approvals.iter().filter(|a| a.success).count(),
+                  tx_hashes.len());
+
             (
                 StatusCode::OK,
                 Json(ApproveResponse {
-                    success: approval.success,
-                    transaction_hash: approval.transaction_hash,
-                    error: approval.error,
+                    success: all_success || !tx_hashes.is_empty(),
+                    transaction_hash: tx_hashes.first().cloned(),
+                    error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
                     matic_balance,
                 }),
             )

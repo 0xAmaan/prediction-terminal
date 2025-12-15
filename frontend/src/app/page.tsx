@@ -38,7 +38,7 @@ const HomePage = () => {
           borderBottom: `1px solid ${fey.border}`,
         }}
       >
-        <div className="mx-auto px-8" style={{ maxWidth: "1600px" }}>
+        <div className="mx-auto px-8" style={{ maxWidth: "1800px" }}>
           <div className="flex gap-1">
             <button
               onClick={() => setActiveTab("markets")}
@@ -76,7 +76,7 @@ const HomePage = () => {
 
       {/* Main content - scrollable */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-8 pt-8 pb-6" style={{ maxWidth: "1600px" }}>
+        <div className="mx-auto px-8 pt-8 pb-6" style={{ maxWidth: "1800px" }}>
           {activeTab === "markets" ? (
             <MarketsGrid search={debouncedSearch} />
           ) : (

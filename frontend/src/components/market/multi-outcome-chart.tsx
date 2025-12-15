@@ -12,7 +12,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { OutcomePriceHistory } from "@/lib/types";
 
 // Fey color tokens
 const fey = {
@@ -68,9 +67,10 @@ export const MultiOutcomeChart = ({
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesMapRef = useRef<Map<string, SeriesInfo>>(new Map());
-  const [timeframe, setTimeframe] = useState<TimeFrame>("7D");
+  const [timeframe, setTimeframe] = useState<TimeFrame>("30D");
   const [labels, setLabels] = useState<LabelData[]>([]);
   const [crosshairX, setCrosshairX] = useState<number | null>(null);
+  const [overlayLeft, setOverlayLeft] = useState<number | null>(null);
 
   const { data: outcomes, isLoading, error } = useQuery({
     queryKey: ["multi-outcome-prices", platform, marketId, timeframe, top],
@@ -210,15 +210,17 @@ export const MultiOutcomeChart = ({
       return v1 + (v2 - v1) * ratio;
     };
 
-    // Subscribe to crosshair move for floating labels
+    // Subscribe to crosshair move for floating labels and overlay positioning
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
         setLabels([]);
         setCrosshairX(null);
+        setOverlayLeft(null);
         return;
       }
 
       setCrosshairX(param.point.x);
+      setOverlayLeft(param.point.x);
       const newLabels: LabelData[] = [];
       const targetTime = param.time as number;
 
@@ -357,6 +359,20 @@ export const MultiOutcomeChart = ({
         ) : (
           <div className="relative">
             <div ref={chartContainerRef} className="w-full" style={{ height }} />
+            {/* Gray overlay for area after cursor */}
+            {overlayLeft !== null && (
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  left: overlayLeft,
+                  top: 0,
+                  right: 0,
+                  height,
+                  backgroundColor: "rgba(19, 20, 25, 0.75)",
+                  zIndex: 5,
+                }}
+              />
+            )}
             {/* Floating crosshair labels */}
             {crosshairX !== null &&
               labels.map((label, i) => (

@@ -82,7 +82,7 @@ export const Navbar = ({ search, onSearchChange }: NavbarProps) => {
         borderBottom: `1px solid ${fey.border}`,
       }}
     >
-      <div className="mx-auto px-8 py-4" style={{ maxWidth: "1600px" }}>
+      <div className="px-8 py-4">
         <div className="flex items-center justify-between gap-8">
           {/* Left: Logo + Title */}
           <Link href="/" className="flex items-center gap-3 shrink-0">
@@ -113,13 +113,24 @@ export const Navbar = ({ search, onSearchChange }: NavbarProps) => {
                 value={searchValue}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 onKeyDown={handleSearchSubmit}
-                className="search-input h-11 pl-12 pr-4 text-base rounded-lg focus-visible:ring-0 focus-visible:border-transparent"
+                className="search-input h-11 pl-12 pr-12 text-base rounded-lg focus-visible:ring-0 focus-visible:border-transparent"
                 style={{
                   backgroundColor: fey.bg200,
                   border: `1px solid ${fey.border}`,
                   color: fey.grey100,
                 }}
               />
+              {/* Keyboard shortcut hint */}
+              <kbd
+                className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex h-5 items-center justify-center rounded px-1.5 font-mono text-xs font-medium"
+                style={{
+                  backgroundColor: fey.bg100,
+                  border: `1px solid ${fey.border}`,
+                  color: fey.grey500,
+                }}
+              >
+                /
+              </kbd>
             </div>
           </div>
 

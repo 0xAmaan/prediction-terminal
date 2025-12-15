@@ -104,7 +104,7 @@ export const MultiOutcomeTradingView = ({
 
   return (
     <div
-      className="h-full flex flex-col overflow-hidden"
+      className="min-h-full flex flex-col"
       style={{ backgroundColor: fey.bg100 }}
     >
       {/* Header with outcome selector and stats */}
@@ -116,80 +116,91 @@ export const MultiOutcomeTradingView = ({
         isLeading={isLeading}
       />
 
-      {/* Main Grid Layout */}
+      {/* Main Grid Layout - 3 columns, right column spans full height */}
       <div
-        className="flex-1 grid grid-cols-[2fr_1fr_1fr] grid-rows-2 gap-px overflow-hidden"
+        className="flex-1 grid grid-cols-[2fr_1fr_1fr] gap-px"
         style={{ backgroundColor: fey.border }}
       >
-        {/* Row 1, Col 1: Price Chart */}
-        <div
-          className="overflow-hidden p-2 h-full"
-          style={{ backgroundColor: fey.bg100 }}
-        >
-          {selectedOutcome && (
-            <PriceChart
-              platform={market.platform}
-              marketId={outcomeId}
-              currentPrice={parseFloat(currentPrice)}
-              title={`${selectedOutcome.name} - Price History`}
+        {/* Left 2 columns container */}
+        <div className="col-span-2 flex flex-col gap-px" style={{ backgroundColor: fey.border }}>
+          {/* Row 1: Chart + Order Book */}
+          <div className="grid grid-cols-[2fr_1fr] gap-px h-[50vh]" style={{ backgroundColor: fey.border }}>
+            {/* Price Chart */}
+            <div
+              className="overflow-hidden p-2"
+              style={{ backgroundColor: fey.bg100 }}
+            >
+              {selectedOutcome && (
+                <PriceChart
+                  platform={market.platform}
+                  marketId={outcomeId}
+                  currentPrice={parseFloat(currentPrice)}
+                  title={`${selectedOutcome.name} - Price History`}
+                />
+              )}
+            </div>
+
+            {/* Order Book */}
+            <div
+              className="overflow-hidden p-2"
+              style={{ backgroundColor: fey.bg100 }}
+            >
+              <OrderBookV2
+                yesBids={orderBook?.yes_bids ?? []}
+                yesAsks={orderBook?.yes_asks ?? []}
+                isLoading={orderBookLoading}
+                maxLevels={10}
+                showHeatmap={true}
+                showImbalance={true}
+                showWalls={true}
+                proMode={true}
+              />
+            </div>
+          </div>
+
+          {/* Row 2: Live Trades Table */}
+          <div
+            className="p-2 h-[75vh]"
+            style={{ backgroundColor: fey.bg100 }}
+          >
+            <LiveTradesTable trades={trades} className="h-full" />
+          </div>
+        </div>
+
+        {/* Right column: Trade Execution + Market Info (stacked, natural heights) */}
+        <div className="flex flex-col gap-px" style={{ backgroundColor: fey.border }}>
+          {/* Trade Execution */}
+          <div
+            className="p-2"
+            style={{ backgroundColor: fey.bg100 }}
+          >
+            <TradeExecution
+              yesPrice={currentPrice}
+              noPrice={noPrice}
+              trades={trades}
+              tokenId={selectedOutcome?.clob_token_id}
+              marketTitle={selectedOutcome ? `${market.title} - ${selectedOutcome.name}` : market.title}
+              negRisk={true}
+              bestAsk={orderBook?.yes_asks?.[0] ? parseFloat(orderBook.yes_asks[0].price) : undefined}
+              bestBid={orderBook?.yes_bids?.[0] ? parseFloat(orderBook.yes_bids[0].price) : undefined}
             />
-          )}
-        </div>
+          </div>
 
-        {/* Row 1, Col 2: Order Book */}
-        <div
-          className="overflow-hidden p-2 h-full"
-          style={{ backgroundColor: fey.bg100 }}
-        >
-          <OrderBookV2
-            yesBids={orderBook?.yes_bids ?? []}
-            yesAsks={orderBook?.yes_asks ?? []}
-            isLoading={orderBookLoading}
-            maxLevels={10}
-            showHeatmap={true}
-            showImbalance={true}
-            showWalls={true}
-            proMode={true}
-          />
-        </div>
-
-        {/* Row 1, Col 3: Trade Execution */}
-        <div
-          className="overflow-hidden p-2 h-full"
-          style={{ backgroundColor: fey.bg100 }}
-        >
-          <TradeExecution
-            yesPrice={currentPrice}
-            noPrice={noPrice}
-            trades={trades}
-            tokenId={selectedOutcome?.clob_token_id}
-            marketTitle={selectedOutcome ? `${market.title} - ${selectedOutcome.name}` : market.title}
-            className="h-full"
-          />
-        </div>
-
-        {/* Row 2, Col 1-2: Live Trades Table (spans 2 columns) */}
-        <div
-          className="col-span-2 overflow-hidden p-2"
-          style={{ backgroundColor: fey.bg100 }}
-        >
-          <LiveTradesTable trades={trades} className="h-full" />
-        </div>
-
-        {/* Row 2, Col 3: Market Info Panel */}
-        <div
-          className="overflow-y-auto p-2"
-          style={{ backgroundColor: fey.bg100 }}
-        >
-          <MarketInfoPanel
-            market={market}
-            yesPrice={currentPrice}
-            noPrice={noPrice}
-            spread={spread}
-            outcomeName={selectedOutcome?.name}
-            isLeading={isLeading}
-            outcomeCount={options.length}
-          />
+          {/* Market Info Panel */}
+          <div
+            className="p-2"
+            style={{ backgroundColor: fey.bg100 }}
+          >
+            <MarketInfoPanel
+              market={market}
+              yesPrice={currentPrice}
+              noPrice={noPrice}
+              spread={spread}
+              outcomeName={selectedOutcome?.name}
+              isLeading={isLeading}
+              outcomeCount={options.length}
+            />
+          </div>
         </div>
       </div>
     </div>

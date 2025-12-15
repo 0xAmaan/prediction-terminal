@@ -158,8 +158,35 @@ impl ClobClient {
 
         self.wallet.set_api_credentials(credentials.clone());
         info!("API key created successfully");
+        info!("  API Key: {}", credentials.api_key);
+        info!("  Secret: {}", credentials.secret);
+        info!("  Passphrase: {}", credentials.passphrase);
+
+        // Test the new credentials immediately with a simple L2 call
+        info!("Testing new credentials with GET /data/orders...");
+        match self.test_l2_auth().await {
+            Ok(_) => info!("L2 auth test PASSED!"),
+            Err(e) => error!("L2 auth test FAILED: {}", e),
+        }
 
         Ok(credentials)
+    }
+
+    /// Test L2 authentication by calling a simple endpoint
+    async fn test_l2_auth(&self) -> Result<()> {
+        let path = "/data/orders";
+        let headers = self.build_l2_headers("GET", path, "")?;
+        let url = format!("{}{}", self.base_url, path);
+
+        let response = self.http_client.get(&url).headers(headers).send().await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(TradingError::Api(format!("{} - {}", status, body)))
+        }
     }
 
     /// Derive existing API credentials (L1 auth)
@@ -235,7 +262,9 @@ impl ClobClient {
     ) -> Result<String> {
         let message = format!("{}{}{}{}", timestamp, method, path, body);
 
-        debug!("HMAC secret length: {}, first 4 chars: {:?}", secret.len(), &secret.chars().take(4).collect::<String>());
+        info!("========== HMAC SIGNATURE DEBUG ==========");
+        info!("Secret (base64): {}", secret);
+        info!("Secret length: {} chars", secret.len());
 
         // Polymarket uses URL-safe base64 for the secret
         // Try multiple decoders to handle different padding scenarios
@@ -244,34 +273,48 @@ impl ClobClient {
             secret,
         )
         .or_else(|e1| {
-            debug!("URL_SAFE_NO_PAD failed: {}", e1);
+            info!("URL_SAFE_NO_PAD decode failed: {}", e1);
             base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, secret)
         })
         .or_else(|e2| {
-            debug!("URL_SAFE failed: {}", e2);
+            info!("URL_SAFE decode failed: {}", e2);
             // Try adding padding if missing
             let padded = match secret.len() % 4 {
                 2 => format!("{}==", secret),
                 3 => format!("{}=", secret),
                 _ => secret.to_string(),
             };
+            info!("Trying with padding: {}", padded);
             base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, &padded)
         })
         .map_err(|e| TradingError::Signing(format!("Invalid secret encoding: {}. Secret preview: {}...", e, &secret.chars().take(8).collect::<String>())))?;
 
-        debug!("Secret decoded successfully, {} bytes", secret_bytes.len());
+        info!("Secret decoded: {} bytes", secret_bytes.len());
+        info!("Secret bytes (hex): {}", hex::encode(&secret_bytes));
+
+        info!("HMAC message: {}", message);
+        info!("HMAC message bytes (hex): {}", hex::encode(message.as_bytes()));
 
         let mut mac = HmacSha256::new_from_slice(&secret_bytes)
             .map_err(|e| TradingError::Signing(format!("Failed to create HMAC: {}", e)))?;
 
         mac.update(message.as_bytes());
         let result = mac.finalize();
+        let result_bytes = result.into_bytes();
 
-        // Output signature in URL-safe base64 (matching Python client)
-        Ok(base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            result.into_bytes(),
-        ))
+        info!("HMAC result bytes (hex): {}", hex::encode(&result_bytes));
+
+        // Output signature in URL-safe base64 WITH padding (matching Python client)
+        // IMPORTANT: Polymarket requires padding (= suffix), so use URL_SAFE not URL_SAFE_NO_PAD
+        let signature = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE,
+            &result_bytes,
+        );
+
+        info!("Final signature (base64): {}", signature);
+        info!("===========================================");
+
+        Ok(signature)
     }
 
     /// Build L2 authentication headers
@@ -287,6 +330,16 @@ impl ClobClient {
             .ok_or_else(|| TradingError::MissingCredentials("API credentials not set".to_string()))?;
 
         let timestamp = current_timestamp().to_string();
+
+        // Log HMAC inputs
+        info!("========== L2 AUTH (HMAC) ==========");
+        info!("Timestamp: {}", timestamp);
+        info!("Method: {}", method);
+        info!("Path: {}", path);
+        info!("Body length: {} chars", body.len());
+        info!("HMAC message = timestamp + method + path + body");
+        info!("Message preview: {}{}{}{}...", timestamp, method, path, &body[..50.min(body.len())]);
+
         let signature = self.build_hmac_signature(
             &credentials.secret,
             &timestamp,
@@ -295,10 +348,23 @@ impl ClobClient {
             body,
         )?;
 
+        info!("HMAC signature: {}", signature);
+        info!("====================================");
+
+        let address = self.wallet.address_string();
+
+        info!("========== L2 HEADERS ==========");
+        info!("POLY_ADDRESS: {}", address);
+        info!("POLY_SIGNATURE: {}", signature);
+        info!("POLY_TIMESTAMP: {}", timestamp);
+        info!("POLY_API_KEY: {}", credentials.api_key);
+        info!("POLY_PASSPHRASE: {}", credentials.passphrase);
+        info!("================================");
+
         let mut headers = HeaderMap::new();
         headers.insert(
             HEADER_ADDRESS,
-            HeaderValue::from_str(&self.wallet.address_string())
+            HeaderValue::from_str(&address)
                 .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
         );
         headers.insert(
@@ -337,17 +403,35 @@ impl ClobClient {
     ) -> Result<OrderResponse> {
         debug!("Submitting order: {:?}", signed_order);
 
+        // Get API key - required for the owner field (NOT the wallet address!)
+        // See: https://github.com/Polymarket/py-clob-client/blob/main/py_clob_client/client.py
+        // body = order_to_json(order, self.creds.api_key, orderType)
+        let credentials = self
+            .wallet
+            .api_credentials()
+            .ok_or_else(|| TradingError::MissingCredentials("API credentials required for order submission".to_string()))?;
+
         let path = "/order";
         let request = PostOrderRequest {
             order: signed_order,
-            owner: self.wallet.address_string(),
+            owner: credentials.api_key.clone(),  // API key, not wallet address!
             order_type: order_type.as_str().to_string(),
         };
 
         let body = serde_json::to_string(&request)?;
+
+        // Log EVERYTHING so we can debug
+        info!("========== POST /order REQUEST ==========");
+        info!("Owner (API key): {}", &credentials.api_key);
+        info!("Order type: {}", order_type.as_str());
+        info!("FULL REQUEST BODY:\n{}", serde_json::to_string_pretty(&request).unwrap_or_default());
+        info!("==========================================");
+
         let headers = self.build_l2_headers("POST", path, &body)?;
 
         let url = format!("{}{}", self.base_url, path);
+        info!("Sending request to: {}", url);
+
         let response = self
             .http_client
             .post(&url)
@@ -476,8 +560,13 @@ impl ClobClient {
             )));
         }
 
-        let orders: Vec<OpenOrder> = response.json().await?;
-        Ok(orders)
+        // API returns paginated response: {"data": [...], "next_cursor": "...", ...}
+        #[derive(serde::Deserialize)]
+        struct PaginatedResponse {
+            data: Vec<OpenOrder>,
+        }
+        let response: PaginatedResponse = response.json().await?;
+        Ok(response.data)
     }
 
     /// Get user's trades
@@ -499,8 +588,13 @@ impl ClobClient {
             )));
         }
 
-        let trades: Vec<UserTrade> = response.json().await?;
-        Ok(trades)
+        // API returns paginated response: {"data": [...], "next_cursor": "...", ...}
+        #[derive(serde::Deserialize)]
+        struct PaginatedResponse {
+            data: Vec<UserTrade>,
+        }
+        let response: PaginatedResponse = response.json().await?;
+        Ok(response.data)
     }
 
     /// Get USDC balance and allowance for the wallet

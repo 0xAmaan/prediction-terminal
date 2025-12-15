@@ -537,6 +537,8 @@ export const api = {
     price: number;
     size: number;
     orderType?: "GTC" | "GTD" | "FOK";
+    /** Whether this is a neg_risk market (multi-outcome). Affects which exchange contract is used for signing. */
+    negRisk?: boolean;
   }): Promise<{
     success: boolean;
     orderId?: string;
@@ -554,6 +556,7 @@ export const api = {
         price: params.price,
         size: params.size,
         orderType: params.orderType || "GTC",
+        negRisk: params.negRisk ?? false,
       }),
     });
 

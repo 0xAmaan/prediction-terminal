@@ -37,6 +37,12 @@ interface TradeExecutionProps {
   marketTitle?: string;
   /** Callback after successful order */
   onOrderSubmitted?: () => void;
+  /** Whether this is a neg_risk market (multi-outcome). Affects which exchange contract is used for signing. */
+  negRisk?: boolean;
+  /** Best ask price from orderbook - used for market orders to ensure fills */
+  bestAsk?: number;
+  /** Best bid price from orderbook */
+  bestBid?: number;
 }
 
 const formatVolume = (value: number): string => {
@@ -52,9 +58,12 @@ export const TradeExecution = ({
   tokenId,
   marketTitle,
   onOrderSubmitted,
+  negRisk = false,
+  bestAsk,
+  bestBid,
 }: TradeExecutionProps) => {
   const [side, setSide] = useState<Side>("buy");
-  const [orderType, setOrderType] = useState<OrderType>("limit");
+  const [orderType, setOrderType] = useState<OrderType>("market");
   const [amount, setAmount] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
 
@@ -89,8 +98,14 @@ export const TradeExecution = ({
   const parsedAmount = parseFloat(amount) || 0;
   const parsedLimitPrice = limitPrice ? parseFloat(limitPrice) / 100 : currentPrice;
 
-  // For market orders, use current price; for limit orders, use the limit price
-  const orderPrice = orderType === "market" ? currentPrice : parsedLimitPrice;
+  // For market orders: use best ask for buys, best bid for sells (to ensure immediate fill)
+  // Fall back to currentPrice if orderbook data not available
+  const marketPrice = isBuy
+    ? (bestAsk ?? currentPrice)
+    : (bestBid ?? currentPrice);
+
+  // For market orders, use orderbook price; for limit orders, use the limit price
+  const orderPrice = orderType === "market" ? marketPrice : parsedLimitPrice;
   const estimatedCost = parsedAmount * orderPrice;
 
   // Validation
@@ -168,6 +183,7 @@ export const TradeExecution = ({
         price: orderPrice,
         size: parsedAmount,
         orderType: "GTC", // Good-til-cancelled
+        negRisk,
       });
 
       if (result.success) {
@@ -188,7 +204,7 @@ export const TradeExecution = ({
     } finally {
       setIsSubmitting(false);
     }
-  }, [tokenId, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance]);
+  }, [tokenId, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance, negRisk]);
 
   const handleCancelConfirm = useCallback(() => {
     setShowConfirmModal(false);
@@ -224,7 +240,7 @@ export const TradeExecution = ({
 
   return (
     <div
-      className={`rounded-lg overflow-hidden flex flex-col h-full relative ${className}`}
+      className={`rounded-lg overflow-hidden flex flex-col relative ${className}`}
       style={{
         backgroundColor: fey.bg300,
         border: `1px solid ${fey.border}`,
@@ -507,7 +523,7 @@ export const TradeExecution = ({
       )}
 
       {/* Amount Input */}
-      <div className="px-4 pt-4 flex-1 overflow-y-auto min-h-0">
+      <div className="px-4 pt-4">
         <div className="flex items-center justify-between mb-2">
           <label className="text-sm font-medium" style={{ color: fey.grey500 }}>
             SHARES

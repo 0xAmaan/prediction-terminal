@@ -70,7 +70,7 @@ impl OrderBuilder {
             side,
             expiration: 0, // No expiry by default
             fee_rate_bps: 0,
-            is_neg_risk: true, // Most Polymarket markets are neg risk
+            is_neg_risk: false, // Default to false (binary market) - pass true for multi-outcome markets
         }
     }
 

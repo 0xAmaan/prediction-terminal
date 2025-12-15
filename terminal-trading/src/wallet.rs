@@ -77,7 +77,7 @@ impl TradingWallet {
 
     /// Get the wallet address as a checksummed string
     pub fn address_string(&self) -> String {
-        format!("{:?}", self.address)
+        self.address.to_checksum(None)
     }
 
     /// Get the underlying signer for EIP-712 signing
@@ -115,6 +115,12 @@ impl TradingWallet {
     /// Check if API credentials are set
     pub fn has_api_credentials(&self) -> bool {
         self.api_credentials.is_some()
+    }
+
+    /// Clear API credentials (for re-authentication)
+    pub fn clear_api_credentials(&mut self) {
+        debug!("Clearing API credentials for wallet {}", self.address);
+        self.api_credentials = None;
     }
 
     /// Get private key as hex string (be careful with this!)
