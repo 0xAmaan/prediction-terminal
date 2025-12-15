@@ -61,6 +61,14 @@ export function useResearch() {
     };
   }, [job?.id, job?.status]);
 
+  // Helper to clear polling
+  const clearPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
   // Listen for WebSocket updates (faster than polling when available)
   useEffect(() => {
     if (!job?.id) return;
@@ -75,6 +83,9 @@ export function useResearch() {
 
       if (messageAny.type === "ResearchUpdate" && messageAny.ResearchUpdate) {
         update = messageAny.ResearchUpdate as ResearchUpdate;
+      } else if (messageAny.type === "ResearchUpdate" && messageAny.update) {
+        // Alternative format: { type: "ResearchUpdate", update: {...} }
+        update = messageAny.update as ResearchUpdate;
       } else if (
         messageAny.type === "research_update" ||
         (messageAny.type &&
@@ -111,6 +122,30 @@ export function useResearch() {
             };
           });
           break;
+        case "completed":
+          // Immediately stop polling when we receive completion via WebSocket
+          clearPolling();
+          setJob((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              status: "completed" as ResearchStatus,
+              report: update!.report,
+            };
+          });
+          break;
+        case "failed":
+          // Immediately stop polling when we receive failure via WebSocket
+          clearPolling();
+          setJob((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              status: "failed" as ResearchStatus,
+              error: update!.error,
+            };
+          });
+          break;
         default:
           setJob((prev) => {
             if (!prev) return prev;
@@ -120,18 +155,6 @@ export function useResearch() {
                 return { ...prev, status: update!.status! };
               case "progress_update":
                 return { ...prev, progress: update!.progress! };
-              case "completed":
-                return {
-                  ...prev,
-                  status: "completed" as ResearchStatus,
-                  report: update!.report,
-                };
-              case "failed":
-                return {
-                  ...prev,
-                  status: "failed" as ResearchStatus,
-                  error: update!.error,
-                };
               default:
                 return prev;
             }
@@ -140,7 +163,7 @@ export function useResearch() {
     });
 
     return unsubscribe;
-  }, [job?.id, onMessage]);
+  }, [job?.id, onMessage, clearPolling]);
 
   const startResearch = useCallback(async (platform: string, marketId: string) => {
     setIsLoading(true);

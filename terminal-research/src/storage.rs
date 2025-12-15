@@ -98,10 +98,16 @@ impl ResearchStorage {
                     TerminalError::parse(format!("Failed to parse cached research: {}", e))
                 })?;
 
-                // Check if cache is still valid (24 hours)
+                // Check if cache is still valid (using adaptive TTL)
                 let age = chrono::Utc::now() - job.updated_at;
-                if age.num_hours() > 24 {
-                    info!("Cache expired for key: {} (age: {} hours)", key, age.num_hours());
+                let ttl_hours = job.cache_ttl_hours;
+                if age.num_hours() > ttl_hours {
+                    info!(
+                        "Cache expired for key: {} (age: {} hours, TTL: {} hours)",
+                        key,
+                        age.num_hours(),
+                        ttl_hours
+                    );
                     return Ok(None);
                 }
 

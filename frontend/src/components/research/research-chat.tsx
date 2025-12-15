@@ -14,6 +14,7 @@ interface ResearchChatProps {
   isFollowUpInProgress?: boolean;
   disabled?: boolean;
   onResearchTriggered?: () => void;
+  suggestedFollowups?: string[];
 }
 
 export function ResearchChat({
@@ -22,6 +23,7 @@ export function ResearchChat({
   isFollowUpInProgress = false,
   disabled = false,
   onResearchTriggered,
+  suggestedFollowups = [],
 }: ResearchChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -121,6 +123,12 @@ export function ResearchChat({
     }
   };
 
+  // Handle clicking a suggested follow-up question
+  const handleSuggestionClick = (question: string) => {
+    setInput(question);
+    inputRef.current?.focus();
+  };
+
   // Format timestamp
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -164,6 +172,24 @@ export function ResearchChat({
             <p className="text-xs mt-1">
               Ask a question about the research above
             </p>
+            {suggestedFollowups.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs mb-2 text-muted-foreground/70">Suggested questions:</p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {suggestedFollowups.map((question, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSuggestionClick(question)}
+                      className="text-xs px-3 py-1.5 bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary rounded-full transition-colors text-left max-w-[280px] truncate"
+                      title={question}
+                      disabled={disabled || isSending || isFollowUpInProgress}
+                    >
+                      {question}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           messages.map((message) => (

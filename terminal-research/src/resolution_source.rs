@@ -268,6 +268,9 @@ fn clean_text(text: &str) -> String {
     lines.join("\n")
 }
 
+/// Maximum number of resolution source URLs to fetch
+const MAX_RESOLUTION_SOURCES: usize = 5;
+
 /// Fetch multiple resolution source URLs concurrently
 ///
 /// Returns successfully fetched sources (failures are logged but not returned)
@@ -293,23 +296,38 @@ pub async fn fetch_resolution_sources(
         }
     };
 
-    let mut results = Vec::new();
-
-    // Fetch URLs concurrently (with a reasonable limit)
-    for url in urls.iter().take(3) {
-        // Limit to 3 URLs
-        match fetcher.fetch_url(url).await {
-            Ok(data) => {
-                info!("Successfully fetched resolution source: {} ({} chars)", url, data.content.len());
-                results.push(data);
+    // Fetch URLs concurrently (limit to MAX_RESOLUTION_SOURCES)
+    let fetch_futures: Vec<_> = urls
+        .iter()
+        .take(MAX_RESOLUTION_SOURCES)
+        .map(|url| {
+            let fetcher = fetcher.clone();
+            let url = url.clone();
+            async move {
+                match fetcher.fetch_url(&url).await {
+                    Ok(data) => {
+                        info!(
+                            "Successfully fetched resolution source: {} ({} chars)",
+                            url,
+                            data.content.len()
+                        );
+                        Some(data)
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch resolution source {}: {}", url, e);
+                        None
+                    }
+                }
             }
-            Err(e) => {
-                warn!("Failed to fetch resolution source {}: {}", url, e);
-            }
-        }
-    }
+        })
+        .collect();
 
-    results
+    // Wait for all fetches to complete and collect successful results
+    futures::future::join_all(fetch_futures)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]

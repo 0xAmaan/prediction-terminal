@@ -191,6 +191,7 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
             isFollowUpInProgress={isFollowUpInProgress}
             disabled={isViewingHistorical}
             onResearchTriggered={handleResearchTriggered}
+            suggestedFollowups={displayReport?.suggested_followups}
           />
         </div>
 
