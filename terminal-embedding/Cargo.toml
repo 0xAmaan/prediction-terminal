@@ -8,7 +8,7 @@ edition = "2024"
 tokio = { workspace = true }
 
 # OpenAI client
-async-openai = "0.25"
+async-openai = "0.31"
 
 # Vector operations
 ndarray = "0.16"
