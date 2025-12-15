@@ -14,8 +14,8 @@ use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
     AggregatorConfig, CandleService, DiscordAggregator, MarketCache, MarketDataAggregator,
-    MarketService, MarketStatsService, NewsCache, ResearchService, TradeCollector, TradeCollectorConfig,
-    TradeStorage, WebSocketState,
+    MarketService, MarketStatsService, NewsCache, RateLimiter, ResearchService, TradeCollector,
+    TradeCollectorConfig, TradeStorage, WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -211,8 +211,29 @@ async fn main() -> anyhow::Result<()> {
     // EXA_API_KEY and FIRECRAWL_API_KEY are optional - RSS feeds work without them
     let exa_api_key = std::env::var("EXA_API_KEY").ok();
     let firecrawl_api_key = std::env::var("FIRECRAWL_API_KEY").ok();
+
+    // Create SHARED rate limiter for Exa API
+    // This prevents 429 errors when both NewsService and ResearchService use Exa
+    let exa_rate_limiter: Option<Arc<RateLimiter>> = if exa_api_key.is_some() {
+        let limiter = RateLimiter::for_exa();
+        info!(
+            "Created shared Exa rate limiter ({}ms min interval between requests)",
+            limiter.min_interval().as_millis()
+        );
+        Some(limiter)
+    } else {
+        None
+    };
+
     let news_config = terminal_services::news_service::NewsServiceConfig::default();
-    let mut news_service_instance = terminal_services::NewsService::new(exa_api_key.clone(), firecrawl_api_key, news_config);
+    // NOTE: Exa API is reserved ONLY for the Research feature (Start Research)
+    // News feed uses RSS feeds and Google News only - no Exa
+    let mut news_service_instance = terminal_services::NewsService::with_rate_limiter(
+        None, // No Exa for news feed - only Research can use EXA_API_KEY
+        firecrawl_api_key,
+        news_config,
+        None, // No rate limiter needed since we're not using Exa
+    );
 
     // Set market service for news service
     news_service_instance.set_market_service(market_service_arc.clone());
@@ -328,9 +349,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Initialize research service (optional - may fail if API keys not set)
-    let research_service = match ResearchService::new(market_service_arc.clone()).await {
+    // Uses the SAME rate limiter as NewsService to coordinate Exa API access
+    let research_service = match ResearchService::with_rate_limiter(
+        market_service_arc.clone(),
+        exa_rate_limiter.clone(),
+    )
+    .await
+    {
         Ok(service) => {
-            info!("Research service initialized successfully");
+            info!("Research service initialized successfully (with shared Exa rate limiter)");
             let service = Arc::new(service);
 
             // Spawn task to forward research updates to WebSocket

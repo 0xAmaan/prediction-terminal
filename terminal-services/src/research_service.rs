@@ -12,13 +12,11 @@ use terminal_research::{
     ResearchStatus, ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion,
     SynthesizedReport, fetch_resolution_sources,
 };
-use tokio::sync::{broadcast, RwLock, Semaphore};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
 
+use crate::rate_limiter::RateLimiter;
 use crate::MarketService;
-
-/// Semaphore permits for Exa API rate limiting (5 requests/second)
-const EXA_RATE_LIMIT_PERMITS: usize = 5;
 
 /// Threshold for price-based cache invalidation (5% move)
 const PRICE_INVALIDATION_THRESHOLD: f64 = 0.05;
@@ -31,8 +29,9 @@ pub struct ResearchService {
     storage: Option<ResearchStorage>,
     jobs: RwLock<HashMap<String, ResearchJob>>,
     update_tx: broadcast::Sender<ResearchUpdate>,
-    /// Rate limiter for Exa API calls (5 requests/second)
-    exa_rate_limiter: Arc<Semaphore>,
+    /// Shared rate limiter for Exa API calls (prevents 429 errors)
+    /// Uses minimum inter-request delay (~350ms) to stay safely under Exa's 5/sec limit
+    exa_rate_limiter: Arc<RateLimiter>,
 }
 
 impl ResearchService {
@@ -41,6 +40,17 @@ impl ResearchService {
     /// Requires EXA_API_KEY and OPENAI_API_KEY environment variables to be set.
     /// AWS credentials are optional - if not provided, caching will be disabled.
     pub async fn new(market_service: Arc<MarketService>) -> Result<Self, TerminalError> {
+        Self::with_rate_limiter(market_service, None).await
+    }
+
+    /// Create a new research service with a shared Exa rate limiter
+    ///
+    /// The rate limiter should be shared with NewsService to prevent 429 errors
+    /// when both services make concurrent Exa API requests.
+    pub async fn with_rate_limiter(
+        market_service: Arc<MarketService>,
+        exa_rate_limiter: Option<Arc<RateLimiter>>,
+    ) -> Result<Self, TerminalError> {
         let exa_client = ExaClient::new()?;
         let openai_client = OpenAIClient::new()?;
         let (update_tx, _) = broadcast::channel(100);
@@ -57,6 +67,17 @@ impl ResearchService {
             }
         };
 
+        // Use provided rate limiter or create a new one
+        let exa_rate_limiter = exa_rate_limiter.unwrap_or_else(|| {
+            info!("Creating default Exa rate limiter for ResearchService");
+            RateLimiter::for_exa()
+        });
+
+        info!(
+            "ResearchService initialized with shared Exa rate limiter ({}ms interval)",
+            exa_rate_limiter.min_interval().as_millis()
+        );
+
         Ok(Self {
             market_service,
             exa_client,
@@ -64,7 +85,7 @@ impl ResearchService {
             storage,
             jobs: RwLock::new(HashMap::new()),
             update_tx,
-            exa_rate_limiter: Arc::new(Semaphore::new(EXA_RATE_LIMIT_PERMITS)),
+            exa_rate_limiter,
         })
     }
 
@@ -247,17 +268,27 @@ impl ResearchService {
         .await;
 
         // Execute all searches concurrently with rate limiting
+        // Uses shared rate limiter to stay under Exa's 5 req/sec limit
         let search_futures: Vec<_> = questions
             .sub_questions
             .iter()
-            .map(|question| {
+            .enumerate()
+            .map(|(idx, question)| {
                 let exa_client = self.exa_client.clone();
                 let rate_limiter = self.exa_rate_limiter.clone();
                 let question = question.clone();
+                let search_idx = idx + 1;
+                let total = total_searches;
 
                 async move {
-                    // Acquire permit for rate limiting (max 5 concurrent requests)
-                    let _permit = rate_limiter.acquire().await.expect("semaphore closed");
+                    // Acquire permission from shared rate limiter
+                    // This coordinates with NewsService to prevent 429 errors
+                    info!(
+                        "[RESEARCH] Acquiring rate limiter for search {}/{}: '{}'",
+                        search_idx, total, question.search_query.chars().take(50).collect::<String>()
+                    );
+                    rate_limiter.acquire().await;
+                    info!("[RESEARCH] Rate limiter acquired for search {}/{}", search_idx, total);
 
                     let results = match question.category.as_str() {
                         "news" => {
@@ -271,9 +302,6 @@ impl ResearchService {
                                 .await
                         }
                     };
-
-                    // Small delay after request to space out concurrent calls
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
                     results.map(|r| (question, r.results))
                 }
@@ -835,17 +863,26 @@ impl ResearchService {
         );
 
         // Execute follow-up searches in parallel with rate limiting
+        let total_followup = search_queries.len();
         let search_futures: Vec<_> = search_queries
             .iter()
-            .map(|query| {
+            .enumerate()
+            .map(|(idx, query)| {
                 let exa_client = self.exa_client.clone();
                 let rate_limiter = self.exa_rate_limiter.clone();
                 let query = query.clone();
+                let search_idx = idx + 1;
 
                 async move {
-                    let _permit = rate_limiter.acquire().await.expect("semaphore closed");
+                    // Acquire permission from shared rate limiter
+                    info!(
+                        "[RESEARCH_FOLLOWUP] Acquiring rate limiter for search {}/{}: '{}'",
+                        search_idx, total_followup, query.chars().take(50).collect::<String>()
+                    );
+                    rate_limiter.acquire().await;
+                    info!("[RESEARCH_FOLLOWUP] Rate limiter acquired for search {}/{}", search_idx, total_followup);
+
                     let results = exa_client.search_news(&query, 7, 5).await;
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     results.map(|r| (query, r.results))
                 }
             })

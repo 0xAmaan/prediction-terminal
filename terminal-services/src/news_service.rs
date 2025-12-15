@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use terminal_core::{NewsFeed, NewsItem, NewsSearchParams, PredictionMarket};
 use terminal_embedding::{EmbeddingClient, EmbeddingStore, NewsEmbedding, find_similar_markets};
@@ -17,6 +17,7 @@ use terminal_news::{
 };
 
 use crate::market_service::MarketService;
+use crate::rate_limiter::RateLimiter;
 
 /// Cache entry with expiration
 struct CacheEntry<T> {
@@ -83,6 +84,8 @@ pub struct NewsService {
     embedding_client: Option<Arc<EmbeddingClient>>,
     /// Embedding store for market embeddings (optional)
     embedding_store: Option<Arc<EmbeddingStore>>,
+    /// Shared rate limiter for Exa API (prevents 429 errors when research + news both use Exa)
+    exa_rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 impl NewsService {
@@ -91,6 +94,19 @@ impl NewsService {
         exa_api_key: Option<String>,
         firecrawl_api_key: Option<String>,
         config: NewsServiceConfig,
+    ) -> Self {
+        Self::with_rate_limiter(exa_api_key, firecrawl_api_key, config, None)
+    }
+
+    /// Create a new NewsService with a shared Exa rate limiter
+    ///
+    /// The rate limiter should be shared with ResearchService to prevent 429 errors
+    /// when both services make concurrent Exa API requests.
+    pub fn with_rate_limiter(
+        exa_api_key: Option<String>,
+        firecrawl_api_key: Option<String>,
+        config: NewsServiceConfig,
+        exa_rate_limiter: Option<Arc<RateLimiter>>,
     ) -> Self {
         // Initialize embedding client if OpenAI API key is available
         let embedding_client = std::env::var("OPENAI_API_KEY")
@@ -108,11 +124,22 @@ impl NewsService {
             })
             .ok();
 
+        // Create rate limiter for Exa if not provided but Exa is configured
+        let exa_rate_limiter = if exa_api_key.is_some() {
+            exa_rate_limiter.or_else(|| {
+                info!("Creating default Exa rate limiter for NewsService");
+                Some(RateLimiter::for_exa())
+            })
+        } else {
+            None
+        };
+
         info!(
-            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
+            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {}, Embeddings: {}, RateLimiter: {})",
             exa_api_key.is_some(),
             firecrawl_api_key.is_some(),
-            embedding_client.is_some() && embedding_store.is_some()
+            embedding_client.is_some() && embedding_store.is_some(),
+            exa_rate_limiter.is_some()
         );
 
         Self {
@@ -128,6 +155,7 @@ impl NewsService {
             article_cache: RwLock::new(HashMap::new()),
             embedding_client,
             embedding_store,
+            exa_rate_limiter,
         }
     }
 
@@ -1268,6 +1296,16 @@ impl NewsService {
             .exa
             .as_ref()
             .ok_or_else(|| NewsServiceError::NotConfigured("Exa not configured".to_string()))?;
+
+        // CRITICAL: Acquire rate limiter before making Exa API call
+        // This prevents 429 errors when research + news services hit Exa concurrently
+        if let Some(ref rate_limiter) = self.exa_rate_limiter {
+            info!("[NEWS_SERVICE] Acquiring Exa rate limiter before search...");
+            rate_limiter.acquire().await;
+            info!("[NEWS_SERVICE] Rate limiter acquired, proceeding with Exa search");
+        } else {
+            warn!("[NEWS_SERVICE] No rate limiter configured for Exa - risk of 429 errors!");
+        }
 
         let search_query = build_semantic_query(market_title, outcome_titles);
         let must_match_terms = extract_must_match_terms(market_title, outcome_titles);
