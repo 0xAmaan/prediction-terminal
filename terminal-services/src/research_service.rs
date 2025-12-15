@@ -3,11 +3,7 @@
 //! This service orchestrates the deep research agent, managing research jobs
 //! and broadcasting progress updates via channels.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
@@ -16,69 +12,11 @@ use terminal_research::{
     ResearchStatus, ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion,
     SynthesizedReport, fetch_resolution_sources,
 };
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
 
+use crate::rate_limiter::RateLimiter;
 use crate::MarketService;
-
-/// Maximum Exa API requests per second (keeping under their 5/sec limit)
-const EXA_REQUESTS_PER_SECOND: usize = 4;
-
-/// Time-based rate limiter for API calls
-/// Uses a sliding window to enforce requests per second limit
-#[derive(Debug)]
-pub struct RateLimiter {
-    /// Timestamps of recent requests within the sliding window
-    request_times: Mutex<VecDeque<Instant>>,
-    /// Maximum requests allowed per second
-    max_per_second: usize,
-}
-
-impl RateLimiter {
-    /// Create a new rate limiter with the specified requests per second limit
-    pub fn new(max_per_second: usize) -> Self {
-        Self {
-            request_times: Mutex::new(VecDeque::with_capacity(max_per_second + 1)),
-            max_per_second,
-        }
-    }
-
-    /// Acquire permission to make a request, waiting if necessary to stay under rate limit
-    pub async fn acquire(&self) {
-        let window = Duration::from_secs(1);
-
-        loop {
-            let mut times = self.request_times.lock().await;
-            let now = Instant::now();
-
-            // Remove timestamps older than 1 second
-            while let Some(&oldest) = times.front() {
-                if now.duration_since(oldest) >= window {
-                    times.pop_front();
-                } else {
-                    break;
-                }
-            }
-
-            if times.len() < self.max_per_second {
-                // Under the limit - record this request and proceed
-                times.push_back(now);
-                return;
-            }
-
-            // At the limit - calculate how long to wait
-            let oldest = times.front().copied().unwrap();
-            let wait_until = oldest + window;
-            let wait_duration = wait_until.saturating_duration_since(now);
-
-            // Release lock before sleeping
-            drop(times);
-
-            // Wait until the oldest request falls outside the window
-            tokio::time::sleep(wait_duration + Duration::from_millis(10)).await;
-        }
-    }
-}
 
 /// Threshold for price-based cache invalidation (5% move)
 const PRICE_INVALIDATION_THRESHOLD: f64 = 0.05;
@@ -91,7 +29,8 @@ pub struct ResearchService {
     storage: Option<ResearchStorage>,
     jobs: RwLock<HashMap<String, ResearchJob>>,
     update_tx: broadcast::Sender<ResearchUpdate>,
-    /// Rate limiter for Exa API calls (4 requests/second to stay under 5/sec limit)
+    /// Shared rate limiter for Exa API calls (prevents 429 errors)
+    /// Uses minimum inter-request delay (~350ms) to stay safely under Exa's 5/sec limit
     exa_rate_limiter: Arc<RateLimiter>,
 }
 
@@ -101,6 +40,17 @@ impl ResearchService {
     /// Requires EXA_API_KEY and OPENAI_API_KEY environment variables to be set.
     /// AWS credentials are optional - if not provided, caching will be disabled.
     pub async fn new(market_service: Arc<MarketService>) -> Result<Self, TerminalError> {
+        Self::with_rate_limiter(market_service, None).await
+    }
+
+    /// Create a new research service with a shared Exa rate limiter
+    ///
+    /// The rate limiter should be shared with NewsService to prevent 429 errors
+    /// when both services make concurrent Exa API requests.
+    pub async fn with_rate_limiter(
+        market_service: Arc<MarketService>,
+        exa_rate_limiter: Option<Arc<RateLimiter>>,
+    ) -> Result<Self, TerminalError> {
         let exa_client = ExaClient::new()?;
         let openai_client = OpenAIClient::new()?;
         let (update_tx, _) = broadcast::channel(100);
@@ -117,6 +67,17 @@ impl ResearchService {
             }
         };
 
+        // Use provided rate limiter or create a new one
+        let exa_rate_limiter = exa_rate_limiter.unwrap_or_else(|| {
+            info!("Creating default Exa rate limiter for ResearchService");
+            RateLimiter::for_exa()
+        });
+
+        info!(
+            "ResearchService initialized with shared Exa rate limiter ({}ms interval)",
+            exa_rate_limiter.min_interval().as_millis()
+        );
+
         Ok(Self {
             market_service,
             exa_client,
@@ -124,7 +85,7 @@ impl ResearchService {
             storage,
             jobs: RwLock::new(HashMap::new()),
             update_tx,
-            exa_rate_limiter: Arc::new(RateLimiter::new(EXA_REQUESTS_PER_SECOND)),
+            exa_rate_limiter,
         })
     }
 
@@ -306,18 +267,28 @@ impl ResearchService {
         )
         .await;
 
-        // Execute all searches concurrently with rate limiting (max 4 requests/second)
+        // Execute all searches concurrently with rate limiting
+        // Uses shared rate limiter to stay under Exa's 5 req/sec limit
         let search_futures: Vec<_> = questions
             .sub_questions
             .iter()
-            .map(|question| {
+            .enumerate()
+            .map(|(idx, question)| {
                 let exa_client = self.exa_client.clone();
                 let rate_limiter = self.exa_rate_limiter.clone();
                 let question = question.clone();
+                let search_idx = idx + 1;
+                let total = total_searches;
 
                 async move {
-                    // Acquire permission from rate limiter (enforces 4 requests/second)
+                    // Acquire permission from shared rate limiter
+                    // This coordinates with NewsService to prevent 429 errors
+                    info!(
+                        "[RESEARCH] Acquiring rate limiter for search {}/{}: '{}'",
+                        search_idx, total, question.search_query.chars().take(50).collect::<String>()
+                    );
                     rate_limiter.acquire().await;
+                    info!("[RESEARCH] Rate limiter acquired for search {}/{}", search_idx, total);
 
                     let results = match question.category.as_str() {
                         "news" => {
@@ -891,17 +862,26 @@ impl ResearchService {
             market_id
         );
 
-        // Execute follow-up searches in parallel with rate limiting (max 4 requests/second)
+        // Execute follow-up searches in parallel with rate limiting
+        let total_followup = search_queries.len();
         let search_futures: Vec<_> = search_queries
             .iter()
-            .map(|query| {
+            .enumerate()
+            .map(|(idx, query)| {
                 let exa_client = self.exa_client.clone();
                 let rate_limiter = self.exa_rate_limiter.clone();
                 let query = query.clone();
+                let search_idx = idx + 1;
 
                 async move {
-                    // Acquire permission from rate limiter (enforces 4 requests/second)
+                    // Acquire permission from shared rate limiter
+                    info!(
+                        "[RESEARCH_FOLLOWUP] Acquiring rate limiter for search {}/{}: '{}'",
+                        search_idx, total_followup, query.chars().take(50).collect::<String>()
+                    );
                     rate_limiter.acquire().await;
+                    info!("[RESEARCH_FOLLOWUP] Rate limiter acquired for search {}/{}", search_idx, total_followup);
+
                     let results = exa_client.search_news(&query, 7, 5).await;
                     results.map(|r| (query, r.results))
                 }

@@ -12,6 +12,7 @@ pub mod market_stats;
 pub mod news_aggregator;
 pub mod news_cache;
 pub mod news_service;
+pub mod rate_limiter;
 pub mod research_service;
 pub mod trade_collector;
 pub mod trade_storage;
@@ -27,6 +28,7 @@ pub use market_stats::{MarketStats, MarketStatsService, Timeframe};
 pub use news_aggregator::NewsAggregator;
 pub use news_cache::{NewsCache, NewsCacheError};
 pub use news_service::{NewsService, NewsServiceError};
+pub use rate_limiter::{RateLimiter, RateLimiterStats};
 pub use research_service::ResearchService;
 pub use trade_collector::{TradeCollector, TradeCollectorConfig};
 pub use trade_storage::{

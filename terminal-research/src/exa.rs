@@ -1,9 +1,26 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use terminal_core::TerminalError;
-use tracing::instrument;
+use tracing::{info, instrument, warn};
 
 const EXA_API_BASE: &str = "https://api.exa.ai";
+
+/// Global request counter for debugging
+static EXA_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Get program start time for consistent timing
+fn program_epoch() -> Instant {
+    use std::sync::OnceLock;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+/// Get current time as milliseconds since program start
+fn now_ms() -> u64 {
+    program_epoch().elapsed().as_millis() as u64
+}
 
 #[derive(Debug, Clone)]
 pub struct ExaClient {
@@ -85,6 +102,20 @@ impl ExaClient {
     pub async fn search(&self, request: ExaSearchRequest) -> Result<ExaSearchResponse, TerminalError> {
         let url = format!("{}/search", EXA_API_BASE);
 
+        // Get request number and timing for debugging
+        let req_num = EXA_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+        let start_ms = now_ms();
+        let query_preview: String = request.query.chars().take(60).collect();
+
+        info!(
+            "[EXA_API] #{} SENDING request at T+{}ms | query: '{}...' | type: {} | num_results: {:?}",
+            req_num,
+            start_ms,
+            query_preview,
+            request.search_type,
+            request.num_results
+        );
+
         let response = self
             .client
             .post(&url)
@@ -93,13 +124,31 @@ impl ExaClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| TerminalError::network(format!("Exa API request failed: {}", e)))?;
+            .map_err(|e| {
+                let elapsed = now_ms() - start_ms;
+                warn!(
+                    "[EXA_API] #{} NETWORK ERROR after {}ms: {}",
+                    req_num, elapsed, e
+                );
+                TerminalError::network(format!("Exa API request failed: {}", e))
+            })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        let elapsed = now_ms() - start_ms;
+
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            warn!(
+                "[EXA_API] #{} FAILED after {}ms | status: {} | response: {}",
+                req_num, elapsed, status, body
+            );
             return Err(TerminalError::api(format!("Exa API error ({}): {}", status, body)));
         }
+
+        info!(
+            "[EXA_API] #{} SUCCESS after {}ms | status: {}",
+            req_num, elapsed, status
+        );
 
         response
             .json()
