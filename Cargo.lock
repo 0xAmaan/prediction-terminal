@@ -6116,6 +6116,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "chrono",
+ "futures",
  "regex",
  "reqwest",
  "scraper",

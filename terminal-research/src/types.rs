@@ -5,6 +5,47 @@ use uuid::Uuid;
 
 use crate::openai::SynthesizedReport;
 
+/// Default cache TTL in hours
+pub const DEFAULT_CACHE_TTL_HOURS: i64 = 24;
+
+/// Calculate adaptive cache TTL based on market characteristics
+///
+/// Factors:
+/// - Time to resolution: shorter TTL if market closes soon
+/// - Trading volume: higher volume = shorter TTL (more active market)
+/// - Default: 24 hours
+pub fn calculate_cache_ttl(
+    end_date: Option<chrono::DateTime<chrono::Utc>>,
+    volume_24h: Option<f64>,
+) -> i64 {
+    // Start with default
+    let mut ttl = DEFAULT_CACHE_TTL_HOURS;
+
+    // If market ends soon (within 7 days), use shorter TTL
+    if let Some(end) = end_date {
+        let days_until_end = (end - chrono::Utc::now()).num_days();
+        if days_until_end <= 1 {
+            ttl = 1; // 1 hour for markets ending within 24h
+        } else if days_until_end <= 3 {
+            ttl = 4; // 4 hours for markets ending within 3 days
+        } else if days_until_end <= 7 {
+            ttl = 8; // 8 hours for markets ending within a week
+        }
+    }
+
+    // If high volume market (>$100k in 24h), use shorter TTL
+    if let Some(vol) = volume_24h {
+        if vol > 100_000.0 {
+            ttl = ttl.min(8); // Cap at 8 hours for high volume markets
+        } else if vol > 50_000.0 {
+            ttl = ttl.min(12); // Cap at 12 hours for medium-high volume
+        }
+    }
+
+    // Minimum TTL of 1 hour
+    ttl.max(1)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchJob {
     pub id: String,
@@ -18,6 +59,16 @@ pub struct ResearchJob {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub cached: bool,
+    /// Cache TTL in hours (calculated based on market characteristics)
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_hours: i64,
+    /// Market price when research was cached (for invalidation on significant moves)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_at_price: Option<f64>,
+}
+
+fn default_cache_ttl() -> i64 {
+    DEFAULT_CACHE_TTL_HOURS
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,11 +107,19 @@ impl ResearchJob {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             cached: false,
+            cache_ttl_hours: DEFAULT_CACHE_TTL_HOURS,
+            cached_at_price: None,
         }
     }
 
     pub fn cache_key(&self) -> String {
         format!("research/{:?}/{}", self.platform, self.market_id).to_lowercase()
+    }
+
+    /// Set cache TTL and price for adaptive caching
+    pub fn set_cache_metadata(&mut self, ttl_hours: i64, price: Option<f64>) {
+        self.cache_ttl_hours = ttl_hours;
+        self.cached_at_price = price;
     }
 }
 

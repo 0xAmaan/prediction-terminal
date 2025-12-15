@@ -9,6 +9,7 @@ authors = ["Amaan"]
 terminal-core = { path = "../terminal-core" }
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }

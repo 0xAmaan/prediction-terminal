@@ -329,6 +329,8 @@ export interface SynthesizedReport {
   /** Sources that aren't cited inline but are still relevant */
   general_sources?: string[];
   trading_analysis?: TradingAnalysis;
+  /** AI-generated suggested follow-up questions for the chat */
+  suggested_followups?: string[];
 }
 
 // ============================================================================

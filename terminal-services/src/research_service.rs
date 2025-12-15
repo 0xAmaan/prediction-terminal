@@ -7,15 +7,21 @@ use std::{collections::HashMap, sync::Arc};
 
 use terminal_core::{Platform, TerminalError};
 use terminal_research::{
-    ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis, MarketContext,
-    OpenAIClient, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress, ResearchStatus,
-    ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion, SynthesizedReport,
-    fetch_resolution_sources,
+    calculate_cache_ttl, ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis,
+    MarketContext, OpenAIClient, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress,
+    ResearchStatus, ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion,
+    SynthesizedReport, fetch_resolution_sources,
 };
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, RwLock, Semaphore};
 use tracing::{info, instrument, warn};
 
 use crate::MarketService;
+
+/// Semaphore permits for Exa API rate limiting (5 requests/second)
+const EXA_RATE_LIMIT_PERMITS: usize = 5;
+
+/// Threshold for price-based cache invalidation (5% move)
+const PRICE_INVALIDATION_THRESHOLD: f64 = 0.05;
 
 /// Service for managing AI-powered market research
 pub struct ResearchService {
@@ -25,6 +31,8 @@ pub struct ResearchService {
     storage: Option<ResearchStorage>,
     jobs: RwLock<HashMap<String, ResearchJob>>,
     update_tx: broadcast::Sender<ResearchUpdate>,
+    /// Rate limiter for Exa API calls (5 requests/second)
+    exa_rate_limiter: Arc<Semaphore>,
 }
 
 impl ResearchService {
@@ -56,6 +64,7 @@ impl ResearchService {
             storage,
             jobs: RwLock::new(HashMap::new()),
             update_tx,
+            exa_rate_limiter: Arc::new(Semaphore::new(EXA_RATE_LIMIT_PERMITS)),
         })
     }
 
@@ -75,21 +84,62 @@ impl ResearchService {
         platform: Platform,
         market_id: &str,
     ) -> Result<ResearchJob, TerminalError> {
-        // Check S3 cache first
+        // Fetch market details first (needed for price comparison)
+        let market = self.market_service.get_market(platform, market_id).await?;
+        let current_price: f64 = market
+            .yes_price
+            .to_string()
+            .parse()
+            .unwrap_or(0.0);
+
+        // Check S3 cache
         if let Some(ref storage) = self.storage {
             let cache_key = ResearchStorage::cache_key(platform, market_id);
             match storage.get_cached(&cache_key).await {
                 Ok(Some(mut cached_job)) => {
-                    info!("Returning cached research for {}/{}", platform, market_id);
-                    cached_job.cached = true;
+                    // Check for price-based invalidation
+                    if let Some(cached_price) = cached_job.cached_at_price {
+                        let price_change = (current_price - cached_price).abs();
+                        let change_pct = if cached_price > 0.0 {
+                            price_change / cached_price
+                        } else {
+                            price_change
+                        };
 
-                    // Store in local jobs map for API access
-                    {
-                        let mut jobs = self.jobs.write().await;
-                        jobs.insert(cached_job.id.clone(), cached_job.clone());
+                        if change_pct > PRICE_INVALIDATION_THRESHOLD {
+                            info!(
+                                "Cache invalidated due to price move: {:.1}% (was {:.2}, now {:.2}) for {}/{}",
+                                change_pct * 100.0,
+                                cached_price,
+                                current_price,
+                                platform,
+                                market_id
+                            );
+                            // Fall through to create new research
+                        } else {
+                            info!("Returning cached research for {}/{}", platform, market_id);
+                            cached_job.cached = true;
+
+                            // Store in local jobs map for API access
+                            {
+                                let mut jobs = self.jobs.write().await;
+                                jobs.insert(cached_job.id.clone(), cached_job.clone());
+                            }
+
+                            return Ok(cached_job);
+                        }
+                    } else {
+                        // No cached price - return cache (older format)
+                        info!("Returning cached research (no price metadata) for {}/{}", platform, market_id);
+                        cached_job.cached = true;
+
+                        {
+                            let mut jobs = self.jobs.write().await;
+                            jobs.insert(cached_job.id.clone(), cached_job.clone());
+                        }
+
+                        return Ok(cached_job);
                     }
-
-                    return Ok(cached_job);
                 }
                 Ok(None) => {
                     info!("No valid cache for {}/{}", platform, market_id);
@@ -100,9 +150,6 @@ impl ResearchService {
                 }
             }
         }
-
-        // Fetch market details
-        let market = self.market_service.get_market(platform, market_id).await?;
 
         // Create new job
         let job = ResearchJob::new(platform, market_id, &market.title);
@@ -141,7 +188,15 @@ impl ResearchService {
 
         match result {
             Ok(report) => {
-                self.update_job_completed(job_id, report).await;
+                // Calculate adaptive cache TTL based on market characteristics
+                let cache_ttl = calculate_cache_ttl(
+                    market.close_time,
+                    market.volume.to_string().parse().ok(), // Convert Decimal to f64
+                );
+                let current_price = market.yes_price.to_string().parse().ok();
+
+                self.update_job_completed(job_id, report, cache_ttl, current_price)
+                    .await;
             }
             Err(e) => {
                 self.update_job_failed(job_id, &e.to_string()).await;
@@ -177,47 +232,72 @@ impl ResearchService {
             questions.sub_questions.len()
         );
 
-        // Step 2: Execute searches
-        // Note: Exa API has a 5 requests/second rate limit. We add delays between
-        // requests to stay well under this limit and avoid 429 errors.
+        // Step 2: Execute searches in parallel
+        // Uses semaphore-based rate limiting to respect Exa API's 5 req/sec limit
         self.update_status(job_id, ResearchStatus::Searching).await;
         let total_searches = questions.sub_questions.len() as u32;
 
+        self.update_progress(
+            job_id,
+            &format!("Searching {} questions in parallel...", total_searches),
+            2,
+            5,
+            None,
+        )
+        .await;
+
+        // Execute all searches concurrently with rate limiting
+        let search_futures: Vec<_> = questions
+            .sub_questions
+            .iter()
+            .map(|question| {
+                let exa_client = self.exa_client.clone();
+                let rate_limiter = self.exa_rate_limiter.clone();
+                let question = question.clone();
+
+                async move {
+                    // Acquire permit for rate limiting (max 5 concurrent requests)
+                    let _permit = rate_limiter.acquire().await.expect("semaphore closed");
+
+                    let results = match question.category.as_str() {
+                        "news" => {
+                            exa_client
+                                .search_news(&question.search_query, 7, 5)
+                                .await
+                        }
+                        _ => {
+                            exa_client
+                                .search_research(&question.search_query, 5)
+                                .await
+                        }
+                    };
+
+                    // Small delay after request to space out concurrent calls
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                    results.map(|r| (question, r.results))
+                }
+            })
+            .collect();
+
+        // Wait for all searches to complete
+        let search_results_vec: Vec<Result<(SubQuestion, Vec<ExaSearchResult>), TerminalError>> =
+            futures::future::join_all(search_futures).await;
+
+        // Collect successful results, fail if any search failed
         let mut search_results: Vec<(SubQuestion, Vec<ExaSearchResult>)> = Vec::new();
+        for result in search_results_vec {
+            search_results.push(result?);
+        }
 
-        for (i, question) in questions.sub_questions.iter().enumerate() {
-            // Rate limit: Wait 250ms between Exa API calls (max 4 req/sec, well under 5 req/sec limit)
-            if i > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
-
-            self.update_progress(
-                job_id,
-                &format!("Searching: {}", question.category),
-                2,
-                5,
-                Some(&question.search_query),
-            )
+        self.update_search_progress(job_id, total_searches, total_searches)
             .await;
 
-            self.update_search_progress(job_id, i as u32, total_searches)
-                .await;
-
-            let results = match question.category.as_str() {
-                "news" => {
-                    self.exa_client
-                        .search_news(&question.search_query, 7, 5)
-                        .await?
-                }
-                _ => {
-                    self.exa_client
-                        .search_research(&question.search_query, 5)
-                        .await?
-                }
-            };
-
-            search_results.push((question.clone(), results.results));
-        }
+        info!(
+            "Completed {} searches in parallel for job {}",
+            search_results.len(),
+            job_id
+        );
 
         // Step 3: Analyze (included in synthesis)
         self.update_status(job_id, ResearchStatus::Analyzing).await;
@@ -235,18 +315,21 @@ impl ResearchService {
             .synthesize_report(&context, &questions, &search_results)
             .await?;
 
-        // Step 5: Generate trading analysis
+        // Step 5: Generate trading analysis and suggested follow-ups (in parallel)
         self.update_progress(job_id, "Generating trading analysis...", 5, 5, None)
             .await;
 
-        let trading_analysis = self
-            .openai_client
-            .generate_trading_analysis(&context, &report, &search_results)
-            .await
-            .ok(); // Don't fail the whole job if trading analysis fails
+        // Run trading analysis and follow-up generation concurrently
+        let (trading_analysis, suggested_followups) = tokio::join!(
+            self.openai_client.generate_trading_analysis(&context, &report, &search_results),
+            self.openai_client.generate_suggested_followups(&report, &context)
+        );
 
-        // Attach trading analysis to report
-        report.trading_analysis = trading_analysis;
+        // Attach trading analysis to report (don't fail if it fails)
+        report.trading_analysis = trading_analysis.ok();
+
+        // Attach suggested follow-ups (don't fail if it fails)
+        report.suggested_followups = suggested_followups.unwrap_or_default();
 
         Ok(report)
     }
@@ -312,13 +395,23 @@ impl ResearchService {
     }
 
     /// Mark job as completed with report and save to S3 cache
-    async fn update_job_completed(&self, job_id: &str, report: SynthesizedReport) {
+    ///
+    /// Also sets adaptive cache metadata (TTL and price for invalidation)
+    async fn update_job_completed(
+        &self,
+        job_id: &str,
+        report: SynthesizedReport,
+        cache_ttl_hours: i64,
+        cached_at_price: Option<f64>,
+    ) {
         let completed_job = {
             let mut jobs = self.jobs.write().await;
             if let Some(job) = jobs.get_mut(job_id) {
                 job.status = ResearchStatus::Completed;
                 job.report = Some(report.clone());
                 job.updated_at = chrono::Utc::now();
+                job.cache_ttl_hours = cache_ttl_hours;
+                job.cached_at_price = cached_at_price;
                 Some(job.clone())
             } else {
                 None
@@ -329,6 +422,11 @@ impl ResearchService {
         if let (Some(ref storage), Some(ref job)) = (&self.storage, &completed_job) {
             if let Err(e) = storage.save(job).await {
                 warn!("Failed to cache research result: {}", e);
+            } else {
+                info!(
+                    "Saved research with TTL {} hours for job {}",
+                    cache_ttl_hours, job_id
+                );
             }
         }
 
@@ -393,6 +491,19 @@ impl ResearchService {
             .get_orderbook(platform, market_id)
             .await
             .ok();
+
+        // Fetch 24h price history for price change calculation (best effort)
+        let price_history = self
+            .market_service
+            .get_native_price_history(platform, market_id, "24H", None)
+            .await
+            .ok();
+
+        // Extract price from 24h ago (first candle in the history)
+        let price_24h_ago = price_history
+            .as_ref()
+            .and_then(|history| history.first())
+            .map(|p| p.p);
 
         // Fetch resolution source URLs if resolution rules contain URLs
         // This provides current data from the resolution source (e.g., leaderboard rankings)
@@ -471,8 +582,8 @@ impl ResearchService {
             title: market.title,
             description: market.description,
             current_price,
-            price_24h_ago: None, // TODO: Could fetch from price history if needed
-            volume_24h: None,    // Not directly available from PredictionMarket
+            price_24h_ago,
+            volume_24h: None, // Not directly available from PredictionMarket
             total_volume,
             num_traders: None, // Not directly available from PredictionMarket
             recent_trades,
@@ -723,15 +834,29 @@ impl ResearchService {
             market_id
         );
 
-        // Execute searches with rate limiting (Exa API: 5 req/sec limit)
+        // Execute follow-up searches in parallel with rate limiting
+        let search_futures: Vec<_> = search_queries
+            .iter()
+            .map(|query| {
+                let exa_client = self.exa_client.clone();
+                let rate_limiter = self.exa_rate_limiter.clone();
+                let query = query.clone();
+
+                async move {
+                    let _permit = rate_limiter.acquire().await.expect("semaphore closed");
+                    let results = exa_client.search_news(&query, 7, 5).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    results.map(|r| (query, r.results))
+                }
+            })
+            .collect();
+
+        let search_results_vec: Vec<Result<(String, Vec<ExaSearchResult>), TerminalError>> =
+            futures::future::join_all(search_futures).await;
+
         let mut search_results: Vec<(String, Vec<ExaSearchResult>)> = Vec::new();
-        for (i, query) in search_queries.iter().enumerate() {
-            // Rate limit: Wait 250ms between Exa API calls
-            if i > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
-            let results = self.exa_client.search_news(query, 7, 5).await?;
-            search_results.push((query.clone(), results.results));
+        for result in search_results_vec {
+            search_results.push(result?);
         }
 
         // Update the report with new findings
@@ -772,6 +897,7 @@ impl Clone for ResearchService {
             storage: None, // Storage is not cloned - each instance would need its own
             jobs: RwLock::new(HashMap::new()), // Fresh jobs map
             update_tx: self.update_tx.clone(),
+            exa_rate_limiter: self.exa_rate_limiter.clone(), // Share rate limiter
         }
     }
 }

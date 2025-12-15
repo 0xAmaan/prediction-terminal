@@ -14,6 +14,9 @@ use url::Url;
 use crate::exa::ExaSearchResult;
 use crate::types::{MarketContext, OrderBookSummary, RecentTrade, ResolutionSourceData};
 
+/// Model used for lighter tasks like question decomposition (faster, cheaper)
+const DECOMPOSITION_MODEL: &str = "gpt-4o-mini";
+
 #[derive(Debug, Clone)]
 pub struct OpenAIClient {
     client: Client<OpenAIConfig>,
@@ -99,6 +102,9 @@ pub struct SynthesizedReport {
     /// Trading-specific analysis (fair value, catalysts, resolution, contrarian view)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trading_analysis: Option<crate::types::TradingAnalysis>,
+    /// AI-generated suggested follow-up questions for the chat
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_followups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,8 +219,9 @@ Decompose this into research sub-questions that account for the current market s
             format_resolution_context(&context.resolution_rules, &context.resolution_source_content),
         );
 
+        // Use gpt-4o-mini for decomposition (faster, cheaper, sufficient for this task)
         let request = CreateChatCompletionRequestArgs::default()
-            .model(&self.model)
+            .model(DECOMPOSITION_MODEL)
             .messages([
                 ChatCompletionRequestSystemMessageArgs::default()
                     .content(system_prompt)
@@ -1137,6 +1144,110 @@ Generate a TradingAnalysis for this market. Pay special attention to the Resolut
         analysis.implied_edge = fair_value_midpoint - analysis.current_price;
 
         Ok(analysis)
+    }
+
+    /// Generate suggested follow-up questions based on the research report
+    ///
+    /// Creates 3-5 trading-focused questions that users might want to explore further.
+    #[instrument(skip(self, report, context))]
+    pub async fn generate_suggested_followups(
+        &self,
+        report: &SynthesizedReport,
+        context: &MarketContext,
+    ) -> Result<Vec<String>, TerminalError> {
+        let system_prompt = r#"You are a prediction market trading assistant. Based on a research report, suggest follow-up questions a trader would want to ask.
+
+Generate 3-5 follow-up questions that:
+1. Dig deeper into trading implications
+2. Explore resolution edge cases or timing
+3. Investigate contrarian scenarios or risks
+4. Clarify catalyst timing or impact
+5. Explore information gaps in the research
+
+Questions should be specific to THIS market and actionable for trading decisions.
+
+Respond with valid JSON:
+{
+  "questions": [
+    "Question 1?",
+    "Question 2?",
+    "Question 3?"
+  ]
+}"#;
+
+        let key_factors_str: String = report
+            .key_factors
+            .iter()
+            .map(|f| format!("- {} ({})", f.factor, f.impact))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let user_prompt = format!(
+            r#"## Market
+Title: {title}
+Current Price: {price}
+
+## Research Summary
+{summary}
+
+## Key Factors
+{factors}
+
+## Sections Covered
+{sections}
+
+Generate 3-5 specific follow-up questions a trader would want to ask."#,
+            title = context.title,
+            price = format_price(context.current_price),
+            summary = &report.executive_summary[..report.executive_summary.len().min(500)],
+            factors = key_factors_str,
+            sections = report.sections.iter().map(|s| format!("- {}", s.heading)).collect::<Vec<_>>().join("\n"),
+        );
+
+        // Use gpt-4o-mini for this simpler task
+        let request = CreateChatCompletionRequestArgs::default()
+            .model(DECOMPOSITION_MODEL)
+            .messages([
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(user_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+            ])
+            .temperature(0.5)
+            .max_tokens(500u32)
+            .build()
+            .map_err(|e| TerminalError::internal(e.to_string()))?;
+
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| TerminalError::api(format!("OpenAI API error: {}", e)))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_ref())
+            .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
+
+        let json_str = extract_json(content)?;
+
+        #[derive(Deserialize)]
+        struct SuggestedQuestions {
+            questions: Vec<String>,
+        }
+
+        let parsed: SuggestedQuestions = serde_json::from_str(&json_str)
+            .map_err(|e| TerminalError::parse(format!("Failed to parse suggested questions: {}", e)))?;
+
+        Ok(parsed.questions)
     }
 }
 
