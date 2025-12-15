@@ -43,9 +43,15 @@ pub struct ClobClient {
 impl ClobClient {
     /// Create a new CLOB client with the given wallet
     pub fn new(wallet: TradingWallet) -> Self {
+        // Build HTTP client with proper headers to avoid Cloudflare blocks
+        let http_client = reqwest::Client::builder()
+            .user_agent("polymarket-terminal/1.0")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             wallet,
-            http_client: reqwest::Client::new(),
+            http_client,
             base_url: CLOB_BASE_URL.to_string(),
         }
     }
@@ -229,11 +235,31 @@ impl ClobClient {
     ) -> Result<String> {
         let message = format!("{}{}{}{}", timestamp, method, path, body);
 
+        debug!("HMAC secret length: {}, first 4 chars: {:?}", secret.len(), &secret.chars().take(4).collect::<String>());
+
+        // Polymarket uses URL-safe base64 for the secret
+        // Try multiple decoders to handle different padding scenarios
         let secret_bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
             secret,
         )
-        .map_err(|e| TradingError::Signing(format!("Invalid secret encoding: {}", e)))?;
+        .or_else(|e1| {
+            debug!("URL_SAFE_NO_PAD failed: {}", e1);
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, secret)
+        })
+        .or_else(|e2| {
+            debug!("URL_SAFE failed: {}", e2);
+            // Try adding padding if missing
+            let padded = match secret.len() % 4 {
+                2 => format!("{}==", secret),
+                3 => format!("{}=", secret),
+                _ => secret.to_string(),
+            };
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, &padded)
+        })
+        .map_err(|e| TradingError::Signing(format!("Invalid secret encoding: {}. Secret preview: {}...", e, &secret.chars().take(8).collect::<String>())))?;
+
+        debug!("Secret decoded successfully, {} bytes", secret_bytes.len());
 
         let mut mac = HmacSha256::new_from_slice(&secret_bytes)
             .map_err(|e| TradingError::Signing(format!("Failed to create HMAC: {}", e)))?;
@@ -241,8 +267,9 @@ impl ClobClient {
         mac.update(message.as_bytes());
         let result = mac.finalize();
 
+        // Output signature in URL-safe base64 (matching Python client)
         Ok(base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
             result.into_bytes(),
         ))
     }

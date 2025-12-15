@@ -1,6 +1,6 @@
 extern crate proc_macro;
 
-use convert_case::{Boundary, Case, Casing};
+use convert_case::{Boundary, Case, Casing, Converter};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::DeriveInput;
@@ -71,11 +71,16 @@ pub fn de_sub_kind_derive(input: TokenStream) -> TokenStream {
     // Determine SubKind name
     let sub_kind = &ast.ident;
 
-    let expected_sub_kind = sub_kind
-        .to_string()
+    let expected_sub_kind = Converter::new()
         .from_case(Case::Pascal)
-        .without_boundaries(&Boundary::letter_digit())
-        .to_case(Case::Snake);
+        .to_case(Case::Snake)
+        .remove_boundaries(&[
+            Boundary::DigitLower,
+            Boundary::DigitUpper,
+            Boundary::LowerDigit,
+            Boundary::UpperDigit,
+        ])
+        .convert(sub_kind.to_string());
 
     let generated = quote! {
         impl<'de> serde::Deserialize<'de> for #sub_kind {

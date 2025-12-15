@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use bincode::config;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use tracing::{debug, info, instrument};
@@ -111,7 +112,7 @@ impl EmbeddingStore {
     /// Save or update a market embedding
     #[instrument(skip(self, embedding))]
     pub fn save_market_embedding(&self, embedding: &MarketEmbedding) -> Result<()> {
-        let embedding_bytes = bincode::serialize(&embedding.embedding)?;
+        let embedding_bytes = bincode::encode_to_vec(&embedding.embedding, config::standard())?;
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
@@ -158,8 +159,9 @@ impl EmbeddingStore {
         let result = stmt
             .query_row(params![market_id], |row| {
                 let embedding_bytes: Vec<u8> = row.get(3)?;
-                let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                let (embedding, _): (Vec<f32>, _) =
+                    bincode::decode_from_slice(&embedding_bytes, config::standard())
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 let created_at: i64 = row.get(6)?;
                 let updated_at: i64 = row.get(7)?;
@@ -216,7 +218,8 @@ impl EmbeddingStore {
         for row in rows {
             let (market_id, platform, embedding_bytes) =
                 row.map_err(|e| EmbeddingError::Database(e.to_string()))?;
-            let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)?;
+            let (embedding, _): (Vec<f32>, _) =
+                bincode::decode_from_slice(&embedding_bytes, config::standard())?;
             results.push((market_id, platform, embedding));
         }
 
@@ -254,7 +257,8 @@ impl EmbeddingStore {
         for row in rows {
             let (market_id, platform, embedding_bytes) =
                 row.map_err(|e| EmbeddingError::Database(e.to_string()))?;
-            let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)?;
+            let (embedding, _): (Vec<f32>, _) =
+                bincode::decode_from_slice(&embedding_bytes, config::standard())?;
             results.push((market_id, platform, embedding));
         }
 
@@ -279,7 +283,7 @@ impl EmbeddingStore {
     /// Save a news embedding to cache
     #[instrument(skip(self, embedding))]
     pub fn save_news_embedding(&self, embedding: &NewsEmbedding) -> Result<()> {
-        let embedding_bytes = bincode::serialize(&embedding.embedding)?;
+        let embedding_bytes = bincode::encode_to_vec(&embedding.embedding, config::standard())?;
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
@@ -320,8 +324,9 @@ impl EmbeddingStore {
 
         match stmt.query_row(params![article_id], |row| {
             let embedding_bytes: Vec<u8> = row.get(2)?;
-            let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let (embedding, _): (Vec<f32>, _) =
+                bincode::decode_from_slice(&embedding_bytes, config::standard())
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
             let created_at: i64 = row.get(3)?;
             let expires_at: i64 = row.get(4)?;

@@ -13,8 +13,7 @@ use tracing::{debug, info, instrument};
 use terminal_core::{NewsFeed, NewsItem, NewsSearchParams, PredictionMarket};
 use terminal_embedding::{EmbeddingClient, EmbeddingStore, NewsEmbedding, find_similar_markets};
 use terminal_news::{
-    ArticleContent, DexScreenerClient, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError,
-    RssClient,
+    ArticleContent, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError, RssClient,
 };
 
 use crate::market_service::MarketService;
@@ -67,8 +66,6 @@ pub struct NewsService {
     rss: RssClient,
     /// Google News client for market-specific search (primary for markets)
     google_news: GoogleNewsClient,
-    /// DexScreener client for trending token signals (free, no auth)
-    dexscreener: DexScreenerClient,
     /// Exa.ai client for semantic search (market-specific news, optional fallback)
     exa: Option<ExaClient>,
     firecrawl: Option<FirecrawlClient>,
@@ -112,7 +109,7 @@ impl NewsService {
             .ok();
 
         info!(
-            "Initializing NewsService (Google News: enabled, DexScreener: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
+            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
             exa_api_key.is_some(),
             firecrawl_api_key.is_some(),
             embedding_client.is_some() && embedding_store.is_some()
@@ -121,7 +118,6 @@ impl NewsService {
         Self {
             rss: RssClient::new(),
             google_news: GoogleNewsClient::new(),
-            dexscreener: DexScreenerClient::new(),
             exa: exa_api_key.map(ExaClient::new),
             firecrawl: firecrawl_api_key.map(FirecrawlClient::new),
             market_service: None,
@@ -346,17 +342,9 @@ impl NewsService {
             std::cmp::min(5, markets.len())
         );
 
-        // PHASE 3: Fetch DexScreener trending signals (free API, early token alerts)
-        let dexscreener_items = self.dexscreener.fetch_trending_signals(20).await;
-        info!(
-            "Fetched {} items from DexScreener trending signals",
-            dexscreener_items.len()
-        );
-
-        // Combine static, dynamic, and DexScreener items
+        // Combine static and dynamic items
         let mut all_items = static_rss_items;
         all_items.extend(dynamic_items);
-        all_items.extend(dexscreener_items);
 
         // Filter for recent articles only (last 30 days)
         let now = chrono::Utc::now();

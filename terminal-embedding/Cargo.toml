@@ -8,7 +8,7 @@ edition = "2024"
 tokio = { workspace = true }
 
 # OpenAI client
-async-openai = "0.25"
+async-openai = { version = "0.31", features = ["embedding"] }
 
 # Vector operations
 ndarray = "0.16"
@@ -19,7 +19,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-bincode = "1.3"
+bincode = "2.0"
 
 # Time
 chrono = { workspace = true }

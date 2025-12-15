@@ -14,7 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-async-openai = "0.25"
+async-openai = { version = "0.31", features = ["chat-completion"] }
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { workspace = true, features = ["serde"] }
 aws-sdk-s3 = "1.0"

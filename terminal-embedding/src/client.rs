@@ -2,7 +2,7 @@
 
 use async_openai::{
     config::OpenAIConfig,
-    types::{CreateEmbeddingRequest, EmbeddingInput},
+    types::embeddings::{CreateEmbeddingRequest, EmbeddingInput},
     Client,
 };
 use tracing::{debug, info, instrument};

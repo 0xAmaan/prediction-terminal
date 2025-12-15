@@ -1,6 +1,6 @@
 use async_openai::{
     config::OpenAIConfig,
-    types::{
+    types::chat::{
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
         CreateChatCompletionRequestArgs,
     },

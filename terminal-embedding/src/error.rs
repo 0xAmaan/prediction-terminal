@@ -12,8 +12,11 @@ pub enum EmbeddingError {
     #[error("Database error: {0}")]
     Database(String),
 
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    #[error("Serialization encode error: {0}")]
+    SerializationEncode(#[from] bincode::error::EncodeError),
+
+    #[error("Serialization decode error: {0}")]
+    SerializationDecode(#[from] bincode::error::DecodeError),
 
     #[error("Invalid embedding dimension: expected {expected}, got {actual}")]
     InvalidDimension { expected: usize, actual: usize },

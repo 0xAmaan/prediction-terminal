@@ -14,9 +14,7 @@ use terminal_news::discord::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use twilight_cache_inmemory::{InMemoryCache, ResourceType};
-use twilight_gateway::{
-    Event, Intents, Shard, ShardId,
-};
+use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt};
 use twilight_model::channel::Message;
 use twilight_model::gateway::payload::incoming::{MessageCreate, ReactionAdd, ReactionRemove};
 use twilight_model::id::Id;
@@ -110,13 +108,14 @@ impl DiscordAggregator {
 
         info!("Discord Gateway shard created, starting event loop...");
 
-        // Event loop
-        loop {
-            let event = match shard.next_event().await {
+        // Event loop (using twilight 0.16+ idiomatic pattern)
+        while let Some(item) = shard.next_event(EventTypeFlags::all()).await {
+            let event = match item {
                 Ok(event) => event,
                 Err(source) => {
                     error!("Error receiving event: {:?}", source);
-                    return Err(DiscordAggregatorError::GatewayError(source.to_string()));
+                    // Continue on non-fatal errors, exit on fatal
+                    continue;
                 }
             };
 
@@ -152,6 +151,9 @@ impl DiscordAggregator {
                 }
             }
         }
+
+        warn!("Discord Gateway stream ended");
+        Ok(())
     }
 
     /// Pre-cache guild and channel information on startup
