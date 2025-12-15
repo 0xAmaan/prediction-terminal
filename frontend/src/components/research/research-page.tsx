@@ -182,9 +182,9 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex min-h-0">
+      <main className="flex-1 flex min-h-0 overflow-hidden">
         {/* Chat Panel */}
-        <div className="w-2/5 border-r border-border/30 flex flex-col min-h-0">
+        <div className="w-2/5 border-r border-border/30 flex flex-col min-h-0 h-full overflow-hidden">
           <ResearchChat
             platform={platform}
             marketId={marketId}
@@ -196,7 +196,7 @@ export function ResearchPage({ platform, marketId, market }: ResearchPageProps) 
         </div>
 
         {/* Document Panel */}
-        <div ref={documentPanelRef} className="w-3/5 flex flex-col min-h-0 overflow-y-auto p-6">
+        <div ref={documentPanelRef} className="w-3/5 flex flex-col min-h-0 h-full overflow-y-auto p-6">
           {/* Start Research Button - shown for new markets */}
           {showStartButton && (
             <div className="flex flex-col items-center justify-center py-20">

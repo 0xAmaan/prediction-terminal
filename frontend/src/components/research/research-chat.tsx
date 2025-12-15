@@ -136,17 +136,17 @@ export function ResearchChat({
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full">
       {/* Chat header */}
-      <div className="flex-shrink-0 px-4 py-3 border-b border-border/30">
+      <div className="shrink-0 px-4 py-3 border-b border-border/30">
         <h3 className="font-medium text-sm">Follow-up Questions</h3>
         <p className="text-xs text-muted-foreground">
           Ask questions about the research
         </p>
       </div>
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+      {/* Messages area - grows to fill space, scrolls internally */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -291,8 +291,8 @@ export function ResearchChat({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div className="flex-shrink-0 p-4 border-t border-border/30">
+      {/* Input area - always at bottom */}
+      <div className="shrink-0 p-4 border-t border-border/30 bg-background">
         {disabled ? (
           <div className="text-center py-2 text-muted-foreground text-sm">
             Chat disabled while viewing historical version

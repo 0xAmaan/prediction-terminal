@@ -33,6 +33,7 @@ export const MarketTabs = ({
 
   return (
     <div
+      className="shrink-0"
       style={{
         backgroundColor: fey.bg100,
         borderBottom: `1px solid ${fey.border}`,

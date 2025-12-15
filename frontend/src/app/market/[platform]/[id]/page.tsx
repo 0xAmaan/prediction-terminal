@@ -210,9 +210,12 @@ const MarketPageContent = ({
   // Tab-based Layout (for both binary and multi-outcome markets)
   // =========================================================================
 
+  // Use h-screen for research tab to enable fixed input, min-h-screen for others
+  const isResearchTab = activeTab === "research";
+
   return (
     <motion.div
-      className="min-h-screen flex flex-col"
+      className={`flex flex-col ${isResearchTab ? "h-screen overflow-hidden" : "min-h-screen"}`}
       style={{ backgroundColor: fey.bg100 }}
       initial="hidden"
       animate="visible"
@@ -293,7 +296,7 @@ const MarketPageContent = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="flex-1 flex flex-col min-h-0"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden"
           >
             <ResearchView
               platform={market.platform}

@@ -158,7 +158,7 @@ export function ResearchView({ platform, marketId, market }: ResearchViewProps) 
     <div className="flex-1 flex min-h-0 overflow-hidden">
       {/* Chat Panel - Left Side */}
       <div
-        className="w-2/5 flex flex-col min-h-0"
+        className="w-2/5 flex flex-col min-h-0 h-full overflow-hidden"
         style={{ borderRight: `1px solid ${fey.border}` }}
       >
         <ResearchChat
@@ -174,7 +174,7 @@ export function ResearchView({ platform, marketId, market }: ResearchViewProps) 
       {/* Document Panel - Right Side */}
       <div
         ref={documentPanelRef}
-        className="w-3/5 flex flex-col min-h-0 overflow-y-auto p-6"
+        className="w-3/5 flex flex-col min-h-0 h-full overflow-y-auto p-6"
         style={{ backgroundColor: fey.bg100 }}
       >
         {/* Start Research Button - shown for new markets */}
