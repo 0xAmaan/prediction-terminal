@@ -293,6 +293,7 @@ impl KalshiMarket {
             yes_price: self.yes_price(),
             no_price: self.no_price(),
             volume: Decimal::from(self.volume.unwrap_or(0)),
+            volume_24hr: self.volume_24h.map(Decimal::from),
             liquidity: self.open_interest.map(Decimal::from),
             close_time: self.close_time.or(self.expiration_time),
             created_at: self.created_time.or(self.open_time),
@@ -703,6 +704,7 @@ pub fn markets_to_multi_outcome(
         yes_price: leader_price,
         no_price: Decimal::ONE - leader_price,
         volume: Decimal::from(total_volume),
+        volume_24hr: None, // Multi-outcome events don't aggregate 24h volume
         liquidity: None,
         close_time,
         created_at,

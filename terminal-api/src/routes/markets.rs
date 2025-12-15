@@ -29,6 +29,8 @@ pub struct ListMarketsQuery {
     pub filter: Option<String>,
     /// Maximum number of results
     pub limit: Option<usize>,
+    /// Sort order: "volume" (default), "expiring_soon", "newest"
+    pub sort: Option<String>,
 }
 
 /// Response for listing markets
@@ -199,12 +201,43 @@ async fn list_markets(
         }
     } else {
         // List uses cache - instant
-        let mut markets = state.market_cache.get_markets(platform_filter);
+        state.market_cache.get_markets(platform_filter)
+    };
+
+    // Apply sorting based on sort parameter
+    let now = Utc::now();
+    let seven_days = Duration::days(7);
+    let mut markets = markets;
+    match params.sort.as_deref() {
+        Some("expiring_soon") => {
+            // Filter to markets expiring within 7 days, sort by close_time ascending
+            markets.retain(|m| {
+                m.close_time
+                    .map(|ct| ct > now && ct < now + seven_days)
+                    .unwrap_or(false)
+            });
+            markets.sort_by(|a, b| a.close_time.cmp(&b.close_time));
+        }
+        Some("newest") => {
+            // Filter to markets created within 7 days, sort by created_at descending
+            markets.retain(|m| {
+                m.created_at
+                    .map(|ct| ct > now - seven_days)
+                    .unwrap_or(false)
+            });
+            markets.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        }
+        _ => {
+            // Default: sort by volume descending (already done by cache, but ensure it)
+        }
+    }
+
+    // Apply limit if specified (for non-search queries)
+    if params.search.is_none() {
         if let Some(limit) = params.limit {
             markets.truncate(limit);
         }
-        markets
-    };
+    }
 
     let count = markets.len();
     info!(

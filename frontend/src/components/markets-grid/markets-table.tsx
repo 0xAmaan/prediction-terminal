@@ -306,16 +306,18 @@ export const MarketsTable = ({
                 </Link>
               </TableCell>
 
-              {/* Volume */}
+              {/* Volume - prefer API's 24hr volume when available */}
               <TableCell className="text-right">
                 <Link
                   href={`/market/${market.platform}/${market.id}`}
                   className="block"
                 >
                   <span style={{ color: colors.textSecondary }}>
-                    {stats
-                      ? formatVolume(stats.volume).replace(" Vol.", "")
-                      : formatVolume(market.volume).replace(" Vol.", "")}
+                    {market.volume_24hr
+                      ? formatVolume(market.volume_24hr).replace(" Vol.", "")
+                      : stats
+                        ? formatVolume(stats.volume).replace(" Vol.", "")
+                        : formatVolume(market.volume).replace(" Vol.", "")}
                   </span>
                 </Link>
               </TableCell>

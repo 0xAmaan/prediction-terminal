@@ -216,12 +216,37 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
         ),
     ];
 
-    // Add CryptoPanic if API key is configured
+    // Add CryptoPanic feeds if API key is configured
     // CryptoPanic aggregates tweets and news from major crypto accounts
     if let Ok(api_key) = std::env::var("CRYPTOPANIC_API_KEY") {
         if !api_key.is_empty() && api_key != "YOUR_API_KEY_HERE" {
+            // RISING feed - Early signals gaining traction (tweets + news)
+            // This is the "alpha" feed - catches content before it goes viral
             feeds.push(RssFeed::new(
-                "CryptoPanic",
+                "CryptoPanic Rising",
+                &format!(
+                    "https://cryptopanic.com/api/developer/v2/posts/?auth_token={}&public=true&filter=rising&format=rss",
+                    api_key
+                ),
+                "https://cryptopanic.com",
+                &["crypto", "bitcoin", "ethereum", "defi", "solana", "rising"],
+            ));
+
+            // HOT MEDIA feed - Trending tweets from crypto accounts
+            // Social signals that are currently moving markets
+            feeds.push(RssFeed::new(
+                "CryptoPanic Tweets",
+                &format!(
+                    "https://cryptopanic.com/api/developer/v2/posts/?auth_token={}&public=true&kind=media&filter=hot&format=rss",
+                    api_key
+                ),
+                "https://cryptopanic.com",
+                &["crypto", "twitter", "social", "trending"],
+            ));
+
+            // Regular news feed (keeping for comprehensive coverage)
+            feeds.push(RssFeed::new(
+                "CryptoPanic News",
                 &format!(
                     "https://cryptopanic.com/api/developer/v2/posts/?auth_token={}&public=true&kind=news&format=rss",
                     api_key
@@ -229,7 +254,8 @@ pub fn get_curated_feeds() -> Vec<RssFeed> {
                 "https://cryptopanic.com",
                 &["crypto", "bitcoin", "ethereum", "defi", "solana"],
             ));
-            tracing::info!("✓ CryptoPanic feed enabled with API key");
+
+            tracing::info!("✓ CryptoPanic feeds enabled: Rising (early signals) + Hot Tweets + News");
         }
     }
 

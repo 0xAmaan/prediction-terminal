@@ -56,6 +56,10 @@ pub struct PredictionMarket {
     /// Trading volume (in platform's native unit)
     pub volume: Decimal,
 
+    /// 24-hour trading volume (directly from platform API when available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_24hr: Option<Decimal>,
+
     /// Available liquidity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub liquidity: Option<Decimal>,

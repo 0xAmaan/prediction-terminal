@@ -222,41 +222,39 @@ const MarketPageContent = ({
       animate="visible"
       variants={staggerContainer}
     >
-      {/* Minimal Header - Hide on Trading tab (TradingView has its own header) */}
-      {activeTab !== "trading" && (
-        <motion.header
-          className="sticky top-0 z-50"
-          style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
-          variants={staggerItem}
-        >
-          <div className="px-6 lg:px-8 py-3">
-            <div className="flex items-center justify-between">
-              <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
+      {/* Minimal Header - Always show back button */}
+      <motion.header
+        className="sticky top-0 z-50"
+        style={{ backgroundColor: fey.bg100, borderBottom: `1px solid ${fey.border}` }}
+        variants={staggerItem}
+      >
+        <div className="px-6 lg:px-8 py-3">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="p-2 rounded-lg transition-colors hover:bg-white/5" style={{ color: fey.grey500 }}>
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
 
-              <div className="flex items-center gap-3">
-                <ResearchButton
-                  platform={market.platform}
-                  marketId={market.id}
-                  marketTitle={market.title}
-                />
-                {market.url && (
-                  <a
-                    href={market.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
-                    style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                )}
-              </div>
+            <div className="flex items-center gap-3">
+              <ResearchButton
+                platform={market.platform}
+                marketId={market.id}
+                marketTitle={market.title}
+              />
+              {market.url && (
+                <a
+                  href={market.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors hover:bg-white/5"
+                  style={{ border: `1px solid ${fey.border}`, color: fey.grey500 }}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
             </div>
           </div>
-        </motion.header>
-      )}
+        </div>
+      </motion.header>
 
       {/* Tab Navigation */}
       <MarketTabs activeTab={activeTab} onTabChange={setActiveTab} />

@@ -12,6 +12,7 @@ export interface PredictionMarket {
   yes_price: string; // Decimal as string from Rust
   no_price: string;
   volume: string;
+  volume_24hr: string | null; // 24h volume directly from platform API
   liquidity: string | null;
   close_time: string | null; // ISO datetime
   created_at: string | null; // ISO datetime
@@ -81,6 +82,7 @@ export interface ListMarketsParams {
   search?: string;
   filter?: MarketFilter;
   limit?: number;
+  sort?: "volume" | "expiring_soon" | "newest";
 }
 
 // ============================================================================
