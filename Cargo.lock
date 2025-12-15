@@ -379,7 +379,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
- "dashmap 6.1.0",
+ "dashmap",
  "either",
  "futures",
  "futures-utils-wasm",
@@ -2329,19 +2329,6 @@ dependencies = [
  "darling_core 0.21.3",
  "quote",
  "syn 2.0.111",
-]
-
-[[package]]
-name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
 ]
 
 [[package]]
@@ -6061,7 +6048,7 @@ version = "0.1.0"
 dependencies = [
  "atom_syndication",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "hex",
  "quick-xml",
  "regex",
@@ -6077,7 +6064,7 @@ dependencies = [
  "twilight-cache-inmemory",
  "twilight-gateway",
  "twilight-http",
- "twilight-model",
+ "twilight-model 0.15.4",
  "url",
  "urlencoding",
 ]
@@ -6136,7 +6123,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "futures",
  "futures-util",
  "md5",
@@ -6159,7 +6146,7 @@ dependencies = [
  "tracing",
  "twilight-cache-inmemory",
  "twilight-gateway",
- "twilight-model",
+ "twilight-model 0.15.4",
 ]
 
 [[package]]
@@ -6648,14 +6635,14 @@ dependencies = [
 
 [[package]]
 name = "twilight-cache-inmemory"
-version = "0.15.4"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f5a9338cc26a6ffa77932c6386b227714e1a9b75f5cf644739d0c3605e19a95"
+checksum = "3d205ec8d1fc62db874cc7af787cc5919a6d8513974159de950764917c563f30"
 dependencies = [
- "bitflags 1.3.2",
- "dashmap 5.5.3",
+ "bitflags 2.10.0",
+ "dashmap",
  "serde",
- "twilight-model",
+ "twilight-model 0.17.1",
 ]
 
 [[package]]
@@ -6677,7 +6664,7 @@ dependencies = [
  "tracing",
  "twilight-gateway-queue",
  "twilight-http",
- "twilight-model",
+ "twilight-model 0.15.4",
 ]
 
 [[package]]
@@ -6706,7 +6693,7 @@ dependencies = [
  "tokio",
  "tracing",
  "twilight-http-ratelimiting",
- "twilight-model",
+ "twilight-model 0.15.4",
  "twilight-validate",
 ]
 
@@ -6736,12 +6723,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "twilight-model"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf6bb7b93a7f765d89b3388cc710c0ae16104579e06bb30ea1ee6bd41420a8b"
+dependencies = [
+ "bitflags 2.10.0",
+ "serde",
+ "serde-value",
+ "serde_repr",
+ "time",
+]
+
+[[package]]
 name = "twilight-validate"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3595d5ad595d8d3a97096a01899b53d3a8117ab16deda27526b315a1db815da4"
 dependencies = [
- "twilight-model",
+ "twilight-model 0.15.4",
 ]
 
 [[package]]
