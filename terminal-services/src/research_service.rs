@@ -10,6 +10,7 @@ use terminal_research::{
     ChatHistory, ChatMessage, ExaClient, ExaSearchResult, FollowUpAnalysis, MarketContext,
     OpenAIClient, OrderBookSummary, RecentTrade, ResearchJob, ResearchProgress, ResearchStatus,
     ResearchStorage, ResearchUpdate, ResearchVersion, SubQuestion, SynthesizedReport,
+    fetch_resolution_sources,
 };
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, instrument, warn};
@@ -368,8 +369,8 @@ impl ResearchService {
 
     /// Build rich market context for AI research
     ///
-    /// Fetches market details, recent trades, and order book to provide
-    /// the AI with accurate real-time market data.
+    /// Fetches market details, recent trades, order book, and resolution source content
+    /// to provide the AI with accurate real-time market data.
     #[instrument(skip(self))]
     async fn build_market_context(
         &self,
@@ -392,6 +393,18 @@ impl ResearchService {
             .get_orderbook(platform, market_id)
             .await
             .ok();
+
+        // Fetch resolution source URLs if resolution rules contain URLs
+        // This provides current data from the resolution source (e.g., leaderboard rankings)
+        let resolution_source_content = fetch_resolution_sources(market.resolution_source.as_deref()).await;
+        if !resolution_source_content.is_empty() {
+            info!(
+                "Fetched {} resolution sources for {}/{}",
+                resolution_source_content.len(),
+                platform,
+                market_id
+            );
+        }
 
         // Convert Decimal to f64 for the context
         let current_price = market
@@ -464,6 +477,8 @@ impl ResearchService {
             num_traders: None, // Not directly available from PredictionMarket
             recent_trades,
             order_book_summary,
+            resolution_rules: market.resolution_source,
+            resolution_source_content,
         })
     }
 
