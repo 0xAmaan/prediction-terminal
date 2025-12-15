@@ -127,8 +127,11 @@ impl ResearchStorage {
                     info!("Cache miss for key: {}", key);
                     Ok(None)
                 } else {
-                    warn!("S3 error for key {}: {}", key, error_str);
-                    Err(TerminalError::internal(format!("S3 error: {}", e)))
+                    // Treat all other S3 errors as cache misses rather than fatal errors
+                    // This includes: access denied, bucket not found, network errors, etc.
+                    // The research service will simply proceed without cached data
+                    warn!("S3 error for key {} (treating as cache miss): {}", key, error_str);
+                    Ok(None)
                 }
             }
         }

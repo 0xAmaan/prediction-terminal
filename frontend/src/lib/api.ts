@@ -432,9 +432,7 @@ export const api = {
       `${API_BASE}/api/research/${platform}/${encodeURIComponent(marketId)}`,
     );
 
-    // Treat 404 and 500 errors as "no research found"
-    // 500 can happen if the research service is unavailable
-    if (response.status === 404 || response.status === 500) {
+    if (response.status === 404) {
       return null;
     }
 
