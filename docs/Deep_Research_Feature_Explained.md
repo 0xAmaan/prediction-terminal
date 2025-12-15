@@ -1,11 +1,13 @@
-# Research Document Feature - How It Works
+# Deep Research Feature - How It Works
 
 ## The Big Picture
 
-When a user clicks "Research" on a market (e.g., "Will Bitcoin hit $100k?"), the system:
-1. **Breaks the question into sub-questions** (using GPT-4o)
-2. **Searches the web for each sub-question** (using Exa.ai)
-3. **Synthesizes everything into a report** (using GPT-4o)
+When a user opens the Research tab on a market (e.g., "Will Bitcoin hit $100k?"), the system:
+1. **Gathers market context** (price, volume, trades, order book, resolution rules)
+2. **Fetches resolution source data** (scrapes URLs mentioned in resolution criteria)
+3. **Breaks the question into 6 trading-focused sub-questions** (using GPT-4o)
+4. **Searches the web for each sub-question** (using Exa.ai)
+5. **Synthesizes everything into a report with trading analysis** (using GPT-4o)
 
 The left chat panel lets users ask follow-up questions, which either get answered from the existing report OR trigger new research that updates the document.
 
@@ -13,35 +15,74 @@ The left chat panel lets users ask follow-up questions, which either get answere
 
 ## Step-by-Step Flow
 
-### 1. User Initiates Research
+### 1. User Opens Research Tab
 
-**Input:** Market title + description (e.g., "Will Tesla stock reach $300 by March 2025?")
+Research is integrated directly into the market detail page as a tab (not a standalone page). When the tab loads:
+- Check for cached research via `GET /research/:platform/:market_id`
+- If cached, display immediately
+- If not, show "Start Research" button
 
-**API Call:** `POST /research/:platform/:market_id`
+**UI Location:** `frontend/src/components/market/views/research-view.tsx`
 
-### 2. Question Decomposition (GPT-4o)
+### 2. Market Context Gathering
 
-The market question gets sent to GPT-4o with this prompt (simplified):
+Before generating questions, the system collects comprehensive market data:
 
+```typescript
+interface MarketContext {
+  title: string;
+  description?: string;
+  current_price?: number;        // 0.0 to 1.0
+  price_24h_ago?: number;        // For calculating change
+  volume_24h?: number;           // 24h volume in dollars
+  total_volume?: number;         // Lifetime volume
+  num_traders?: number;
+  recent_trades: RecentTrade[];  // Last ~10 trades
+  order_book_summary?: OrderBookSummary;
+  resolution_rules?: string;
+  resolution_source_content: ResolutionSourceData[]; // Fetched from resolution URLs
+}
 ```
-"Break this market question into 4-6 sub-questions covering different angles"
-```
+
+**Resolution Source Fetching:** If the market has resolution source URLs (e.g., leaderboards, official data sources), the system fetches and extracts content from these pages to give the AI accurate resolution context.
+
+### 3. Question Decomposition (GPT-4o)
+
+The market context gets sent to GPT-4o with a trading-focused prompt. Unlike general research, questions are specifically designed to find **trading edge**.
+
+**6 Required Sub-Question Types:**
+
+| Purpose | Category | What It Finds |
+|---------|----------|---------------|
+| `base_rate` | historical | Historical frequency of similar events |
+| `market_pricing` | analysis | What assumptions the market is pricing in |
+| `catalyst` | news | Upcoming events that could move the market |
+| `contrarian` | analysis | The case against market consensus |
+| `resolution` | analysis | Exact resolution criteria and edge cases |
+| `information_asymmetry` | news | What informed traders might know |
 
 **Output example:**
 ```json
 {
   "main_question": "Will Tesla reach $300?",
   "sub_questions": [
-    { "question": "What are Tesla's recent earnings?", "category": "news", "search_query": "Tesla Q3 2024 earnings results" },
-    { "question": "What do analysts predict?", "category": "expert_opinion", "search_query": "Tesla stock analyst price targets 2025" },
-    { "question": "Historical price movements", "category": "historical", "search_query": "Tesla stock price history volatility" }
+    {
+      "question": "What percentage of price targets this ambitious get hit?",
+      "category": "historical",
+      "search_query": "stock price target accuracy prediction market",
+      "purpose": "base_rate"
+    },
+    {
+      "question": "What's priced in at the current probability?",
+      "category": "analysis",
+      "search_query": "Tesla stock analyst expectations 2025",
+      "purpose": "market_pricing"
+    }
   ]
 }
 ```
 
-Categories: `news`, `analysis`, `historical`, `expert_opinion`
-
-### 3. Web Search (Exa.ai)
+### 4. Web Search (Exa.ai)
 
 For each sub-question, Exa.ai searches the web:
 
@@ -55,40 +96,84 @@ For each sub-question, Exa.ai searches the web:
 - Full text (truncated to 1500 chars)
 - Highlighted sentences (most relevant excerpts)
 
-### 4. Report Synthesis (GPT-4o)
+### 5. Report Synthesis (GPT-4o)
 
-All search results get combined and sent to GPT-4o:
+All search results plus market context get combined and sent to GPT-4o. The output includes both the research report AND trading analysis.
 
-```
-Market: {title}
-Description: {description}
-
-## Research Data
-### Sub-question 1: Recent earnings?
-- Article: "Tesla Q3 Earnings Beat Expectations"
-  URL: https://...
-  Highlights: "Revenue increased 8%...", "Margins improved..."
-
-### Sub-question 2: Analyst predictions?
-...
-```
-
-GPT-4o returns a structured JSON report:
-
+**Report Structure:**
 ```json
 {
   "title": "Tesla $300 Price Target Analysis",
   "executive_summary": "2-3 paragraphs summarizing key findings...",
   "sections": [
-    { "heading": "Recent Financial Performance", "content": "markdown content..." },
-    { "heading": "Analyst Sentiment", "content": "..." }
+    { "heading": "Recent Financial Performance", "content": "markdown with [1] citations..." }
   ],
   "key_factors": [
-    { "factor": "Strong Q3 earnings beat", "impact": "bullish", "confidence": "high" },
-    { "factor": "Rising competition from BYD", "impact": "bearish", "confidence": "medium" }
+    { "factor": "Strong Q3 earnings beat", "impact": "bullish", "confidence": "high" }
   ],
-  "confidence_assessment": "Information quality assessment and gaps...",
-  "sources": ["https://...", "https://..."]
+  "confidence_assessment": "Information quality assessment...",
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://...",
+      "title": "Tesla Q3 Earnings Report",
+      "site_name": "reuters.com",
+      "favicon_url": "https://www.google.com/s2/favicons?domain=reuters.com&sz=32"
+    }
+  ],
+  "trading_analysis": {
+    "fair_value_low": 0.35,
+    "fair_value_high": 0.45,
+    "current_price": 0.52,
+    "implied_edge": -0.12,
+    "estimate_confidence": "medium",
+    "fair_value_reasoning": "Based on historical base rates...",
+    "catalysts": [...],
+    "resolution_analysis": {...},
+    "contrarian_case": {...}
+  }
+}
+```
+
+---
+
+## Trading Analysis Components
+
+The `trading_analysis` section provides actionable trading insights:
+
+### Fair Value Estimation
+- `fair_value_low` / `fair_value_high`: AI's probability range estimate
+- `implied_edge`: Midpoint minus current price (positive = buy signal)
+- `estimate_confidence`: high/medium/low
+
+### Catalysts
+Upcoming events that could move the market:
+```json
+{
+  "date": "2025-01-15",
+  "event": "Q4 Earnings Report",
+  "expected_impact": "high",
+  "direction_if_positive": "bullish"
+}
+```
+
+### Resolution Analysis
+```json
+{
+  "resolution_summary": "Resolves YES if Tesla closes at or above $300...",
+  "resolution_source": "Official NASDAQ closing price",
+  "ambiguity_flags": ["Unclear if after-hours counts"],
+  "historical_edge_cases": ["Similar market in 2023 had disputed settlement"]
+}
+```
+
+### Contrarian Analysis
+```json
+{
+  "consensus_view": "Market is pricing in strong delivery numbers",
+  "contrarian_case": "Competition from BYD could pressure margins...",
+  "mispricing_reasons": ["Recency bias from Q3 beat"],
+  "contrarian_triggers": ["Weak China sales in December"]
 }
 ```
 
@@ -138,31 +223,46 @@ GPT-4o generates an answer using only the existing report content. No new search
 
 ---
 
-## Where Each Part of the Report Comes From
+## Inline Citations
 
-| Section | Source |
-|---------|--------|
-| **Title** | GPT-4o generates based on market title |
-| **Executive Summary** | GPT-4o synthesizes key findings from all search results |
-| **Sections** (4-6 paragraphs) | Each maps roughly to a sub-question's research |
-| **Key Factors** | GPT-4o extracts factors with impact (bullish/bearish/neutral) and confidence |
-| **Confidence Assessment** | GPT-4o evaluates information quality and gaps |
-| **Sources** | URLs from Exa search results |
+Report content uses inline citation markers like `[1]`, `[2]` that link to sources:
+
+```markdown
+Tesla's Q3 earnings beat expectations with revenue up 8% [1]. Analysts have mixed
+views on the $300 target, with some citing competition concerns [2].
+```
+
+Each citation ID maps to a `SourceInfo` object with rich metadata (title, site name, favicon).
 
 ---
 
-## Key Files to Know
+## Key API Endpoints
 
-| File | Purpose |
-|------|---------|
-| `terminal-research/src/openai.rs` | All GPT-4o prompts and JSON parsing |
-| `terminal-research/src/exa.rs` | Exa.ai API client |
-| `terminal-services/src/research_service.rs` | Orchestrates the pipeline |
-| `terminal-api/src/routes/research.rs` | HTTP endpoints |
-| `frontend/src/components/research/research-page.tsx` | Main UI layout |
-| `frontend/src/components/research/research-chat.tsx` | Chat panel |
-| `frontend/src/components/research/research-document.tsx` | Report display |
-| `frontend/src/hooks/use-research.ts` | State management & WebSocket |
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/research/:platform/:market_id` | POST | Start new research job |
+| `/research/:platform/:market_id` | GET | Get cached research |
+| `/research/job/:job_id` | GET | Get specific job by ID |
+| `/research/jobs` | GET | List all jobs |
+| `/research/:platform/:market_id/versions` | GET | List all versions |
+| `/research/:platform/:market_id/versions/:key` | GET | Get specific version |
+| `/research/:platform/:market_id/chat` | GET | Get chat history |
+| `/research/:platform/:market_id/chat` | POST | Send chat message |
+
+---
+
+## WebSocket Protocol
+
+Research progress broadcasts via WebSocket:
+
+```json
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "status_changed", "job_id": "...", "status": "searching"}}
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "progress_update", "job_id": "...", "progress": {...}}}
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "completed", "job_id": "...", "report": {...}}}
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "followup_started", "job_id": "..."}}
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "document_editing", "job_id": "...", "content_chunk": "..."}}
+{"type": "ResearchUpdate", "ResearchUpdate": {"type": "followup_completed", "job_id": "...", "report": {...}}}
+```
 
 ---
 
@@ -178,9 +278,38 @@ Progress broadcasts via WebSocket so the frontend can show "Searching: news..." 
 
 ---
 
+## Key Files to Know
+
+### Backend (Rust)
+
+| File | Purpose |
+|------|---------|
+| `terminal-research/src/types.rs` | Core types (ResearchJob, MarketContext, TradingAnalysis) |
+| `terminal-research/src/openai.rs` | GPT-4o prompts, JSON parsing, report synthesis |
+| `terminal-research/src/exa.rs` | Exa.ai API client |
+| `terminal-research/src/storage.rs` | S3 storage for reports and chat |
+| `terminal-research/src/resolution_source.rs` | Resolution URL fetching |
+| `terminal-services/src/research_service.rs` | Orchestrates the pipeline |
+| `terminal-api/src/routes/research.rs` | HTTP endpoints |
+
+### Frontend (React)
+
+| File | Purpose |
+|------|---------|
+| `frontend/src/components/market/views/research-view.tsx` | Main research UI (in market tabs) |
+| `frontend/src/components/research/research-document.tsx` | Report display with citations |
+| `frontend/src/components/research/research-chat.tsx` | Chat panel for follow-ups |
+| `frontend/src/components/research/trading-analysis.tsx` | Trading analysis display |
+| `frontend/src/components/research/inline-citation.tsx` | Citation hover/click component |
+| `frontend/src/components/research/version-history.tsx` | Version selector |
+| `frontend/src/hooks/use-research.ts` | State management & WebSocket |
+| `frontend/src/lib/api.ts` | REST API client |
+
+---
+
 ## Caching
 
 - Reports cached in S3 with 24-hour TTL
 - Each follow-up research creates a new version (`v{timestamp}.json`)
 - `current.json` always points to latest
-- Version history viewable in UI
+- Version history viewable in UI via dropdown
