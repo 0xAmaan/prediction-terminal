@@ -19,3 +19,5 @@ chrono = { workspace = true, features = ["serde"] }
 aws-sdk-s3 = "1.0"
 aws-config = "1.0"
 url = "2"
+regex = "1"
+scraper = "0.20"

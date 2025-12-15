@@ -267,6 +267,23 @@ pub struct MarketContext {
     pub recent_trades: Vec<RecentTrade>,
     /// Order book summary
     pub order_book_summary: Option<OrderBookSummary>,
+    /// Resolution rules/criteria for this market
+    pub resolution_rules: Option<String>,
+    /// Content fetched from resolution source URLs (e.g., leaderboard data)
+    /// Format: Vec<(url, fetched_content)>
+    #[serde(default)]
+    pub resolution_source_content: Vec<ResolutionSourceData>,
+}
+
+/// Data fetched from a resolution source URL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolutionSourceData {
+    /// The URL that was fetched
+    pub url: String,
+    /// The fetched content (text extracted from the page)
+    pub content: String,
+    /// When this was fetched
+    pub fetched_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// A recent trade for market context

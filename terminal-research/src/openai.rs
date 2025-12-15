@@ -12,7 +12,7 @@ use tracing::instrument;
 use url::Url;
 
 use crate::exa::ExaSearchResult;
-use crate::types::{MarketContext, OrderBookSummary, RecentTrade};
+use crate::types::{MarketContext, OrderBookSummary, RecentTrade, ResolutionSourceData};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIClient {
@@ -199,8 +199,9 @@ Description: {}
 - Total Volume: {}
 {}
 {}
+{}
 
-Decompose this into research sub-questions that account for the current market state."#,
+Decompose this into research sub-questions that account for the current market state and resolution criteria."#,
             context.title,
             context.description.as_deref().unwrap_or("No description"),
             format_price(context.current_price),
@@ -209,6 +210,7 @@ Decompose this into research sub-questions that account for the current market s
             format_volume(context.total_volume),
             format_recent_trades(&context.recent_trades),
             format_order_book(&context.order_book_summary),
+            format_resolution_context(&context.resolution_rules, &context.resolution_source_content),
         );
 
         let request = CreateChatCompletionRequestArgs::default()
@@ -366,6 +368,7 @@ Description: {}
 - Total Volume: {}
 {}
 {}
+{}
 
 {}
 
@@ -379,6 +382,7 @@ Description: {}
             format_volume(context.total_volume),
             format_recent_trades(&context.recent_trades),
             format_order_book(&context.order_book_summary),
+            format_resolution_context(&context.resolution_rules, &context.resolution_source_content),
             sources_list,
             research_data
         );
@@ -1053,6 +1057,11 @@ Respond with valid JSON matching this exact schema:
             )
         };
 
+        let resolution_context = format_resolution_context(
+            &context.resolution_rules,
+            &context.resolution_source_content,
+        );
+
         let user_prompt = format!(
             r#"## Market
 Title: {title}
@@ -1062,6 +1071,7 @@ Current Price: {price}
 - 24h Volume: {volume}
 - Recent Trade Flow: {trade_flow}
 - Order Book: {orderbook}
+{resolution_context}
 
 ## Research Report Summary
 {executive_summary}
@@ -1072,12 +1082,13 @@ Current Price: {price}
 ## Raw Search Findings
 {search_findings}
 
-Generate a TradingAnalysis for this market."#,
+Generate a TradingAnalysis for this market. Pay special attention to the Resolution Source Data if provided - it contains the CURRENT state of the resolution source that will be used to resolve this market."#,
             title = context.title,
             price = format_price(context.current_price),
             volume = format_volume(context.volume_24h),
             trade_flow = trade_flow,
             orderbook = format_order_book(&context.order_book_summary),
+            resolution_context = resolution_context,
             executive_summary = report.executive_summary,
             key_factors = key_factors_str,
             search_findings = search_findings,
@@ -1224,6 +1235,35 @@ fn format_order_book(summary: &Option<OrderBookSummary>) -> String {
         ),
         None => String::new(),
     }
+}
+
+/// Format resolution rules and fetched source content for the prompt
+fn format_resolution_context(
+    rules: &Option<String>,
+    sources: &[ResolutionSourceData],
+) -> String {
+    let mut output = String::new();
+
+    if let Some(rules) = rules {
+        output.push_str("\n## Resolution Rules\n");
+        output.push_str(rules);
+        output.push('\n');
+    }
+
+    if !sources.is_empty() {
+        output.push_str("\n## Resolution Source Data (CURRENT STATE)\n");
+        output.push_str("The following data was fetched from the resolution source URLs mentioned in the rules.\n");
+        output.push_str("Use this data to understand the CURRENT state relevant to this market's resolution.\n\n");
+
+        for source in sources {
+            output.push_str(&format!("### Source: {}\n", source.url));
+            output.push_str(&format!("Fetched at: {}\n\n", source.fetched_at.format("%Y-%m-%d %H:%M:%S UTC")));
+            output.push_str(&source.content);
+            output.push_str("\n\n");
+        }
+    }
+
+    output
 }
 
 #[cfg(test)]
