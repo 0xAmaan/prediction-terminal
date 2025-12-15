@@ -73,15 +73,18 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [timeframe, setTimeframe] = useState<Timeframe>("24h");
 
-  // Server-side filtering - filter is now passed to the API
+  // Determine sort parameter based on filter
+  const sortParam = filter === "expiring" ? "expiring_soon" : filter === "new" ? "newest" : undefined;
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["markets", search, filter],
+    queryKey: ["markets", search, filter, sortParam],
     queryFn: () =>
       api.listMarkets({
         platform: "polymarket",
         search: search || undefined,
         filter: filter as MarketFilter,
-        limit: 100,
+        limit: sortParam ? 200 : 100, // Fetch more for server-side filtered views
+        sort: sortParam,
       }),
   });
 

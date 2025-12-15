@@ -37,6 +37,9 @@ export const api = {
     if (params.limit) {
       searchParams.set("limit", params.limit.toString());
     }
+    if (params.sort) {
+      searchParams.set("sort", params.sort);
+    }
 
     const url = `${API_BASE}/api/markets${searchParams.toString() ? `?${searchParams}` : ""}`;
     const response = await fetch(url);

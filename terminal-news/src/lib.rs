@@ -5,7 +5,9 @@
 //! - RSS feeds: Curated feeds from major news sources (primary for global)
 //! - Exa.ai: AI-powered news search with real-time index (optional)
 //! - Firecrawl: Web scraping for full article content (optional)
+//! - DexScreener: Trending token signals (free API, no auth required)
 
+pub mod dexscreener;
 pub mod error;
 pub mod exa;
 pub mod firecrawl;
@@ -17,6 +19,7 @@ pub mod types;
 #[cfg(feature = "discord")]
 pub mod discord;
 
+pub use dexscreener::{DexScreenerClient, DexScreenerError};
 pub use error::NewsError;
 pub use exa::ExaClient;
 pub use firecrawl::FirecrawlClient;

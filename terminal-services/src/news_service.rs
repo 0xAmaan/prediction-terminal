@@ -13,7 +13,8 @@ use tracing::{debug, info, instrument};
 use terminal_core::{NewsFeed, NewsItem, NewsSearchParams, PredictionMarket};
 use terminal_embedding::{EmbeddingClient, EmbeddingStore, NewsEmbedding, find_similar_markets};
 use terminal_news::{
-    ArticleContent, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError, RssClient,
+    ArticleContent, DexScreenerClient, ExaClient, FirecrawlClient, GoogleNewsClient, NewsError,
+    RssClient,
 };
 
 use crate::market_service::MarketService;
@@ -66,6 +67,8 @@ pub struct NewsService {
     rss: RssClient,
     /// Google News client for market-specific search (primary for markets)
     google_news: GoogleNewsClient,
+    /// DexScreener client for trending token signals (free, no auth)
+    dexscreener: DexScreenerClient,
     /// Exa.ai client for semantic search (market-specific news, optional fallback)
     exa: Option<ExaClient>,
     firecrawl: Option<FirecrawlClient>,
@@ -109,7 +112,7 @@ impl NewsService {
             .ok();
 
         info!(
-            "Initializing NewsService (Google News: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
+            "Initializing NewsService (Google News: enabled, DexScreener: enabled, Exa: {}, Firecrawl: {}, Embeddings: {})",
             exa_api_key.is_some(),
             firecrawl_api_key.is_some(),
             embedding_client.is_some() && embedding_store.is_some()
@@ -118,6 +121,7 @@ impl NewsService {
         Self {
             rss: RssClient::new(),
             google_news: GoogleNewsClient::new(),
+            dexscreener: DexScreenerClient::new(),
             exa: exa_api_key.map(ExaClient::new),
             firecrawl: firecrawl_api_key.map(FirecrawlClient::new),
             market_service: None,
@@ -342,9 +346,17 @@ impl NewsService {
             std::cmp::min(5, markets.len())
         );
 
-        // Combine static and dynamic items
+        // PHASE 3: Fetch DexScreener trending signals (free API, early token alerts)
+        let dexscreener_items = self.dexscreener.fetch_trending_signals(20).await;
+        info!(
+            "Fetched {} items from DexScreener trending signals",
+            dexscreener_items.len()
+        );
+
+        // Combine static, dynamic, and DexScreener items
         let mut all_items = static_rss_items;
         all_items.extend(dynamic_items);
+        all_items.extend(dexscreener_items);
 
         // Filter for recent articles only (last 30 days)
         let now = chrono::Utc::now();
@@ -1595,8 +1607,7 @@ fn extract_must_match_terms(
         "rate",
         "percent",
         "percentage",
-        "election",
-        "presidential",
+        // REMOVED: "election" and "presidential" - these are important topical terms
         "champion",
         "winner",
         "championship",
@@ -1879,6 +1890,17 @@ fn extract_must_match_terms(
                         {
                             terms.push(full_name);
                         }
+                        // Also add the last name separately (e.g., "Lula" from "Luiz Inácio Lula")
+                        // News articles often refer to people by last name only
+                        if let Some(last_name) = name_parts.last() {
+                            if last_name.len() >= 3
+                                && !terms
+                                    .iter()
+                                    .any(|t: &String| t.to_lowercase() == last_name.to_lowercase())
+                            {
+                                terms.push(last_name.clone());
+                            }
+                        }
                     }
                     name_parts.clear();
                 }
@@ -1892,6 +1914,16 @@ fn extract_must_match_terms(
                     .any(|t: &String| t.to_lowercase() == full_name.to_lowercase())
                 {
                     terms.push(full_name);
+                }
+                // Also add the last name separately
+                if let Some(last_name) = name_parts.last() {
+                    if last_name.len() >= 3
+                        && !terms
+                            .iter()
+                            .any(|t: &String| t.to_lowercase() == last_name.to_lowercase())
+                    {
+                        terms.push(last_name.clone());
+                    }
                 }
             }
         }

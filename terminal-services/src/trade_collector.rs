@@ -133,6 +133,16 @@ impl TradeCollector {
             _ => {}
         }
 
+        // Skip CLOB token IDs for Polymarket (they're very long numeric strings, ~70+ chars)
+        // The trades API expects event IDs (short numeric strings like "23664")
+        if platform == Platform::Polymarket && market_id.len() > 20 && market_id.chars().all(|c| c.is_ascii_digit()) {
+            debug!(
+                "Skipping trade collection for Polymarket CLOB token ID: {}...",
+                &market_id[..20]
+            );
+            return Ok(0);
+        }
+
         // Get the latest trade we have to determine where to start
         let latest_trade = self.storage.get_latest_trade(platform, market_id)?;
         let latest_timestamp = latest_trade.map(|t| t.timestamp);
@@ -205,6 +215,15 @@ impl TradeCollector {
         market_id: &str,
         max_pages: usize,
     ) -> Result<usize, TradeCollectorError> {
+        // Skip CLOB token IDs for Polymarket
+        if platform == Platform::Polymarket && market_id.len() > 20 && market_id.chars().all(|c| c.is_ascii_digit()) {
+            debug!(
+                "Skipping backfill for Polymarket CLOB token ID: {}...",
+                &market_id[..20.min(market_id.len())]
+            );
+            return Ok(0);
+        }
+
         info!(
             "Starting backfill for {:?}/{} (max {} pages)",
             platform, market_id, max_pages

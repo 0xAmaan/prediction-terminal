@@ -128,9 +128,9 @@ export const NewsCard = ({ item, compact = false }: NewsCardProps) => {
                   >
                     <Badge
                       variant="outline"
-                      className="text-xs px-2 py-1 bg-primary/5 border-primary/20 text-primary hover:bg-primary/15 cursor-pointer transition-colors max-w-[300px] truncate"
+                      className="text-xs px-2 py-1 bg-primary/5 border-primary/20 text-primary hover:bg-primary/15 cursor-pointer transition-colors inline-block max-w-[280px]"
                     >
-                      {market.title}
+                      <span className="block truncate text-left">{market.title}</span>
                     </Badge>
                   </Link>
                 ))}

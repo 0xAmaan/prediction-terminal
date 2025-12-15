@@ -407,6 +407,7 @@ impl PolymarketMarket {
             yes_price,
             no_price,
             volume: self.parse_volume(),
+            volume_24hr: None, // Individual markets don't have 24hr volume in API
             liquidity: self.parse_liquidity(),
             close_time: self.end_date,
             created_at: self.created_at,
@@ -485,6 +486,10 @@ pub struct PolymarketEvent {
     /// Total volume
     #[serde(default)]
     pub volume: Option<f64>,
+
+    /// 24-hour volume (directly from Polymarket API)
+    #[serde(default, rename = "volume24hr")]
+    pub volume_24hr: Option<f64>,
 
     /// Image URL
     #[serde(default)]
@@ -852,6 +857,7 @@ impl PolymarketEvent {
                 yes_price,
                 no_price,
                 volume: self.parse_volume(),
+                volume_24hr: self.volume_24hr.map(|v| Decimal::from_str(&v.to_string()).unwrap_or(Decimal::ZERO)),
                 liquidity: self.parse_liquidity(),
                 close_time: self.end_date,
                 created_at: self.created_at.or(self.start_date),
@@ -930,6 +936,7 @@ impl PolymarketEvent {
                 yes_price,
                 no_price,
                 volume: self.parse_volume(),
+                volume_24hr: self.volume_24hr.map(|v| Decimal::from_str(&v.to_string()).unwrap_or(Decimal::ZERO)),
                 liquidity: self.parse_liquidity(),
                 close_time: self.end_date,
                 created_at: self.created_at.or(self.start_date),
