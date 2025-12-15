@@ -104,7 +104,7 @@ prost = { version = "0.14.1" }
 regex = { version = "1.11" }
 rss = { version = "2.0" }
 atom_syndication = { version = "0.12" }
-quick-xml = { version = "0.37" }
+quick-xml = { version = "0.38" }
 
 # Discord Integration
 twilight-gateway = { version = "0.15" }
