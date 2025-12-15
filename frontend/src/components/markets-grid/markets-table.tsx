@@ -161,12 +161,6 @@ export const MarketsTable = ({
             Volume
           </TableHead>
           <TableHead
-            className="w-[50px] text-center"
-            style={{ color: colors.textMuted }}
-          >
-            Txns
-          </TableHead>
-          <TableHead
             className="w-[90px] text-right"
             style={{ color: colors.textMuted }}
           >
@@ -326,27 +320,6 @@ export const MarketsTable = ({
                 </Link>
               </TableCell>
 
-              {/* Transaction Counts */}
-              <TableCell className="text-center">
-                <Link
-                  href={`/market/${market.platform}/${market.id}`}
-                  className="block"
-                >
-                  {stats ? (
-                    <div className="flex flex-col items-center gap-0.5 text-xs font-mono tabular-nums">
-                      <span style={{ color: colors.teal }}>{stats.yes_txn_count}Y</span>
-                      <span style={{ color: colors.red }}>{stats.no_txn_count}N</span>
-                    </div>
-                  ) : statsLoading ? (
-                    <div
-                      className="h-8 w-8 rounded animate-pulse mx-auto"
-                      style={{ background: colors.elevated }}
-                    />
-                  ) : (
-                    <span style={{ color: colors.textMuted }}>-</span>
-                  )}
-                </Link>
-              </TableCell>
 
               {/* Expiration */}
               <TableCell className="text-right">

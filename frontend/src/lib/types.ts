@@ -37,6 +37,9 @@ export interface PredictionMarket {
   total_line: string | null;
   // Tags for categorization (e.g., "Politics", "Crypto", "AI")
   tags: string[];
+  // Trading fields (Polymarket)
+  clob_token_id?: string; // YES token ID for order submission
+  condition_id?: string; // Condition ID for filtering trades
 }
 
 // Option data for multi-outcome events
@@ -62,10 +65,21 @@ export interface UnifiedMarket {
   spread: string | null;
 }
 
+// Market filter options (matches backend MarketFilter enum)
+export type MarketFilter =
+  | "all"
+  | "trending"
+  | "expiring"
+  | "new"
+  | "crypto"
+  | "politics"
+  | "sports";
+
 // Query params
 export interface ListMarketsParams {
   platform?: "kalshi" | "polymarket" | "all";
   search?: string;
+  filter?: MarketFilter;
   limit?: number;
 }
 

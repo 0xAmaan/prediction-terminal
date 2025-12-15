@@ -12,7 +12,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
-use terminal_trading::{ClobClient, OrderBuilder, OrderType, Side};
+use terminal_trading::{
+    approve_usdc_for_ctf_exchange, get_matic_balance, ClobClient, OrderBuilder, OrderType, Side,
+};
 
 use crate::AppState;
 
@@ -104,6 +106,19 @@ pub struct PositionResponse {
     pub avg_price: String,
     pub current_price: String,
     pub pnl: String,
+}
+
+/// Approval response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApproveResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matic_balance: Option<String>,
 }
 
 // ============================================================================
@@ -206,6 +221,32 @@ async fn submit_order(
                     transaction_hashes: vec![],
                 }),
             );
+        }
+    }
+
+    // Ensure API credentials are available for trading
+    {
+        let mut state = trading_state.write().await;
+        if let Some(client) = state.client_mut() {
+            if !client.wallet().has_api_credentials() {
+                info!("API credentials not set, attempting to derive...");
+                if let Err(e) = client.ensure_api_key().await {
+                    error!("Failed to derive API key: {}", e);
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(SubmitOrderResponse {
+                            success: false,
+                            order_id: None,
+                            error: Some(format!(
+                                "Failed to authenticate with Polymarket: {}. Try restarting the backend.",
+                                e
+                            )),
+                            transaction_hashes: vec![],
+                        }),
+                    );
+                }
+                info!("API credentials derived successfully");
+            }
         }
     }
 
@@ -613,6 +654,116 @@ async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+/// Approve USDC spending for CTF Exchange
+async fn approve_usdc(State(state): State<AppState>) -> impl IntoResponse {
+    info!("Approving USDC for CTF Exchange");
+
+    let trading_state = match state.trading_state.as_ref() {
+        Some(ts) => ts,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some("Trading not enabled".to_string()),
+                    matic_balance: None,
+                }),
+            );
+        }
+    };
+
+    // Ensure initialized
+    {
+        let mut ts = trading_state.write().await;
+        if let Err(e) = ts.initialize().await {
+            error!("Failed to initialize trading: {}", e);
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!("Failed to initialize: {}", e)),
+                    matic_balance: None,
+                }),
+            );
+        }
+    }
+
+    let ts = trading_state.read().await;
+    let client = match ts.client() {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some("Trading client not available".to_string()),
+                    matic_balance: None,
+                }),
+            );
+        }
+    };
+
+    // Check MATIC balance for gas first
+    let address = client.address();
+    let matic_balance = match get_matic_balance(&address).await {
+        Ok(b) => Some(b),
+        Err(e) => {
+            error!("Failed to get MATIC balance: {}", e);
+            None
+        }
+    };
+
+    // Check if we have enough MATIC for gas (need at least ~0.01 MATIC)
+    if let Some(ref balance) = matic_balance {
+        let balance_f64: f64 = balance.parse().unwrap_or(0.0);
+        if balance_f64 < 0.001 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!(
+                        "Insufficient MATIC for gas. Balance: {} MATIC. Need at least 0.001 MATIC.",
+                        balance
+                    )),
+                    matic_balance,
+                }),
+            );
+        }
+    }
+
+    // Execute the approval
+    match approve_usdc_for_ctf_exchange(client.wallet()).await {
+        Ok(approval) => {
+            info!("USDC approval successful: {:?}", approval.transaction_hash);
+            (
+                StatusCode::OK,
+                Json(ApproveResponse {
+                    success: approval.success,
+                    transaction_hash: approval.transaction_hash,
+                    error: approval.error,
+                    matic_balance,
+                }),
+            )
+        }
+        Err(e) => {
+            error!("USDC approval failed: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!("{}", e)),
+                    matic_balance,
+                }),
+            )
+        }
+    }
+}
+
 // ============================================================================
 // Router
 // ============================================================================
@@ -627,4 +778,5 @@ pub fn routes() -> Router<AppState> {
         .route("/trade/deposit", get(get_deposit_address))
         .route("/trade/balance", get(get_balance))
         .route("/trade/positions", get(get_positions))
+        .route("/trade/approve", post(approve_usdc))
 }

@@ -117,6 +117,8 @@ export const TradingView = ({
             yesPrice={currentYesPrice}
             noPrice={currentNoPrice}
             trades={trades}
+            tokenId={market.clob_token_id}
+            marketTitle={market.title}
             className="h-full"
           />
         </div>

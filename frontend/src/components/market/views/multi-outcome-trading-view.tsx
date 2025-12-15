@@ -162,6 +162,8 @@ export const MultiOutcomeTradingView = ({
             yesPrice={currentPrice}
             noPrice={noPrice}
             trades={trades}
+            tokenId={selectedOutcome?.clob_token_id}
+            marketTitle={selectedOutcome ? `${market.title} - ${selectedOutcome.name}` : market.title}
             className="h-full"
           />
         </div>

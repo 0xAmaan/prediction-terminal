@@ -5,11 +5,13 @@
 
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
+use rust_decimal::prelude::ToPrimitive;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use terminal_core::{Platform, PredictionMarket, TerminalError};
+use terminal_polymarket::MarketFilter;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -17,6 +19,9 @@ use crate::MarketService;
 
 /// Cache TTL in seconds (5 minutes)
 const CACHE_TTL_SECS: i64 = 300;
+
+/// Filter cache TTL in seconds (30 seconds - shorter for fresher filtered results)
+const FILTER_CACHE_TTL_SECS: i64 = 30;
 
 /// Cached market with metadata
 #[derive(Debug, Clone)]
@@ -29,6 +34,20 @@ impl CachedMarket {
     fn is_fresh(&self) -> bool {
         let age = Utc::now().signed_duration_since(self.updated_at);
         age.num_seconds() < CACHE_TTL_SECS
+    }
+}
+
+/// Cached filter result (for tab-filtered markets)
+#[derive(Debug, Clone)]
+struct CachedFilterResult {
+    markets: Vec<PredictionMarket>,
+    updated_at: DateTime<Utc>,
+}
+
+impl CachedFilterResult {
+    fn is_fresh(&self) -> bool {
+        let age = Utc::now().signed_duration_since(self.updated_at);
+        age.num_seconds() < FILTER_CACHE_TTL_SECS
     }
 }
 
@@ -47,6 +66,8 @@ pub enum RefreshRequest {
 pub struct MarketCache {
     /// In-memory cache for instant access
     cache: Arc<RwLock<HashMap<(Platform, String), CachedMarket>>>,
+    /// In-memory cache for filtered market results (30s TTL)
+    filter_cache: Arc<RwLock<HashMap<MarketFilter, CachedFilterResult>>>,
     /// SQLite connection for persistence
     db: Arc<parking_lot::Mutex<Connection>>,
     /// Underlying market service for API calls
@@ -93,6 +114,7 @@ impl MarketCache {
 
         let db = Arc::new(parking_lot::Mutex::new(conn));
         let cache = Arc::new(RwLock::new(HashMap::new()));
+        let filter_cache = Arc::new(RwLock::new(HashMap::new()));
         let service = Arc::new(service);
 
         // Load existing cached markets from DB
@@ -104,6 +126,7 @@ impl MarketCache {
 
         let market_cache = Self {
             cache: Arc::clone(&cache),
+            filter_cache: Arc::clone(&filter_cache),
             db: Arc::clone(&db),
             service: Arc::clone(&service),
             refresh_tx,
@@ -268,7 +291,24 @@ impl MarketCache {
         // Batch update SQLite
         Self::store_markets_to_db(db, platform, &markets, now)?;
 
-        info!("Refreshed {} {:?} markets", count, platform);
+        // Log refresh with top markets by volume for visibility
+        let mut sorted = markets.clone();
+        sorted.sort_by(|a, b| b.volume.cmp(&a.volume));
+        if sorted.len() >= 3 {
+            info!(
+                "Refreshed {} {:?} markets, top by volume: \"{}\" (${:.1}M), \"{}\" (${:.1}M), \"{}\" (${:.1}M)",
+                count,
+                platform,
+                &sorted[0].title[..sorted[0].title.len().min(35)],
+                sorted[0].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+                &sorted[1].title[..sorted[1].title.len().min(35)],
+                sorted[1].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+                &sorted[2].title[..sorted[2].title.len().min(35)],
+                sorted[2].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+            );
+        } else {
+            info!("Refreshed {} {:?} markets", count, platform);
+        }
         Ok(())
     }
 
@@ -365,7 +405,7 @@ impl MarketCache {
     pub fn get_markets(&self, platform: Option<Platform>) -> Vec<PredictionMarket> {
         let read_cache = self.cache.read();
 
-        let markets: Vec<PredictionMarket> = read_cache
+        let mut markets: Vec<PredictionMarket> = read_cache
             .iter()
             .filter(|((p, _), _cached)| {
                 // Filter by platform if specified
@@ -373,6 +413,23 @@ impl MarketCache {
             })
             .map(|(_, cached)| cached.market.clone())
             .collect();
+
+        // Sort by volume descending (highest volume first)
+        markets.sort_by(|a, b| b.volume.cmp(&a.volume));
+
+        // Log top markets for debugging
+        if markets.len() >= 3 {
+            debug!(
+                "Returning {} markets, top by volume: \"{}\" (${:.1}M), \"{}\" (${:.1}M), \"{}\" (${:.1}M)",
+                markets.len(),
+                &markets[0].title[..markets[0].title.len().min(30)],
+                markets[0].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+                &markets[1].title[..markets[1].title.len().min(30)],
+                markets[1].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+                &markets[2].title[..markets[2].title.len().min(30)],
+                markets[2].volume.to_f64().unwrap_or(0.0) / 1_000_000.0,
+            );
+        }
 
         // Check if we need to refresh (any stale data)
         let needs_refresh = read_cache.values().any(|c| !c.is_fresh());
@@ -428,6 +485,73 @@ impl MarketCache {
         }
 
         results
+    }
+
+    /// Get filtered markets with caching (30s TTL)
+    ///
+    /// This uses Polymarket's API-level filtering for accurate results,
+    /// with a 30-second cache to balance freshness and performance.
+    ///
+    /// For "All" filter, returns from the main cache sorted by volume.
+    pub async fn get_filtered_markets(
+        &self,
+        filter: MarketFilter,
+        limit: Option<usize>,
+    ) -> Result<Vec<PredictionMarket>, TerminalError> {
+        // For "All", just use the existing cache (sorted by volume)
+        if filter == MarketFilter::All {
+            let mut markets = self.get_markets(Some(Platform::Polymarket));
+            if let Some(l) = limit {
+                markets.truncate(l);
+            }
+            return Ok(markets);
+        }
+
+        // Check filter cache first
+        {
+            let read_cache = self.filter_cache.read();
+            if let Some(cached) = read_cache.get(&filter) {
+                if cached.is_fresh() {
+                    debug!(
+                        "Filter cache hit for {:?}, returning {} markets",
+                        filter,
+                        cached.markets.len()
+                    );
+                    let mut markets = cached.markets.clone();
+                    if let Some(l) = limit {
+                        markets.truncate(l);
+                    }
+                    return Ok(markets);
+                }
+            }
+        }
+
+        // Cache miss or stale - fetch from API with filter
+        debug!("Filter cache miss for {:?}, fetching from API", filter);
+        let markets = self
+            .service
+            .get_filtered_markets(filter, limit)
+            .await?;
+
+        // Update filter cache
+        {
+            let mut write_cache = self.filter_cache.write();
+            write_cache.insert(
+                filter,
+                CachedFilterResult {
+                    markets: markets.clone(),
+                    updated_at: Utc::now(),
+                },
+            );
+        }
+
+        info!(
+            "Cached {} markets for filter {:?} (30s TTL)",
+            markets.len(),
+            filter
+        );
+
+        Ok(markets)
     }
 
     /// Get a single market by ID
@@ -549,6 +673,7 @@ impl Clone for MarketCache {
     fn clone(&self) -> Self {
         Self {
             cache: Arc::clone(&self.cache),
+            filter_cache: Arc::clone(&self.filter_cache),
             db: Arc::clone(&self.db),
             service: Arc::clone(&self.service),
             refresh_tx: self.refresh_tx.clone(),

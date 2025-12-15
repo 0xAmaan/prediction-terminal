@@ -19,8 +19,8 @@ base64 = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
 
-# Ethereum/EIP-712 signing
-alloy = { version = "1.1", features = ["signers", "signer-local", "eips"] }
+# Ethereum/EIP-712 signing and transaction sending
+alloy = { version = "1.1", features = ["signers", "signer-local", "eips", "providers", "network", "rpc-types", "consensus"] }
 
 # Additional
 uuid = { version = "1.0", features = ["v4"] }

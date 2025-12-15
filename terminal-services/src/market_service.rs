@@ -5,7 +5,7 @@ use terminal_core::{
     OrderBook, Platform, PredictionMarket, TerminalError, TradeHistory, UnifiedMarket,
 };
 use terminal_kalshi::KalshiClient;
-use terminal_polymarket::{MarketOption, PolymarketClient, PriceHistoryPoint};
+use terminal_polymarket::{MarketFilter, MarketOption, PolymarketClient, PriceHistoryPoint};
 use tracing::{debug, info, instrument, warn};
 
 /// Minimal struct for parsing binary market options_json to extract clob_token_id
@@ -54,6 +54,34 @@ impl MarketService {
                 self.polymarket.list_all_events(true, limit).await
             }
         }
+    }
+
+    /// Get Polymarket markets with a specific filter applied
+    ///
+    /// This queries Polymarket's API with proper server-side filtering/sorting,
+    /// rather than fetching all markets and filtering client-side.
+    #[instrument(skip(self))]
+    pub async fn get_filtered_markets(
+        &self,
+        filter: MarketFilter,
+        limit: Option<usize>,
+    ) -> Result<Vec<PredictionMarket>, TerminalError> {
+        info!("Fetching filtered Polymarket markets with filter: {:?}", filter);
+
+        // Query Polymarket with the filter
+        let events = self
+            .polymarket
+            .list_filtered_events(filter, limit.map(|l| l as u32))
+            .await?;
+
+        // Convert PolymarketEvents to PredictionMarkets
+        let markets: Vec<PredictionMarket> = events
+            .into_iter()
+            .map(|e| e.to_prediction_market())
+            .collect();
+
+        debug!("Got {} markets for filter {:?}", markets.len(), filter);
+        Ok(markets)
     }
 
     /// Get all markets from all platforms

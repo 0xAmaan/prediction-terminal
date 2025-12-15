@@ -80,12 +80,22 @@ impl ClobClient {
         let timestamp = current_timestamp();
         let nonce = generate_nonce();
 
+        let address = self.wallet.address_string();
+
+        info!("Building L1 auth headers:");
+        info!("  Address: {}", address);
+        info!("  Timestamp: {}", timestamp);
+        info!("  Nonce: {}", nonce);
+
         let signature = self.wallet.sign_l1_auth(timestamp, nonce).await?;
+
+        info!("  Signature: {}", signature);
+        info!("  Signature length: {} chars", signature.len());
 
         let mut headers = HeaderMap::new();
         headers.insert(
             HEADER_ADDRESS,
-            HeaderValue::from_str(&self.wallet.address_string())
+            HeaderValue::from_str(&address)
                 .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
         );
         headers.insert(
@@ -104,6 +114,7 @@ impl ClobClient {
                 .map_err(|e| TradingError::Api(format!("Invalid header value: {}", e)))?,
         );
 
+        info!("L1 headers built successfully");
         Ok(headers)
     }
 
@@ -162,8 +173,12 @@ impl ClobClient {
             let body = response.text().await.unwrap_or_default();
             warn!("Failed to derive API key: {} - {}", status, body);
 
-            // If derivation fails, try creating a new one
-            if status == 404 || body.contains("not found") {
+            // If derivation fails (no existing key), try creating a new one
+            // Polymarket returns different errors: 404, "not found", or "Could not derive"
+            if status == 404
+                || body.contains("not found")
+                || body.contains("Could not derive")
+            {
                 info!("No existing API key found, creating new one");
                 return self.create_api_key().await;
             }

@@ -155,6 +155,29 @@ async fn main() -> anyhow::Result<()> {
         collector_handle.start().await;
     });
 
+    // Auto-track top markets for trade collection (after cache populates)
+    // This ensures we have transaction count data for the most popular markets
+    let auto_track_collector = trade_collector.clone();
+    let auto_track_cache = market_cache.clone();
+    tokio::spawn(async move {
+        // Wait for cache to populate (check every 2 seconds, up to 30 seconds)
+        for _ in 0..15 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let markets = auto_track_cache.get_markets(Some(terminal_core::Platform::Polymarket));
+            if !markets.is_empty() {
+                // Track top 50 markets by volume for trade collection
+                let top_n = 50;
+                info!("Auto-tracking top {} Polymarket markets for trade collection", top_n);
+                for market in markets.into_iter().take(top_n) {
+                    auto_track_collector
+                        .track_market(terminal_core::Platform::Polymarket, market.id)
+                        .await;
+                }
+                break;
+            }
+        }
+    });
+
     // Initialize and start market data aggregator
     // KALSHI_DISABLED: Disable Kalshi WebSocket while focusing on Polymarket
     let aggregator_config = AggregatorConfig {

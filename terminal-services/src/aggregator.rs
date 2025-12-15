@@ -370,6 +370,52 @@ impl MarketDataAggregator {
             info!("[Aggregator] Orderbook snapshot task started");
         }
 
+        // Start periodic health logging task (every 60 seconds)
+        let kalshi_metrics = Arc::clone(&self.kalshi_metrics);
+        let polymarket_metrics = Arc::clone(&self.polymarket_metrics);
+        let ws_state = Arc::clone(&self.ws_state);
+        let kalshi_enabled = self.config.kalshi_enabled;
+        let polymarket_enabled = self.config.polymarket_enabled;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                let kalshi_health = kalshi_metrics.get_health("kalshi");
+                let poly_health = polymarket_metrics.get_health("polymarket");
+                let sub_count = ws_state.subscriptions.total_subscriptions();
+
+                let kalshi_status = if !kalshi_enabled {
+                    "disabled".to_string()
+                } else if kalshi_health.connected {
+                    format!("connected ({}s ago)",
+                        kalshi_health.last_message_time
+                            .map(|t| (Utc::now() - t).num_seconds())
+                            .unwrap_or(0))
+                } else {
+                    "disconnected".to_string()
+                };
+
+                let poly_status = if !polymarket_enabled {
+                    "disabled".to_string()
+                } else if poly_health.connected {
+                    format!("connected ({}s ago)",
+                        poly_health.last_message_time
+                            .map(|t| (Utc::now() - t).num_seconds())
+                            .unwrap_or(0))
+                } else {
+                    "disconnected".to_string()
+                };
+
+                info!(
+                    "[Aggregator] Health: Kalshi={}, Polymarket={}, subscriptions={}",
+                    kalshi_status, poly_status, sub_count
+                );
+            }
+        });
+        info!("[Aggregator] Health logging task started");
+
         Ok(())
     }
 

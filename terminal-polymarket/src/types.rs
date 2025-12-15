@@ -129,6 +129,74 @@ pub struct PolymarketTag {
     pub slug: String,
 }
 
+/// Market filter options for the frontend tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarketFilter {
+    /// All markets (default - sorted by volume)
+    All,
+    /// Trending markets (highest volume)
+    Trending,
+    /// Markets ending soon (sorted by end date ascending)
+    Expiring,
+    /// Newest markets (sorted by creation date descending)
+    New,
+    /// Crypto markets (tag_id = 21)
+    Crypto,
+    /// Politics markets (tag_id = 2)
+    Politics,
+    /// Sports markets (tag_id = 1)
+    Sports,
+}
+
+impl MarketFilter {
+    /// Get the Polymarket tag ID for category filters
+    pub fn tag_id(&self) -> Option<u32> {
+        match self {
+            MarketFilter::Crypto => Some(21),
+            MarketFilter::Politics => Some(2),
+            MarketFilter::Sports => Some(1),
+            _ => None,
+        }
+    }
+
+    /// Check if this filter requires date-based ordering
+    pub fn needs_date_ordering(&self) -> bool {
+        matches!(self, MarketFilter::Expiring | MarketFilter::New)
+    }
+}
+
+impl std::str::FromStr for MarketFilter {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "all" => Ok(MarketFilter::All),
+            "trending" => Ok(MarketFilter::Trending),
+            "expiring" => Ok(MarketFilter::Expiring),
+            "new" => Ok(MarketFilter::New),
+            "crypto" => Ok(MarketFilter::Crypto),
+            "politics" => Ok(MarketFilter::Politics),
+            "sports" => Ok(MarketFilter::Sports),
+            _ => Err(format!("Unknown filter: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for MarketFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MarketFilter::All => write!(f, "all"),
+            MarketFilter::Trending => write!(f, "trending"),
+            MarketFilter::Expiring => write!(f, "expiring"),
+            MarketFilter::New => write!(f, "new"),
+            MarketFilter::Crypto => write!(f, "crypto"),
+            MarketFilter::Politics => write!(f, "politics"),
+            MarketFilter::Sports => write!(f, "sports"),
+        }
+    }
+}
+
 impl PolymarketMarket {
     /// Parse outcome prices from the JSON string
     /// The API returns prices in various formats:

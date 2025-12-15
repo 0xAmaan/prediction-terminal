@@ -14,7 +14,10 @@ pub mod positions;
 pub mod types;
 pub mod wallet;
 
-pub use balance::{get_usdc_allowance, get_usdc_allowance_for, get_usdc_balance};
+pub use balance::{
+    approve_usdc_for_ctf_exchange, get_matic_balance, get_usdc_allowance, get_usdc_allowance_for,
+    get_usdc_balance, ApprovalResponse,
+};
 pub use clob_client::ClobClient;
 pub use order::{OrderBuilder, OrderSide, OrderType};
 pub use positions::calculate_positions;

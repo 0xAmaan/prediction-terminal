@@ -37,6 +37,9 @@ anyhow = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Utilities
+rand = { workspace = true }
+
 # Crypto for HMAC authentication
 hmac = "0.12"
 sha2 = "0.10"

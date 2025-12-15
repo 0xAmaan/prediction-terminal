@@ -34,8 +34,11 @@ const KALSHI_WS_URL: &str = "wss://api.elections.kalshi.com/trade-api/ws/v2";
 /// Reconnect delay base
 const RECONNECT_DELAY_BASE: Duration = Duration::from_secs(1);
 
-/// Max reconnect attempts
-const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+/// Max reconnect delay (cap exponential backoff at 60 seconds)
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
+
+/// Attempts before logging as "extended retry mode" (for visibility)
+const RECONNECT_WARNING_THRESHOLD: u32 = 5;
 
 // ============================================================================
 // WebSocket Message Types (matching Kalshi's protocol)
@@ -207,7 +210,6 @@ pub struct KalshiWebSocketConfig {
     pub api_key: Option<String>,
     pub private_key_pem: Option<String>,
     pub auto_reconnect: bool,
-    pub max_reconnect_attempts: u32,
 }
 
 impl std::fmt::Debug for KalshiWebSocketConfig {
@@ -219,7 +221,6 @@ impl std::fmt::Debug for KalshiWebSocketConfig {
                 &self.private_key_pem.as_ref().map(|_| "[REDACTED]"),
             )
             .field("auto_reconnect", &self.auto_reconnect)
-            .field("max_reconnect_attempts", &self.max_reconnect_attempts)
             .finish()
     }
 }
@@ -246,7 +247,6 @@ impl Default for KalshiWebSocketConfig {
             api_key: std::env::var("KALSHI_API_KEY").ok(),
             private_key_pem,
             auto_reconnect: true,
-            max_reconnect_attempts: MAX_RECONNECT_ATTEMPTS,
         }
     }
 }
@@ -560,23 +560,44 @@ impl KalshiWebSocket {
                 }
             }
 
-            // Reconnection logic
+            // Reconnection logic - never give up, use capped exponential backoff
             if !config.auto_reconnect {
                 break;
             }
 
             reconnect_attempts += 1;
-            if reconnect_attempts > config.max_reconnect_attempts {
-                error!("[Kalshi WS] Max reconnect attempts reached");
-                break;
+
+            // Calculate delay with exponential backoff, capped at MAX_RECONNECT_DELAY
+            let base_delay = RECONNECT_DELAY_BASE * 2u32.pow(reconnect_attempts.min(6) - 1);
+            let delay = base_delay.min(MAX_RECONNECT_DELAY);
+
+            // Add jitter (0-25% of delay) to prevent thundering herd
+            let jitter_ms = (delay.as_millis() as f64 * rand::random::<f64>() * 0.25) as u64;
+            let final_delay = delay + Duration::from_millis(jitter_ms);
+
+            if reconnect_attempts == RECONNECT_WARNING_THRESHOLD {
+                warn!(
+                    "[Kalshi WS] Entering extended retry mode after {} failed attempts. \
+                     Will keep retrying with {:.0}s max delay.",
+                    reconnect_attempts,
+                    MAX_RECONNECT_DELAY.as_secs_f64()
+                );
+            } else if reconnect_attempts > RECONNECT_WARNING_THRESHOLD && reconnect_attempts % 10 == 0 {
+                // Log every 10 attempts in extended mode for visibility
+                warn!(
+                    "[Kalshi WS] Still reconnecting (attempt {}), delay: {:.1}s",
+                    reconnect_attempts,
+                    final_delay.as_secs_f64()
+                );
+            } else {
+                info!(
+                    "[Kalshi WS] Reconnecting in {:.1}s (attempt {})",
+                    final_delay.as_secs_f64(),
+                    reconnect_attempts
+                );
             }
 
-            let delay = RECONNECT_DELAY_BASE * 2u32.pow(reconnect_attempts - 1);
-            info!(
-                "[Kalshi WS] Reconnecting in {:?} (attempt {})",
-                delay, reconnect_attempts
-            );
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep(final_delay).await;
         }
     }
 

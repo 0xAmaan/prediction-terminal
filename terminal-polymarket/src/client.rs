@@ -4,8 +4,8 @@
 //! for market data retrieval.
 
 use crate::types::{
-    ClobOrderbookResponse, DataApiTrade, PolymarketEvent, PolymarketMarket, PriceHistoryPoint,
-    PricesHistoryResponse, CLOB_API_BASE, DATA_API_BASE,
+    ClobOrderbookResponse, DataApiTrade, MarketFilter, PolymarketEvent, PolymarketMarket,
+    PriceHistoryPoint, PricesHistoryResponse, CLOB_API_BASE, DATA_API_BASE,
 };
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE},
@@ -272,6 +272,101 @@ impl PolymarketClient {
             .json()
             .await
             .map_err(|e| TerminalError::parse(format!("Failed to parse events response: {}", e)))?;
+
+        Ok(events)
+    }
+
+    /// List events with a specific filter applied
+    ///
+    /// Supports:
+    /// - `Trending` / `All`: Order by volume descending
+    /// - `Expiring`: Order by end date ascending (soonest first), filtered to future dates
+    /// - `New`: Order by creation date descending (newest first)
+    /// - `Crypto` / `Politics` / `Sports`: Filter by tag_id
+    #[instrument(skip(self))]
+    pub async fn list_filtered_events(
+        &self,
+        filter: MarketFilter,
+        limit: Option<u32>,
+    ) -> Result<Vec<PolymarketEvent>, TerminalError> {
+        let mut url = format!("{}/events", self.base_url);
+        let mut params = Vec::new();
+
+        // Always filter to active markets
+        params.push("closed=false".to_string());
+
+        // Apply limit
+        if let Some(l) = limit {
+            params.push(format!("limit={}", l));
+        }
+
+        // Apply filter-specific parameters
+        match filter {
+            MarketFilter::All | MarketFilter::Trending => {
+                // Default: order by volume descending
+                params.push("order=volume".to_string());
+                params.push("ascending=false".to_string());
+            }
+            MarketFilter::Expiring => {
+                // Order by end date ascending (soonest expiration first)
+                // Also filter to only future end dates
+                params.push("order=endDate".to_string());
+                params.push("ascending=true".to_string());
+                // Only show markets ending in the future
+                let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                params.push(format!("end_date_min={}", now));
+            }
+            MarketFilter::New => {
+                // Order by ID descending (newest first) - Polymarket uses ID for creation order
+                params.push("order=id".to_string());
+                params.push("ascending=false".to_string());
+            }
+            MarketFilter::Crypto => {
+                params.push("tag_id=21".to_string());
+                params.push("order=volume".to_string());
+                params.push("ascending=false".to_string());
+            }
+            MarketFilter::Politics => {
+                params.push("tag_id=2".to_string());
+                params.push("order=volume".to_string());
+                params.push("ascending=false".to_string());
+            }
+            MarketFilter::Sports => {
+                params.push("tag_id=1".to_string());
+                params.push("order=volume".to_string());
+                params.push("ascending=false".to_string());
+            }
+        }
+
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+
+        debug!(
+            "Fetching filtered Polymarket events (filter={:?}): {}",
+            filter, url
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| TerminalError::network(format!("Failed to fetch filtered events: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TerminalError::api(format!(
+                "Polymarket API error ({}): {}",
+                status, body
+            )));
+        }
+
+        let events: Vec<PolymarketEvent> = response.json().await.map_err(|e| {
+            TerminalError::parse(format!("Failed to parse filtered events response: {}", e))
+        })?;
 
         Ok(events)
     }

@@ -31,6 +31,9 @@ export const api = {
     if (params.search) {
       searchParams.set("search", params.search);
     }
+    if (params.filter && params.filter !== "all") {
+      searchParams.set("filter", params.filter);
+    }
     if (params.limit) {
       searchParams.set("limit", params.limit.toString());
     }
@@ -661,6 +664,27 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to get positions: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Approve USDC spending for the CTF Exchange (required before trading) */
+  async approveUsdc(): Promise<{
+    success: boolean;
+    transactionHash?: string;
+    error?: string;
+    maticBalance?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/api/trade/approve`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(
+        data.error || `Failed to approve USDC: ${response.statusText}`,
+      );
     }
 
     return response.json();

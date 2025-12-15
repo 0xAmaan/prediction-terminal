@@ -1,10 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo } from "react";  // useMemo for live market categorization
 import { Zap } from "lucide-react";
 import { api } from "@/lib/api";
-import type { PredictionMarket, Timeframe } from "@/lib/types";
+import type { PredictionMarket, Timeframe, MarketFilter } from "@/lib/types";
 import { colors } from "./colors";
 import { BinaryCard } from "./binary-card";
 import { MultiOutcomeCard } from "./multi-outcome-card";
@@ -12,32 +12,6 @@ import { SportsCard } from "./sports-card";
 import { MarketsTable, TableLoadingSkeleton, TimeframeSelector } from "./markets-table";
 import { PlatformFilter, type FilterOption } from "../platform-filter";
 import { ViewToggle } from "../view-toggle";
-
-// Tag matching helpers
-const CRYPTO_TAGS = ["crypto", "bitcoin", "ethereum", "btc", "eth", "solana", "defi", "nft", "stablecoin"];
-const POLITICS_TAGS = ["politics", "u.s. politics", "trump", "election", "congress", "government", "geopolitics"];
-const SPORTS_TAGS = ["sports", "nba", "nfl", "mlb", "nhl", "soccer", "football", "basketball", "baseball"];
-
-const hasMatchingTag = (market: PredictionMarket, tagList: string[]): boolean => {
-  const marketTags = (market.tags || []).map(t => t.toLowerCase());
-  return tagList.some(tag => marketTags.some(mt => mt.includes(tag)));
-};
-
-const isExpiringSoon = (market: PredictionMarket): boolean => {
-  if (!market.close_time) return false;
-  const closeDate = new Date(market.close_time);
-  const now = new Date();
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
-  return closeDate.getTime() - now.getTime() < sevenDays && closeDate > now;
-};
-
-const isNewMarket = (market: PredictionMarket): boolean => {
-  if (!market.created_at) return false;
-  const createdDate = new Date(market.created_at);
-  const now = new Date();
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
-  return now.getTime() - createdDate.getTime() < sevenDays;
-};
 
 interface MarketsGridProps {
   search?: string;
@@ -94,76 +68,37 @@ const LoadingSkeleton = () => (
 );
 
 export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
-  const [filter, setFilter] = useState<FilterOption>("all");
+  // Default to "trending" to show high-volume markets first
+  const [filter, setFilter] = useState<FilterOption>("trending");
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [timeframe, setTimeframe] = useState<Timeframe>("24h");
 
+  // Server-side filtering - filter is now passed to the API
   const { data, isLoading, error } = useQuery({
-    queryKey: ["markets", search],
+    queryKey: ["markets", search, filter],
     queryFn: () =>
       api.listMarkets({
         platform: "polymarket",
         search: search || undefined,
+        filter: filter as MarketFilter,
         limit: 100,
       }),
   });
 
-  // Filter and categorize markets based on selected filter
+  // Categorize markets for display (filtering is done server-side)
   const { markets, liveMarkets } = useMemo(() => {
     if (!data?.markets) {
       return { markets: [], liveMarkets: [] };
     }
 
-    let filtered = data.markets;
-
-    // Apply filter
-    switch (filter) {
-      case "trending":
-        // Sort by volume (highest first) - top 20
-        filtered = [...filtered]
-          .sort((a, b) => parseFloat(b.volume) - parseFloat(a.volume))
-          .slice(0, 20);
-        break;
-      case "expiring":
-        filtered = filtered
-          .filter(isExpiringSoon)
-          .sort((a, b) => {
-            const aTime = a.close_time ? new Date(a.close_time).getTime() : Infinity;
-            const bTime = b.close_time ? new Date(b.close_time).getTime() : Infinity;
-            return aTime - bTime;
-          });
-        break;
-      case "new":
-        filtered = filtered
-          .filter(isNewMarket)
-          .sort((a, b) => {
-            const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-            return bTime - aTime;
-          });
-        break;
-      case "crypto":
-        filtered = filtered.filter(m => hasMatchingTag(m, CRYPTO_TAGS));
-        break;
-      case "politics":
-        filtered = filtered.filter(m => hasMatchingTag(m, POLITICS_TAGS));
-        break;
-      case "sports":
-        filtered = filtered.filter(m => m.is_sports || hasMatchingTag(m, SPORTS_TAGS));
-        break;
-      case "all":
-      default:
-        // No filtering
-        break;
-    }
-
-    const sportsMarkets = filtered.filter(
+    const allMarkets = data.markets;
+    const sportsMarkets = allMarkets.filter(
       (m) => m.is_sports && m.home_team && m.away_team
     );
     const live = sportsMarkets.filter((m) => m.is_live);
 
-    return { markets: filtered, liveMarkets: live };
-  }, [data?.markets, filter]);
+    return { markets: allMarkets, liveMarkets: live };
+  }, [data?.markets]);
 
   const getMarketHref = (market: PredictionMarket) =>
     `/market/${market.platform}/${market.id}`;

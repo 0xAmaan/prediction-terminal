@@ -1,11 +1,18 @@
-//! Balance queries via Polygon JSON-RPC
+//! Balance queries and USDC approval via Polygon JSON-RPC
 //!
 //! Query USDC.e balance and allowance for trading wallet using
-//! direct eth_call to the ERC20 contract.
+//! direct eth_call to the ERC20 contract. Also provides USDC approval
+//! functionality for the CTF Exchange.
 
 use crate::types::{Result, TradingError, CTF_EXCHANGE_ADDRESS, USDC_ADDRESS};
+use crate::wallet::TradingWallet;
+use alloy::network::EthereumWallet;
+use alloy::primitives::{Address, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::TransactionRequest;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use std::str::FromStr;
+use tracing::{debug, info};
 
 /// Polygon RPC endpoint
 const POLYGON_RPC_URL: &str = "https://polygon-rpc.com";
@@ -13,6 +20,7 @@ const POLYGON_RPC_URL: &str = "https://polygon-rpc.com";
 /// ERC20 function selectors
 const BALANCE_OF_SELECTOR: &str = "70a08231"; // balanceOf(address)
 const ALLOWANCE_SELECTOR: &str = "dd62ed3e"; // allowance(address,address)
+const APPROVE_SELECTOR: &str = "095ea7b3"; // approve(address,uint256)
 
 /// USDC has 6 decimals
 const USDC_DECIMALS: u32 = 6;
@@ -157,6 +165,278 @@ fn format_usdc(raw_amount: u128) -> String {
     } else {
         format!("{}.{:0>6}", whole, fraction)
     }
+}
+
+// ============================================================================
+// USDC Approval Functions
+// ============================================================================
+
+/// Approval response containing transaction hash
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalResponse {
+    pub success: bool,
+    pub transaction_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Approve USDC spending for the CTF Exchange contract
+///
+/// This sends an on-chain transaction to approve USDC spending
+/// for the Polymarket CTF Exchange. Requires MATIC for gas.
+/// Note: USDC.e doesn't allow max uint256 approval, so we use a large amount (1B USDC)
+pub async fn approve_usdc_for_ctf_exchange(wallet: &TradingWallet) -> Result<ApprovalResponse> {
+    let spender = Address::from_str(CTF_EXCHANGE_ADDRESS)
+        .map_err(|e| TradingError::Api(format!("Invalid CTF Exchange address: {}", e)))?;
+
+    // 1 billion USDC (1e9 * 1e6 = 1e15) - USDC.e doesn't allow max uint256
+    let amount = U256::from(1_000_000_000_000_000u64);
+
+    approve_usdc(wallet, spender, amount).await
+}
+
+/// Approve USDC spending for a specific spender using alloy Provider
+pub async fn approve_usdc(
+    wallet: &TradingWallet,
+    spender: Address,
+    amount: U256,
+) -> Result<ApprovalResponse> {
+    let usdc_address = Address::from_str(USDC_ADDRESS)
+        .map_err(|e| TradingError::Api(format!("Invalid USDC address: {}", e)))?;
+
+    info!(
+        "Approving USDC spending: from={}, spender={}, amount={}",
+        wallet.address(),
+        spender,
+        amount
+    );
+
+    // Build approve calldata: approve(address spender, uint256 amount)
+    let calldata = build_approve_calldata(spender, amount);
+
+    // Create wallet for provider
+    let eth_wallet = EthereumWallet::from(wallet.signer().clone());
+
+    // Build provider with wallet
+    let provider = ProviderBuilder::new()
+        .wallet(eth_wallet)
+        .connect_http(POLYGON_RPC_URL.parse().unwrap());
+
+    // Build transaction request
+    let tx = TransactionRequest::default()
+        .to(usdc_address)
+        .input(calldata.into());
+
+    // Send transaction and wait for receipt
+    let pending_tx = provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to send transaction: {}", e)))?;
+
+    let tx_hash = format!("{:?}", pending_tx.tx_hash());
+    info!("USDC approval transaction sent: {}", tx_hash);
+
+    // Wait for receipt to confirm success
+    let receipt = pending_tx
+        .get_receipt()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to get receipt: {}", e)))?;
+
+    // Check if transaction succeeded
+    if receipt.status() {
+        info!("USDC approval confirmed in block {:?}", receipt.block_number);
+        Ok(ApprovalResponse {
+            success: true,
+            transaction_hash: Some(tx_hash),
+            error: None,
+        })
+    } else {
+        Err(TradingError::Api(format!(
+            "Approval transaction reverted: {}",
+            tx_hash
+        )))
+    }
+}
+
+/// Build ERC20 approve calldata
+fn build_approve_calldata(spender: Address, amount: U256) -> Vec<u8> {
+    let mut calldata = Vec::with_capacity(68);
+
+    // Function selector: approve(address,uint256) = 0x095ea7b3
+    calldata.extend_from_slice(&hex::decode(APPROVE_SELECTOR).unwrap());
+
+    // Pad spender address to 32 bytes
+    calldata.extend_from_slice(&[0u8; 12]); // 12 zero bytes
+    calldata.extend_from_slice(spender.as_slice()); // 20 bytes address
+
+    // Amount as 32 bytes
+    calldata.extend_from_slice(&amount.to_be_bytes::<32>());
+
+    calldata
+}
+
+/// Get transaction count (nonce) for an address
+async fn get_transaction_count(address: &str) -> Result<u64> {
+    let client = reqwest::Client::new();
+
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        method: "eth_getTransactionCount",
+        params: vec![
+            serde_json::json!(address),
+            serde_json::json!("pending"),
+        ],
+        id: 1,
+    };
+
+    let response = client
+        .post(POLYGON_RPC_URL)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| TradingError::Api(format!("RPC request failed: {}", e)))?;
+
+    let rpc_response: JsonRpcResponse = response
+        .json()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to parse RPC response: {}", e)))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(TradingError::Api(format!("RPC error: {}", error.message)));
+    }
+
+    let hex_nonce = rpc_response
+        .result
+        .ok_or_else(|| TradingError::Api("No result in RPC response".to_string()))?;
+
+    let nonce = u64::from_str_radix(hex_nonce.strip_prefix("0x").unwrap_or(&hex_nonce), 16)
+        .map_err(|e| TradingError::Api(format!("Failed to parse nonce: {}", e)))?;
+
+    Ok(nonce)
+}
+
+/// Get current gas prices (EIP-1559)
+async fn get_gas_prices() -> Result<(u128, u128)> {
+    let client = reqwest::Client::new();
+
+    // Get base fee from latest block
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        method: "eth_gasPrice",
+        params: vec![],
+        id: 1,
+    };
+
+    let response = client
+        .post(POLYGON_RPC_URL)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| TradingError::Api(format!("RPC request failed: {}", e)))?;
+
+    let rpc_response: JsonRpcResponse = response
+        .json()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to parse RPC response: {}", e)))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(TradingError::Api(format!("RPC error: {}", error.message)));
+    }
+
+    let hex_gas_price = rpc_response
+        .result
+        .ok_or_else(|| TradingError::Api("No result in RPC response".to_string()))?;
+
+    let gas_price =
+        u128::from_str_radix(hex_gas_price.strip_prefix("0x").unwrap_or(&hex_gas_price), 16)
+            .map_err(|e| TradingError::Api(format!("Failed to parse gas price: {}", e)))?;
+
+    // For Polygon, use gas price as max fee, and 30 gwei as priority fee
+    let max_priority_fee = 30_000_000_000u128; // 30 gwei
+    let max_fee = gas_price.saturating_add(max_priority_fee);
+
+    Ok((max_fee, max_priority_fee))
+}
+
+/// Send a raw signed transaction
+async fn send_raw_transaction(signed_tx: &[u8]) -> Result<String> {
+    let client = reqwest::Client::new();
+
+    let hex_tx = format!("0x{}", hex::encode(signed_tx));
+
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        method: "eth_sendRawTransaction",
+        params: vec![serde_json::json!(hex_tx)],
+        id: 1,
+    };
+
+    debug!("Sending raw transaction: {} bytes", signed_tx.len());
+
+    let response = client
+        .post(POLYGON_RPC_URL)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| TradingError::Api(format!("RPC request failed: {}", e)))?;
+
+    let rpc_response: JsonRpcResponse = response
+        .json()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to parse RPC response: {}", e)))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(TradingError::Api(format!(
+            "Transaction failed: {}",
+            error.message
+        )));
+    }
+
+    rpc_response
+        .result
+        .ok_or_else(|| TradingError::Api("No transaction hash in response".to_string()))
+}
+
+/// Check MATIC balance for gas
+pub async fn get_matic_balance(address: &str) -> Result<String> {
+    let client = reqwest::Client::new();
+
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        method: "eth_getBalance",
+        params: vec![serde_json::json!(address), serde_json::json!("latest")],
+        id: 1,
+    };
+
+    let response = client
+        .post(POLYGON_RPC_URL)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| TradingError::Api(format!("RPC request failed: {}", e)))?;
+
+    let rpc_response: JsonRpcResponse = response
+        .json()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to parse RPC response: {}", e)))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(TradingError::Api(format!("RPC error: {}", error.message)));
+    }
+
+    let hex_balance = rpc_response
+        .result
+        .ok_or_else(|| TradingError::Api("No result in RPC response".to_string()))?;
+
+    let balance =
+        u128::from_str_radix(hex_balance.strip_prefix("0x").unwrap_or(&hex_balance), 16)
+            .unwrap_or(0);
+
+    // Format as MATIC (18 decimals)
+    let divisor = 10u128.pow(18);
+    let whole = balance / divisor;
+    let fraction = (balance % divisor) / 10u128.pow(14); // 4 decimal places
+
+    Ok(format!("{}.{:04}", whole, fraction))
 }
 
 #[cfg(test)]

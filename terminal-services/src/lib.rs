@@ -22,6 +22,7 @@ pub use candle_service::CandleService;
 pub use discord_aggregator::{DiscordAggregator, DiscordAggregatorError};
 pub use market_cache::{CacheStats, MarketCache, MarketCacheError, RefreshRequest};
 pub use market_service::{MarketService, OutcomePriceHistory};
+pub use terminal_polymarket::MarketFilter;
 pub use market_stats::{MarketStats, MarketStatsService, Timeframe};
 pub use news_aggregator::NewsAggregator;
 pub use news_cache::{NewsCache, NewsCacheError};

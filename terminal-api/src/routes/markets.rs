@@ -13,7 +13,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use terminal_core::{Platform, PredictionMarket};
-use terminal_services::{MarketStats, Timeframe};
+use terminal_services::{MarketFilter, MarketStats, Timeframe};
 use tracing::{debug, error, info, warn};
 
 use crate::AppState;
@@ -25,6 +25,8 @@ pub struct ListMarketsQuery {
     pub platform: Option<String>,
     /// Search query
     pub search: Option<String>,
+    /// Tab filter (all, trending, expiring, new, crypto, politics, sports)
+    pub filter: Option<String>,
     /// Maximum number of results
     pub limit: Option<usize>,
 }
@@ -153,6 +155,9 @@ pub fn routes() -> Router<AppState> {
 ///
 /// This now reads from the in-memory cache for instant response.
 /// Background refresh ensures data stays fresh.
+///
+/// When a `filter` param is provided (trending, expiring, new, crypto, politics, sports),
+/// it uses server-side filtering via Polymarket's API for accurate results.
 async fn list_markets(
     State(state): State<AppState>,
     Query(params): Query<ListMarketsQuery>,
@@ -169,24 +174,44 @@ async fn list_markets(
         }
     });
 
-    // Fetch from cache (instant!)
-    let mut markets = if let Some(query) = &params.search {
+    // Parse market filter (for tab filtering)
+    let market_filter: Option<MarketFilter> = params.filter.as_ref().and_then(|f| {
+        f.parse().ok()
+    });
+
+    // Fetch markets based on params
+    let markets = if let Some(query) = &params.search {
         // Search uses cache - instant
         state.market_cache.search_markets(query, platform_filter, params.limit)
+    } else if let Some(filter) = market_filter {
+        // Use filtered endpoint with caching (30s TTL)
+        match state.market_cache.get_filtered_markets(filter, params.limit).await {
+            Ok(markets) => markets,
+            Err(e) => {
+                error!("Failed to fetch filtered markets: {}", e);
+                // Fallback to regular cache on error
+                let mut markets = state.market_cache.get_markets(platform_filter);
+                if let Some(limit) = params.limit {
+                    markets.truncate(limit);
+                }
+                markets
+            }
+        }
     } else {
         // List uses cache - instant
-        state.market_cache.get_markets(platform_filter)
-    };
-
-    // Apply limit if specified (for non-search queries)
-    if params.search.is_none() {
+        let mut markets = state.market_cache.get_markets(platform_filter);
         if let Some(limit) = params.limit {
             markets.truncate(limit);
         }
-    }
+        markets
+    };
 
     let count = markets.len();
-    info!("Returning {} markets (from cache)", count);
+    info!(
+        "Returning {} markets (filter={:?})",
+        count,
+        params.filter
+    );
 
     (
         StatusCode::OK,
@@ -251,7 +276,6 @@ async fn get_market_stats(
     // Helper struct for parsing options_json
     #[derive(Debug, Deserialize)]
     struct MarketOption {
-        #[allow(dead_code)]
         name: String,
         #[serde(default)]
         clob_token_id: Option<String>,
@@ -259,24 +283,40 @@ async fn get_market_stats(
 
     // Extract token IDs for sparkline fetching
     // For Polymarket, we need the clob_token_id from options_json
+    // For multi-outcome markets, use the LEADING outcome (most likely winner) for the sparkline
+    // since the first option alphabetically might have no trading activity
     let polymarket_count = markets.iter().filter(|m| m.platform == Platform::Polymarket).count();
     let token_ids: Vec<(String, String)> = markets
         .iter()
         .filter(|m| m.platform == Platform::Polymarket)
         .filter_map(|m| {
-            // Parse options_json to get the YES token ID
+            // Parse options_json to get the token ID
             if let Some(json) = &m.options_json {
                 match serde_json::from_str::<Vec<MarketOption>>(json) {
                     Ok(options) => {
-                        // Get the first option's clob_token_id (YES token for binary markets)
-                        if let Some(option) = options.first() {
+                        // For multi-outcome markets, find the leading outcome's token
+                        // For binary markets, use the first (YES) option
+                        let target_option = if m.is_multi_outcome {
+                            // Try to find the leading outcome by name
+                            if let Some(leading) = &m.leading_outcome {
+                                options.iter().find(|o| o.name.starts_with(leading) || leading.starts_with(&o.name))
+                            } else {
+                                // Fall back to first option if no leading outcome
+                                options.first()
+                            }
+                        } else {
+                            // Binary market - use first option (YES)
+                            options.first()
+                        };
+
+                        if let Some(option) = target_option {
                             if let Some(token_id) = &option.clob_token_id {
                                 return Some((m.id.clone(), token_id.clone()));
                             } else {
-                                debug!("Market {} has option but no clob_token_id", m.id);
+                                debug!("Market {} option '{}' has no clob_token_id", m.id, option.name);
                             }
                         } else {
-                            debug!("Market {} has empty options array", m.id);
+                            debug!("Market {} has no matching option for leading outcome", m.id);
                         }
                     }
                     Err(e) => {
@@ -323,6 +363,26 @@ async fn get_market_stats(
         .collect();
 
     info!("Fetched {} sparklines for {} markets", sparklines.len(), markets.len());
+
+    // Create lookup for market volumes from cache (these are the actual exchange volumes)
+    let market_volumes: HashMap<String, Decimal> = markets
+        .iter()
+        .map(|m| (m.id.clone(), m.volume))
+        .collect();
+
+    // When trade-based volume is 0, fall back to market volume from cache
+    // This ensures we show the exchange's reported volume even when we don't have local trade history
+    let stats: Vec<MarketStats> = stats
+        .into_iter()
+        .map(|mut s| {
+            if s.volume == Decimal::ZERO {
+                if let Some(&market_vol) = market_volumes.get(&s.market_id) {
+                    s.volume = market_vol;
+                }
+            }
+            s
+        })
+        .collect();
 
     let count = stats.len();
     info!("Returning stats for {} markets", count);
