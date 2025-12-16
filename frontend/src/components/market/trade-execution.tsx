@@ -240,7 +240,25 @@ export const TradeExecution = ({
       });
 
       if (result.success) {
-        toast.success(`Order placed! ID: ${result.orderId?.slice(0, 8)}...`, { id: toastId });
+        const txHash = result.transactionHashes?.[0];
+        toast.success(
+          txHash ? (
+            <span>
+              Order placed!{" "}
+              <a
+                href={`https://polygonscan.com/tx/${txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-blue-400 hover:text-blue-300"
+              >
+                Tx: {txHash.slice(0, 10)}...
+              </a>
+            </span>
+          ) : (
+            "Order placed!"
+          ),
+          { id: toastId }
+        );
         setAmount("");
         setLimitPrice("");
         onOrderSubmitted?.();

@@ -423,11 +423,37 @@ impl PolymarketClient {
             .await
             .map_err(|e| TerminalError::parse(format!("Failed to parse event response: {}", e)))?;
 
-        events
-            .into_iter()
-            .next()
-            .map(|e| e.to_prediction_market())
-            .ok_or_else(|| TerminalError::not_found(format!("Market not found: {}", id)))
+        if let Some(event) = events.into_iter().next() {
+            return Ok(event.to_prediction_market());
+        }
+
+        // If still not found, try condition_id lookup (positions use condition_id as market_id)
+        debug!(
+            "Not found by id or event, trying condition_id lookup: {}",
+            id
+        );
+        let condition_url = format!("{}/markets?condition_id={}", self.base_url, id);
+
+        let response = self
+            .client
+            .get(&condition_url)
+            .send()
+            .await
+            .map_err(|e| {
+                TerminalError::network(format!("Failed to fetch market by condition_id: {}", e))
+            })?;
+
+        if response.status().is_success() {
+            let markets: Vec<PolymarketMarket> = response.json().await.map_err(|e| {
+                TerminalError::parse(format!("Failed to parse market response: {}", e))
+            })?;
+
+            if let Some(market) = markets.into_iter().next() {
+                return Ok(market.to_prediction_market());
+            }
+        }
+
+        Err(TerminalError::not_found(format!("Market not found: {}", id)))
     }
 
     /// List all markets with pagination (uses /markets endpoint - individual options)
