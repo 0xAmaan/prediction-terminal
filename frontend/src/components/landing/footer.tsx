@@ -1,22 +1,20 @@
 "use client";
 
-import Link from "next/link";
-
 export const Footer = () => {
   return (
-    <footer className="py-8 border-t border-[rgba(255,255,255,0.06)] bg-[#070709]">
-      <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#7D8B96]">
-        <p>© {new Date().getFullYear()} Premonition</p>
-        <div className="flex gap-6">
-          <a 
-            href="https://github.com/0xAmaan/prediction-terminal" 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            className="hover:text-[#EEF0F1] transition-colors"
-          >
-            GitHub
-          </a>
-        </div>
+    <footer className="py-8 px-6 lg:px-12 bg-[#070709] border-t border-[#1e1f25]/50">
+      <div className="max-w-6xl mx-auto flex items-center justify-between">
+        <span className="text-sm text-[#64727C]">
+          © {new Date().getFullYear()} Premonition
+        </span>
+        <a
+          href="https://github.com/0xAmaan/prediction-terminal"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-[#64727C] hover:text-[#9AA4AD] transition-colors"
+        >
+          GitHub
+        </a>
       </div>
     </footer>
   );

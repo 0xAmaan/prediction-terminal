@@ -12,11 +12,11 @@ use tracing::{debug, info};
 
 use terminal_core::{NewsFeed, NewsItem};
 
-/// How long to keep news items in cache (7 days)
-const NEWS_TTL_SECS: i64 = 7 * 24 * 60 * 60;
+/// How long to keep news items in cache - show articles from last 24 hours
+const NEWS_TTL_SECS: i64 = 24 * 60 * 60;
 
-/// Cache TTL for global news feed (return stale data after 5 minutes)
-const GLOBAL_FEED_TTL_SECS: i64 = 5 * 60;
+/// Cache TTL for global news feed - force refresh after this (2 minutes)
+const GLOBAL_FEED_TTL_SECS: i64 = 2 * 60;
 
 #[derive(Debug, thiserror::Error)]
 pub enum NewsCacheError {

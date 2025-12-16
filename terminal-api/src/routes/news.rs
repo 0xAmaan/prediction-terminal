@@ -43,7 +43,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// GET /api/news - Get latest global prediction market news from RSS feeds
-/// Returns cached data instantly, refreshes in background if needed
+/// Fetches fresh news if cache is stale (> 2 minutes old)
 async fn get_global_news(
     State(state): State<AppState>,
     Query(params): Query<NewsQuery>,
@@ -62,17 +62,18 @@ async fn get_global_news(
     };
 
     let limit = params.limit.unwrap_or(20);
+    let needs_refresh = state.news_cache.needs_refresh().await;
 
-    // Try to get cached news first (instant response)
-    if let Ok(cached_feed) = state.news_cache.get_cached_global_news(limit) {
-        if !cached_feed.items.is_empty() {
-            // Return cached data immediately
-            // Background refresh task will update cache if needed
-            return (StatusCode::OK, Json(cached_feed)).into_response();
+    // If cache is fresh, return cached data
+    if !needs_refresh {
+        if let Ok(cached_feed) = state.news_cache.get_cached_global_news(limit) {
+            if !cached_feed.items.is_empty() {
+                return (StatusCode::OK, Json(cached_feed)).into_response();
+            }
         }
     }
 
-    // No cache available - fetch directly (only happens on first request)
+    // Cache is stale or empty - fetch fresh news
     let search_params = terminal_core::NewsSearchParams {
         query: None,
         limit,
@@ -83,16 +84,23 @@ async fn get_global_news(
 
     match news_service.search_global_news(&search_params).await {
         Ok(feed) => {
-            // Store in cache for next time
+            // Store in cache and mark as refreshed
             if let Err(e) = state.news_cache.store_news_items("global", &feed.items) {
                 error!("Failed to cache news items: {}", e);
-            } else {
-                state.news_cache.mark_refreshed().await;
             }
+            state.news_cache.mark_refreshed().await;
+            info!("Refreshed news cache with {} items", feed.items.len());
             (StatusCode::OK, Json(feed)).into_response()
         }
         Err(e) => {
             error!("Failed to fetch global news: {}", e);
+            // On error, try to return stale cache as fallback
+            if let Ok(cached_feed) = state.news_cache.get_cached_global_news(limit) {
+                if !cached_feed.items.is_empty() {
+                    info!("Returning stale cache as fallback after fetch error");
+                    return (StatusCode::OK, Json(cached_feed)).into_response();
+                }
+            }
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
