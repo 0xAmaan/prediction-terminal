@@ -631,6 +631,11 @@ export const api = {
   > {
     const response = await fetch(`${API_BASE}/api/trade/orders`);
 
+    // 503 means trading is not configured - return empty array
+    if (response.status === 503) {
+      return [];
+    }
+
     if (!response.ok) {
       throw new Error(`Failed to get open orders: ${response.statusText}`);
     }
@@ -645,6 +650,11 @@ export const api = {
     token: string;
   }> {
     const response = await fetch(`${API_BASE}/api/trade/deposit`);
+
+    // 503 means trading is not configured - return empty placeholder
+    if (response.status === 503) {
+      return { address: "", network: "Polygon", token: "USDC.e" };
+    }
 
     if (!response.ok) {
       throw new Error(`Failed to get deposit address: ${response.statusText}`);
@@ -669,6 +679,19 @@ export const api = {
   }> {
     const response = await fetch(`${API_BASE}/api/trade/balance`);
 
+    // 503 means trading is not configured - return empty balance
+    if (response.status === 503) {
+      return {
+        usdcBalance: "0",
+        usdcAllowance: "0",
+        walletAddress: "",
+        ctfApproved: false,
+        ctfExchangeApproved: false,
+        negRiskCtfApproved: false,
+        negRiskAdapterApproved: false,
+      };
+    }
+
     if (!response.ok) {
       throw new Error(`Failed to get balance: ${response.statusText}`);
     }
@@ -691,6 +714,11 @@ export const api = {
     }>
   > {
     const response = await fetch(`${API_BASE}/api/trade/positions`);
+
+    // 503 means trading is not configured - return empty array
+    if (response.status === 503) {
+      return [];
+    }
 
     if (!response.ok) {
       throw new Error(`Failed to get positions: ${response.statusText}`);

@@ -453,10 +453,21 @@ pub struct FollowUpAnalysis {
     /// If can_answer_from_context is true, this contains the answer
     pub answer: Option<String>,
     /// If can_answer_from_context is false, these are the search queries needed
-    #[serde(default)]
+    /// Uses custom deserializer to handle null values from OpenAI (null -> empty vec)
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_vec")]
     pub search_queries: Vec<String>,
     /// Brief explanation of why research is or isn't needed
     pub reasoning: String,
+}
+
+/// Deserialize null values as empty Vec
+/// OpenAI sometimes returns null instead of an empty array for search_queries
+fn deserialize_null_as_empty_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Option::<Vec<String>>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
 }
 
 impl OpenAIClient {
@@ -480,12 +491,16 @@ Consider:
 3. Is the question asking for new information not covered in the report?
 4. Is the question about recent developments that might not be in the report?
 
+IMPORTANT:
+- If can_answer_from_context is TRUE: You MUST provide a complete, thorough answer in the "answer" field using only information from the report.
+- If can_answer_from_context is FALSE: You MUST provide 1-3 specific search queries in "search_queries" to find the needed information.
+
 Respond with valid JSON in this exact format:
 {
   "can_answer_from_context": true/false,
-  "answer": "If can_answer_from_context is true, provide a thorough answer here. Otherwise, null.",
-  "search_queries": ["If can_answer_from_context is false, provide 1-3 targeted search queries"],
-  "reasoning": "Brief explanation of your decision"
+  "answer": "If true, provide a COMPLETE thorough answer (2-4 paragraphs). If false, set to null.",
+  "search_queries": ["REQUIRED if false: 1-3 targeted search queries to find the answer"],
+  "reasoning": "Brief 1-sentence explanation"
 }"#;
 
         let report_summary = format!(
@@ -511,8 +526,9 @@ Respond with valid JSON in this exact format:
             report_summary, question
         );
 
+        // Use gpt-4o-mini for faster analysis (simple classification + answer task)
         let request = CreateChatCompletionRequestArgs::default()
-            .model(&self.model)
+            .model(DECOMPOSITION_MODEL)
             .messages([
                 ChatCompletionRequestSystemMessageArgs::default()
                     .content(system_prompt)
@@ -659,8 +675,9 @@ Respond with valid JSON in this exact format:
             question
         );
 
+        // Use gpt-4o-mini for faster query generation (simple task)
         let request = CreateChatCompletionRequestArgs::default()
-            .model(&self.model)
+            .model(DECOMPOSITION_MODEL)
             .messages([
                 ChatCompletionRequestSystemMessageArgs::default()
                     .content(system_prompt)
@@ -888,8 +905,9 @@ Format your response as:
             updated_report.executive_summary
         );
 
+        // Use gpt-4o-mini for faster summarization (simple task)
         let request = CreateChatCompletionRequestArgs::default()
-            .model(&self.model)
+            .model(DECOMPOSITION_MODEL)
             .messages([
                 ChatCompletionRequestSystemMessageArgs::default()
                     .content(system_prompt)

@@ -170,7 +170,7 @@ export function ResearchChat({
             <Bot className="h-8 w-8 mx-auto mb-2 opacity-50" />
             <p className="text-sm">No messages yet</p>
             <p className="text-xs mt-1">
-              Ask a question about the research above
+              Ask a question about the research
             </p>
             {suggestedFollowups.length > 0 && (
               <div className="mt-4">
