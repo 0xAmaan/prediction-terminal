@@ -132,7 +132,9 @@ export const WebSocketProvider = ({
 
   // Connect to WebSocket
   const connect = useCallback(() => {
+    console.log("[WebSocket] connect() called, current state:", wsRef.current?.readyState, "URL:", WS_URL);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      console.log("[WebSocket] Already connected, skipping");
       return;
     }
 
@@ -141,6 +143,7 @@ export const WebSocketProvider = ({
     setError(null);
 
     try {
+      console.log("[WebSocket] Creating new WebSocket connection to", WS_URL);
       const ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
@@ -176,7 +179,8 @@ export const WebSocketProvider = ({
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (event) => {
+        console.error("[WebSocket] Error occurred:", event);
         setError("WebSocket error occurred");
       };
 
@@ -230,6 +234,7 @@ export const WebSocketProvider = ({
   const subscribe = useCallback(
     (subscription: SubscriptionType) => {
       const key = getSubscriptionKey(subscription);
+      console.log("[WebSocket] subscribe() called:", key, "wsState:", wsRef.current?.readyState);
       activeSubscriptionsRef.current.set(key, subscription);
       sendMessage({ type: "subscribe", subscription });
     },
@@ -259,10 +264,12 @@ export const WebSocketProvider = ({
 
   // Auto-connect on mount
   useEffect(() => {
+    console.log("[WebSocket] Provider mounted, autoConnect:", autoConnect);
     if (autoConnect) {
       connect();
     }
     return () => {
+      console.log("[WebSocket] Provider unmounting");
       disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ExternalLink } from "lucide-react";
 import type { Trade } from "@/lib/types";
 
@@ -47,6 +47,13 @@ export const LiveTradesTable = ({
   trades,
   className = "",
 }: LiveTradesTableProps) => {
+  // Tick every second to update relative timestamps
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Sort trades by timestamp, newest first
   const sortedTrades = useMemo(() => {
     return [...trades].sort(

@@ -30,6 +30,22 @@ pub enum SubscriptionEvent {
     },
 }
 
+/// Trade subscription event for notifying the trade collector
+#[derive(Debug, Clone)]
+pub enum TradeSubscriptionEvent {
+    /// A client subscribed to trades for a market
+    Subscribe {
+        platform: Platform,
+        /// The market_id (could be event_id or clob_token_id)
+        market_id: String,
+    },
+    /// Last client unsubscribed from trades for a market
+    Unsubscribe {
+        platform: Platform,
+        market_id: String,
+    },
+}
+
 /// Shared state for WebSocket handlers
 #[derive(Clone)]
 pub struct WebSocketState {
@@ -39,6 +55,8 @@ pub struct WebSocketState {
     pub market_service: MarketService,
     /// Channel to notify aggregator of subscription changes
     subscription_event_tx: Option<mpsc::Sender<SubscriptionEvent>>,
+    /// Channel to notify trade collector of trade subscriptions
+    trade_subscription_tx: Option<mpsc::Sender<TradeSubscriptionEvent>>,
 }
 
 impl WebSocketState {
@@ -48,6 +66,7 @@ impl WebSocketState {
             subscriptions: Arc::new(SubscriptionManager::new()),
             market_service,
             subscription_event_tx: None,
+            trade_subscription_tx: None,
         }
     }
 
@@ -56,8 +75,18 @@ impl WebSocketState {
         self.subscription_event_tx = Some(tx);
     }
 
+    /// Set the trade subscription event sender (for trade collector integration)
+    pub fn set_trade_subscription_sender(&mut self, tx: mpsc::Sender<TradeSubscriptionEvent>) {
+        self.trade_subscription_tx = Some(tx);
+    }
+
     /// Get a subscription event receiver
     pub fn create_subscription_event_channel() -> (mpsc::Sender<SubscriptionEvent>, mpsc::Receiver<SubscriptionEvent>) {
+        mpsc::channel(256)
+    }
+
+    /// Get a trade subscription event receiver
+    pub fn create_trade_subscription_channel() -> (mpsc::Sender<TradeSubscriptionEvent>, mpsc::Receiver<TradeSubscriptionEvent>) {
         mpsc::channel(256)
     }
 
@@ -137,6 +166,7 @@ impl WebSocketState {
         let recv_task = {
             let outgoing_tx = outgoing_tx.clone();
             let subscription_event_tx = self.subscription_event_tx.clone();
+            let trade_subscription_tx = self.trade_subscription_tx.clone();
             async move {
                 while let Some(result) = ws_receiver.next().await {
                     match result {
@@ -147,6 +177,7 @@ impl WebSocketState {
                                 &subscriptions,
                                 &outgoing_tx,
                                 &subscription_event_tx,
+                                &trade_subscription_tx,
                             )
                             .await
                             {
@@ -180,7 +211,9 @@ impl WebSocketState {
         subscriptions: &Arc<SubscriptionManager>,
         outgoing_tx: &tokio::sync::mpsc::Sender<ServerMessage>,
         subscription_event_tx: &Option<mpsc::Sender<SubscriptionEvent>>,
+        trade_subscription_tx: &Option<mpsc::Sender<TradeSubscriptionEvent>>,
     ) -> Result<(), String> {
+        use terminal_core::SubscriptionType;
         use tokio_tungstenite::tungstenite::Message;
 
         match msg {
@@ -206,6 +239,17 @@ impl WebSocketState {
                             }
                         }
 
+                        // Notify trade collector if this is a trades subscription
+                        // (always notify, even if not first - trade collector will dedupe)
+                        if matches!(subscription, SubscriptionType::Trades { .. }) {
+                            if let Some(ref tx) = trade_subscription_tx {
+                                let _ = tx.send(TradeSubscriptionEvent::Subscribe {
+                                    platform: subscription.platform(),
+                                    market_id: subscription.market_id().to_string(),
+                                }).await;
+                            }
+                        }
+
                         // Send confirmation
                         let _ = outgoing_tx
                             .send(ServerMessage::Subscribed {
@@ -224,6 +268,16 @@ impl WebSocketState {
                                     platform: subscription.platform(),
                                     market_id: subscription.market_id().to_string(),
                                 }).await;
+                            }
+
+                            // Notify trade collector if this was a trades subscription
+                            if matches!(subscription, SubscriptionType::Trades { .. }) {
+                                if let Some(ref tx) = trade_subscription_tx {
+                                    let _ = tx.send(TradeSubscriptionEvent::Unsubscribe {
+                                        platform: subscription.platform(),
+                                        market_id: subscription.market_id().to_string(),
+                                    }).await;
+                                }
                             }
                         }
 

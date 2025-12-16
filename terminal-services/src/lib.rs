@@ -35,4 +35,4 @@ pub use trade_storage::{
     MarketTradeStats, OrderbookSnapshot, PriceSnapshot, StoredCandle, StoredPrice, TradeStorage,
     TxnCounts,
 };
-pub use websocket::{SubscriptionEvent, SubscriptionManager, WebSocketState};
+pub use websocket::{SubscriptionEvent, SubscriptionManager, TradeSubscriptionEvent, WebSocketState};

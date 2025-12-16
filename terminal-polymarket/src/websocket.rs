@@ -257,6 +257,7 @@ impl PolymarketWebSocket {
 
         tokio::spawn(async move {
             Self::connection_loop(config, update_tx, command_rx, subscriptions).await;
+            error!("[Polymarket WS] Connection loop exited unexpectedly!");
         });
 
         Ok(())
@@ -299,8 +300,14 @@ impl PolymarketWebSocket {
         loop {
             info!("[Polymarket WS] Connecting to {}", POLYMARKET_WS_URL);
 
-            match connect_async(POLYMARKET_WS_URL).await {
-                Ok((ws_stream, _)) => {
+            // Add timeout to connection attempt (10 seconds)
+            let connect_result = tokio::time::timeout(
+                Duration::from_secs(10),
+                connect_async(POLYMARKET_WS_URL)
+            ).await;
+
+            match connect_result {
+                Ok(Ok((ws_stream, _))) => {
                     info!("[Polymarket WS] Connected successfully");
                     reconnect_attempts = 0;
 
@@ -422,11 +429,18 @@ impl PolymarketWebSocket {
                         error: None,
                     });
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("[Polymarket WS] Connection failed: {}", e);
                     let _ = update_tx.send(PolymarketUpdate::ConnectionState {
                         connected: false,
                         error: Some(e.to_string()),
+                    });
+                }
+                Err(_) => {
+                    error!("[Polymarket WS] Connection timed out after 10 seconds");
+                    let _ = update_tx.send(PolymarketUpdate::ConnectionState {
+                        connected: false,
+                        error: Some("Connection timeout".to_string()),
                     });
                 }
             }
@@ -610,6 +624,8 @@ impl PolymarketWebSocket {
 
     /// Subscribe to market updates for given asset IDs (token IDs)
     pub async fn subscribe(&self, asset_ids: Vec<String>) -> Result<(), anyhow::Error> {
+        info!("[Polymarket WS] Subscribe called for {} asset(s)", asset_ids.len());
+
         // Track subscriptions
         {
             let mut subs = self.subscriptions.write().await;
@@ -620,7 +636,18 @@ impl PolymarketWebSocket {
 
         // Send subscribe command
         if let Some(ref tx) = self.command_tx {
-            tx.send(WebSocketCommand::Subscribe { asset_ids }).await?;
+            info!("[Polymarket WS] Sending subscribe command to connection loop");
+            match tx.send(WebSocketCommand::Subscribe { asset_ids }).await {
+                Ok(()) => {
+                    info!("[Polymarket WS] Subscribe command sent successfully");
+                }
+                Err(e) => {
+                    error!("[Polymarket WS] Failed to send subscribe command: {}", e);
+                    return Err(e.into());
+                }
+            }
+        } else {
+            warn!("[Polymarket WS] No command_tx channel - start() may not have been called!");
         }
 
         Ok(())

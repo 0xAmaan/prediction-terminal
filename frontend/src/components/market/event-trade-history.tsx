@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useEventTradesStream } from "@/hooks/use-event-trades-stream";
 import { ConnectionIndicator } from "./connection-indicator";
@@ -205,6 +204,13 @@ export const EventTradeHistory = ({
   options,
   maxTrades = 50,
 }: EventTradeHistoryProps) => {
+  // Tick every second to update relative timestamps
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // WebSocket streaming for live trades
   const {
     connectionState,

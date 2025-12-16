@@ -70,7 +70,7 @@ serde_urlencoded = { version = "0.7.1" }
 # Protocol
 url = { version = "2.5.4" }
 reqwest = { version = "0.12.9",default-features = false, features = ["rustls-tls", "json"] }
-tokio-tungstenite = { version = "0.28.0", features = ["url","rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28.0", features = ["url", "native-tls"] }
 
 # Data Structures
 vecmap-rs = { version = "0.2.2" }
@@ -112,3 +112,17 @@ twilight-http = { version = "0.17" }
 twilight-model = { version = "0.17" }
 twilight-cache-inmemory = { version = "0.17" }
 dashmap = { version = "6.0" }
+
+# Profile optimizations to reduce target folder size
+[profile.dev]
+incremental = true
+# Split debuginfo into separate files (smaller, lazily loaded)
+split-debuginfo = "unpacked"
+# Reduce debug info level (0=none, 1=line tables, 2=full)
+debug = 1
+
+[profile.dev.package."*"]
+# Don't keep debug info for dependencies at all
+debug = false
+# Optimize dependencies even in dev mode (faster runtime, slower first compile)
+opt-level = 1

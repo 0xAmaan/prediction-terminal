@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Activity, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { PremonitionLogo } from "@/components/icons/premonition-logo";
 
 // Fey color tokens
 const fey = {
@@ -86,12 +87,7 @@ export const Navbar = ({ search, onSearchChange }: NavbarProps) => {
         <div className="flex items-center justify-between gap-8">
           {/* Left: Logo + Title */}
           <Link href="/" className="flex items-center gap-3 shrink-0">
-            <div
-              className="p-2.5 rounded-lg"
-              style={{ backgroundColor: "rgba(84, 187, 247, 0.1)" }}
-            >
-              <Activity className="h-6 w-6" style={{ color: fey.skyBlue }} />
-            </div>
+            <PremonitionLogo size={40} />
             <h1
               className="text-xl font-semibold"
               style={{ color: fey.grey100, letterSpacing: "-0.02em" }}

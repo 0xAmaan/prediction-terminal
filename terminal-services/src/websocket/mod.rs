@@ -7,4 +7,4 @@ mod subscription;
 mod handler;
 
 pub use subscription::SubscriptionManager;
-pub use handler::{SubscriptionEvent, WebSocketState};
+pub use handler::{SubscriptionEvent, TradeSubscriptionEvent, WebSocketState};

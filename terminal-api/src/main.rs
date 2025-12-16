@@ -42,6 +42,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    eprintln!("[DEBUG] Starting terminal-api...");
+
     // Load environment variables from .env.local file
     if let Err(e) = dotenvy::from_filename(".env.local") {
         // Not an error if the file doesn't exist
@@ -109,9 +111,13 @@ async fn main() -> anyhow::Result<()> {
     // Create subscription event channel for aggregator integration
     let (subscription_tx, subscription_rx) = WebSocketState::create_subscription_event_channel();
 
-    // Create WebSocket state with subscription event sender
+    // Create trade subscription event channel for trade collector integration
+    let (trade_subscription_tx, trade_subscription_rx) = WebSocketState::create_trade_subscription_channel();
+
+    // Create WebSocket state with subscription event senders
     let mut ws_state = WebSocketState::new(market_service.clone());
     ws_state.set_subscription_event_sender(subscription_tx);
+    ws_state.set_trade_subscription_sender(trade_subscription_tx);
     let ws_state = Arc::new(ws_state);
 
     // Initialize trade storage (SQLite database)
@@ -205,6 +211,96 @@ async fn main() -> anyhow::Result<()> {
     let aggregator_for_events = Arc::clone(&aggregator);
     tokio::spawn(async move {
         aggregator_for_events.process_subscription_events(subscription_rx).await;
+    });
+
+    // Spawn a task to process trade subscription events and notify trade collector
+    let trade_collector_for_events = Arc::clone(&trade_collector);
+    let market_cache_for_events = Arc::clone(&market_cache);
+    tokio::spawn(async move {
+        use terminal_services::TradeSubscriptionEvent;
+
+        // Helper to check if options_json contains a clob_token_id
+        #[derive(serde::Deserialize)]
+        struct MinimalOption {
+            #[serde(default)]
+            clob_token_id: Option<String>,
+        }
+
+        fn find_event_for_clob_token(
+            markets: &[terminal_core::PredictionMarket],
+            clob_token_id: &str,
+        ) -> Option<String> {
+            for market in markets {
+                if let Some(ref options_json) = market.options_json {
+                    if let Ok(options) = serde_json::from_str::<Vec<MinimalOption>>(options_json) {
+                        if options.iter().any(|opt| {
+                            opt.clob_token_id.as_ref().map(|id| id == clob_token_id).unwrap_or(false)
+                        }) {
+                            return Some(market.id.clone());
+                        }
+                    }
+                }
+            }
+            None
+        }
+
+        let mut rx = trade_subscription_rx;
+        while let Some(event) = rx.recv().await {
+            match event {
+                TradeSubscriptionEvent::Subscribe { platform, market_id } => {
+                    // For Polymarket, if this is a clob_token_id (long numeric string),
+                    // we need to find the event_id to track for trade collection
+                    let track_id = if platform == terminal_core::Platform::Polymarket
+                        && market_id.len() > 20
+                        && market_id.chars().all(|c| c.is_ascii_digit())
+                    {
+                        // This is a clob_token_id, try to find the parent event
+                        let markets = market_cache_for_events.get_markets(Some(platform));
+
+                        if let Some(event_id) = find_event_for_clob_token(&markets, &market_id) {
+                            info!(
+                                "[TradeSubscription] Resolved clob_token_id to event_id: {}... -> {}",
+                                &market_id[..20], event_id
+                            );
+                            event_id
+                        } else {
+                            // Couldn't resolve, skip tracking (trades API won't work anyway)
+                            info!(
+                                "[TradeSubscription] Couldn't resolve clob_token_id: {}..., skipping",
+                                &market_id[..20.min(market_id.len())]
+                            );
+                            continue;
+                        }
+                    } else {
+                        market_id.clone()
+                    };
+
+                    info!(
+                        "[TradeSubscription] Tracking {:?}:{} for trade collection",
+                        platform, track_id
+                    );
+                    trade_collector_for_events.track_market(platform, track_id).await;
+                }
+                TradeSubscriptionEvent::Unsubscribe { platform, market_id } => {
+                    // For unsubscribe, we also need to resolve clob_token_id to event_id
+                    let track_id = if platform == terminal_core::Platform::Polymarket
+                        && market_id.len() > 20
+                        && market_id.chars().all(|c| c.is_ascii_digit())
+                    {
+                        let markets = market_cache_for_events.get_markets(Some(platform));
+                        find_event_for_clob_token(&markets, &market_id).unwrap_or(market_id.clone())
+                    } else {
+                        market_id.clone()
+                    };
+
+                    info!(
+                        "[TradeSubscription] Untracking {:?}:{} from trade collection",
+                        platform, track_id
+                    );
+                    trade_collector_for_events.untrack_market(platform, &track_id).await;
+                }
+            }
+        }
     });
 
     // Initialize news service
