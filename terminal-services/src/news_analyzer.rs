@@ -67,14 +67,11 @@ impl NewsAnalyzer {
     /// Analyze a news item and enrich it with market matching and trading signals
     #[instrument(skip(self, news_item), fields(news_title = %news_item.title))]
     pub async fn analyze_news(&self, mut news_item: NewsItem) -> Result<NewsItem, TerminalError> {
-        // Get top markets by volume from cache
-        let markets = self.market_cache.get_markets(Some(Platform::Polymarket));
+        // Get all markets from cache (sorted by volume)
+        let all_markets = self.market_cache.get_markets(Some(Platform::Polymarket));
 
-        // Take only the top N markets
-        let markets: Vec<_> = markets
-            .into_iter()
-            .take(self.config.max_markets_to_consider)
-            .collect();
+        // Select a diverse set of markets across different categories
+        let markets = self.select_diverse_markets(&all_markets);
 
         if markets.is_empty() {
             debug!("No markets available for matching");
@@ -97,16 +94,84 @@ impl NewsAnalyzer {
         Ok(news_item)
     }
 
+    /// Select a diverse set of markets across different categories
+    /// to improve matching coverage beyond just top volume markets
+    fn select_diverse_markets(&self, all_markets: &[PredictionMarket]) -> Vec<PredictionMarket> {
+        use std::collections::HashMap;
+
+        let max_total = self.config.max_markets_to_consider;
+        let max_per_category = 10; // Max markets per category to ensure diversity
+
+        // Group markets by category
+        let mut by_category: HashMap<String, Vec<&PredictionMarket>> = HashMap::new();
+
+        for market in all_markets {
+            let category = market
+                .category
+                .clone()
+                .unwrap_or_else(|| "Other".to_string());
+            by_category.entry(category).or_default().push(market);
+        }
+
+        // Also create a group based on tags for better coverage
+        let categories = [
+            "Politics",
+            "Crypto",
+            "Sports",
+            "Science",
+            "Entertainment",
+            "Business",
+            "AI",
+            "Other",
+        ];
+
+        let mut selected: Vec<PredictionMarket> = Vec::new();
+        let mut selected_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // First pass: take top markets from each category
+        for cat in &categories {
+            let cat_markets = by_category.get(*cat).cloned().unwrap_or_default();
+            for market in cat_markets.into_iter().take(max_per_category) {
+                if selected.len() >= max_total {
+                    break;
+                }
+                if !selected_ids.contains(&market.id) {
+                    selected_ids.insert(market.id.clone());
+                    selected.push(market.clone());
+                }
+            }
+        }
+
+        // Second pass: fill remaining slots with any unselected high-volume markets
+        for market in all_markets {
+            if selected.len() >= max_total {
+                break;
+            }
+            if !selected_ids.contains(&market.id) {
+                selected_ids.insert(market.id.clone());
+                selected.push(market.clone());
+            }
+        }
+
+        debug!(
+            "Selected {} diverse markets from {} total",
+            selected.len(),
+            all_markets.len()
+        );
+
+        selected
+    }
+
     /// Use AI to analyze the news and match it to a market
     async fn analyze_with_ai(
         &self,
         news_item: &NewsItem,
         markets: &[PredictionMarket],
     ) -> Result<NewsAnalysis, TerminalError> {
-        // Build market list for the prompt (top 20 by volume)
+        // Build market list for the prompt (top 40 by volume for better coverage)
         let market_list: String = markets
             .iter()
-            .take(20)
+            .take(40)
             .enumerate()
             .map(|(i, m)| {
                 let price_pct = m.yes_price.to_string().parse::<f64>().unwrap_or(0.0) * 100.0;

@@ -7,6 +7,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::join_all;
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -35,7 +36,7 @@ impl Default for NewsAggregatorConfig {
     fn default() -> Self {
         Self {
             poll_interval_secs: 30, // Poll every 30 seconds
-            articles_per_poll: 10,
+            articles_per_poll: 20, // Fetch more articles per poll
             enable_ai_enrichment: true,
         }
     }
@@ -156,17 +157,21 @@ impl NewsAggregator {
             return Ok(());
         }
 
-        info!("Processing {} new articles", new_articles.len());
+        info!("Processing {} new articles in parallel", new_articles.len());
 
-        // Enrich each article with AI analysis (if enabled)
-        for article in new_articles {
-            let enriched = if self.config.enable_ai_enrichment {
-                self.enrich_article(article).await
-            } else {
-                article
-            };
+        // Enrich articles in parallel for faster processing
+        let enriched_articles = if self.config.enable_ai_enrichment {
+            let futures: Vec<_> = new_articles
+                .into_iter()
+                .map(|article| self.enrich_article(article))
+                .collect();
+            join_all(futures).await
+        } else {
+            new_articles
+        };
 
-            // Add to buffer and broadcast
+        // Add all enriched articles to buffer and broadcast
+        for enriched in enriched_articles {
             self.add_to_buffer(enriched.clone()).await;
             self.ws_state.broadcast_global_news(enriched);
         }
