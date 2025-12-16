@@ -1,97 +1,85 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useNewsStream } from "@/hooks/use-news-stream";
-import { NewsCard } from "./news-card";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { NewsItem, Platform } from "@/lib/types";
+import type { NewsItem, Platform, PriceSignal, SuggestedAction } from "@/lib/types";
+
+// Fey color tokens
+const fey = {
+  bg100: "#070709",
+  bg200: "#0D0E12",
+  grey100: "#EEF0F1",
+  grey400: "#9BA3AB",
+  grey500: "#7D8B96",
+  grey600: "#5A6670",
+  green: "#4DBE95",
+  red: "#F25757",
+  skyBlue: "#54BBF7",
+  border: "rgba(255, 255, 255, 0.06)",
+};
 
 interface NewsFeedProps {
-  /** Market context for contextual news */
   market?: {
     platform: Platform;
     marketId: string;
   };
-  /** Items per page (backward compat: also accepts 'limit') */
-  itemsPerPage?: number;
-  /** Backward compatibility for limit */
-  limit?: number;
-  /** Total items to fetch (for pagination) */
-  totalItems?: number;
-  /** Title for the feed */
-  title?: string;
-  /** Show in compact mode */
+  maxItems?: number;
   compact?: boolean;
-  /** Enable pagination */
+  // Legacy props for backward compat
+  itemsPerPage?: number;
+  limit?: number;
+  totalItems?: number;
+  title?: string;
   enablePagination?: boolean;
 }
 
-const fey = {
-  bg100: "#070709",
-  bg300: "#131419",
-  grey100: "#EEF0F1",
-  grey500: "#7D8B96",
-  teal: "#4DBE95",
-  border: "rgba(255, 255, 255, 0.06)",
+const formatTimeAgo = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+
+  if (diffMins < 1) return "now";
+  if (diffMins < 60) return `${diffMins}m`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d`;
+};
+
+const getActionDisplay = (
+  signal: PriceSignal | null | undefined,
+  action: SuggestedAction | null | undefined
+): { label: string; color: string } | null => {
+  if (!action || action === "hold") return null;
+  if (action === "buy") return { label: "BUY", color: fey.green };
+  if (action === "sell") return { label: "SELL", color: fey.red };
+  return null;
 };
 
 export const NewsFeed = ({
   market,
-  itemsPerPage,
-  limit,
-  totalItems = 50,
-  title,
+  maxItems = 20,
   compact = false,
-  enablePagination = true,
+  limit,
+  totalItems,
 }: NewsFeedProps) => {
-  const [currentPage, setCurrentPage] = useState(1);
+  const itemCount = maxItems || limit || totalItems || 20;
 
-  // Support both 'limit' (backward compat) and 'itemsPerPage'
-  const perPage = itemsPerPage ?? limit ?? 10;
-
-  // PROGRESSIVE LOADING: Load first page immediately, rest in background
-  // This speeds up initial render since backend embedding generation is slow
-
-  // Query 1: Initial batch (just enough for page 1) - fast, priority
-  // Skip embeddings for speed - we'll get them in the background query
-  const {
-    data: initialData,
-    isLoading: initialLoading,
-    error: initialError,
-  } = useQuery({
+  // Fetch news from API - use enriched endpoint for global news
+  const { data, isLoading, error } = useQuery({
     queryKey: market
-      ? ["market-news-initial", market.platform, market.marketId]
-      : ["global-news-initial"],
+      ? ["market-news", market.platform, market.marketId]
+      : ["enriched-news"],
     queryFn: () =>
       market
-        ? api.getMarketNews(market.platform, market.marketId, perPage, true)
-        : api.getGlobalNews({ limit: perPage, skip_embeddings: true }),
-    staleTime: 5 * 1000,
-    refetchInterval: 5 * 1000,
+        ? api.getMarketNews(market.platform, market.marketId, itemCount, true)
+        : api.getEnrichedNews(),
+    staleTime: 15 * 1000,
+    refetchInterval: 15 * 1000,
   });
-
-  // Query 2: Remaining items (for pagination) - loads in background
-  // Includes embeddings for semantic market matching
-  const { data: backgroundData } = useQuery({
-    queryKey: market
-      ? ["market-news-background", market.platform, market.marketId]
-      : ["global-news-background"],
-    queryFn: () =>
-      market
-        ? api.getMarketNews(market.platform, market.marketId, totalItems, false)
-        : api.getGlobalNews({ limit: totalItems, skip_embeddings: false }),
-    staleTime: 5 * 1000,
-    refetchInterval: 5 * 1000,
-    // Only fetch background data after initial data loads
-    enabled: !initialLoading && !!initialData,
-  });
-
-  // Use background data if available, otherwise fall back to initial data
-  const data = backgroundData ?? initialData;
-  const isLoading = initialLoading;
-  const error = initialError;
 
   // WebSocket for real-time updates
   const { news: liveNews } = useNewsStream({
@@ -99,38 +87,32 @@ export const NewsFeed = ({
     market: market
       ? { platform: market.platform, marketId: market.marketId }
       : undefined,
-    maxItems: totalItems,
+    maxItems: itemCount,
   });
 
-  // Merge REST data with live updates (live takes priority)
-  // Use Map to ensure complete deduplication by ID
+  // Merge and deduplicate news (live takes priority)
   const restNews = data?.items ?? [];
   const newsMap = new Map<string, NewsItem>();
+  restNews.forEach((item) => newsMap.set(item.id, item));
+  liveNews.forEach((item) => newsMap.set(item.id, item));
 
-  // Add REST news first
-  restNews.forEach((item) => {
-    newsMap.set(item.id, item);
-  });
-
-  // Live news overwrites REST news (live takes priority)
-  liveNews.forEach((item) => {
-    newsMap.set(item.id, item);
-  });
-
-  const allNews = Array.from(newsMap.values());
-
-  // Pagination logic
-  const totalPages = Math.ceil(allNews.length / perPage);
-  const startIndex = (currentPage - 1) * perPage;
-  const endIndex = startIndex + perPage;
-  const currentPageNews = allNews.slice(startIndex, endIndex);
+  // Sort by published date (newest first) and limit
+  const allNews = Array.from(newsMap.values())
+    .sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime())
+    .slice(0, itemCount);
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
-        {title && <h2 className="text-base font-semibold">{title}</h2>}
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-24 rounded-xl" />
+      <div className="space-y-0">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="py-3 animate-pulse"
+            style={{ borderBottom: `1px solid ${fey.border}` }}
+          >
+            <div className="h-3 w-24 rounded bg-white/5 mb-2" />
+            <div className="h-4 w-full rounded bg-white/5" />
+          </div>
         ))}
       </div>
     );
@@ -138,133 +120,164 @@ export const NewsFeed = ({
 
   if (error) {
     return (
-      <div className="space-y-3">
-        {title && <h2 className="text-base font-semibold">{title}</h2>}
-        <div className="text-center py-6 text-muted-foreground text-sm">
-          Failed to load news
-        </div>
+      <div className="py-8 text-center text-sm" style={{ color: fey.grey500 }}>
+        Failed to load news feed
       </div>
     );
   }
 
-  // Generate page numbers to display (like Google: 1 2 3 ... 10)
-  const getPageNumbers = () => {
-    const pages: (number | string)[] = [];
-    const maxVisible = 7; // Max page numbers to show
-
-    if (totalPages <= maxVisible) {
-      // Show all pages if total is small
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      // Always show first page
-      pages.push(1);
-
-      if (currentPage > 3) {
-        pages.push("...");
-      }
-
-      // Show pages around current page
-      const start = Math.max(2, currentPage - 1);
-      const end = Math.min(totalPages - 1, currentPage + 1);
-
-      for (let i = start; i <= end; i++) {
-        pages.push(i);
-      }
-
-      if (currentPage < totalPages - 2) {
-        pages.push("...");
-      }
-
-      // Always show last page
-      if (totalPages > 1) {
-        pages.push(totalPages);
-      }
-    }
-
-    return pages;
-  };
+  if (allNews.length === 0) {
+    return (
+      <div className="py-8 text-center text-sm" style={{ color: fey.grey500 }}>
+        No news available
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      {title && <h2 className="text-base font-semibold">{title}</h2>}
-
-      {/* News items */}
-      <div className="space-y-3">
-        {currentPageNews.length === 0 ? (
-          <div className="text-center py-6 text-muted-foreground text-sm">
-            No news available
-          </div>
-        ) : (
-          currentPageNews.map((item) => (
-            <NewsCard key={item.id} item={item} compact={compact} />
-          ))
-        )}
-      </div>
-
-      {/* Pagination controls */}
-      {enablePagination && totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-4 pb-2">
-          {/* Previous button */}
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
-            className="px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              backgroundColor: currentPage === 1 ? fey.bg300 : fey.bg300,
-              border: `1px solid ${fey.border}`,
-              color: fey.grey100,
-            }}
-          >
-            Previous
-          </button>
-
-          {/* Page numbers */}
-          {getPageNumbers().map((page, idx) =>
-            page === "..." ? (
-              <span
-                key={`ellipsis-${idx}`}
-                className="px-2 py-1.5 text-sm"
-                style={{ color: fey.grey500 }}
-              >
-                ...
-              </span>
-            ) : (
-              <button
-                key={page}
-                onClick={() => setCurrentPage(page as number)}
-                className="px-3 py-1.5 rounded text-sm font-medium transition-colors min-w-[36px]"
-                style={{
-                  backgroundColor:
-                    currentPage === page ? fey.teal : fey.bg300,
-                  border: `1px solid ${
-                    currentPage === page ? fey.teal : fey.border
-                  }`,
-                  color: currentPage === page ? fey.bg100 : fey.grey100,
-                }}
-              >
-                {page}
-              </button>
-            )
-          )}
-
-          {/* Next button */}
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
-            className="px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              backgroundColor:
-                currentPage === totalPages ? fey.bg300 : fey.bg300,
-              border: `1px solid ${fey.border}`,
-              color: fey.grey100,
-            }}
-          >
-            Next
-          </button>
-        </div>
-      )}
+    <div className="divide-y" style={{ borderColor: fey.border }}>
+      {allNews.map((item, index) => (
+        <NewsRow key={item.id} item={item} isNew={index < liveNews.length} />
+      ))}
     </div>
   );
 };
+
+// Individual news row - compact streaming style
+const NewsRow = ({ item, isNew }: { item: NewsItem; isNew?: boolean }) => {
+  const hasMarketMatch =
+    item.matched_market != null && item.matched_market.platform != null;
+  const action = getActionDisplay(item.price_signal, item.suggested_action);
+
+  return (
+    <div
+      className="py-3 px-1 transition-colors hover:bg-white/[0.02]"
+      style={{
+        borderColor: fey.border,
+        backgroundColor: isNew ? "rgba(84, 187, 247, 0.03)" : "transparent",
+      }}
+    >
+      {/* Market match row (if AI enriched) */}
+      {hasMarketMatch && (
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <Link
+            href={`/market/${item.matched_market!.platform}/${item.matched_market!.market_id}`}
+            className="inline-flex items-center gap-1.5 group"
+          >
+            <span
+              className="text-[11px] font-medium px-2 py-0.5 rounded transition-colors"
+              style={{
+                backgroundColor: "rgba(84, 187, 247, 0.1)",
+                color: fey.skyBlue,
+              }}
+            >
+              {item.matched_market!.title.length > 40
+                ? item.matched_market!.title.slice(0, 40) + "..."
+                : item.matched_market!.title}
+            </span>
+            <span
+              className="text-[11px] font-medium"
+              style={{ color: fey.grey500 }}
+            >
+              {(item.matched_market!.current_price * 100).toFixed(0)}%
+            </span>
+          </Link>
+
+          {/* Price signal with tooltip - clickable to go to market */}
+          {item.price_signal && item.price_signal !== "neutral" && (
+            <Link
+              href={`/market/${item.matched_market!.platform}/${item.matched_market!.market_id}${item.matched_market!.outcome ? `?outcome=${encodeURIComponent(item.matched_market!.outcome)}` : ""}`}
+              className="relative group/signal"
+            >
+              <span
+                className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+                style={{
+                  color:
+                    item.price_signal === "underpriced" ? fey.green : fey.red,
+                  backgroundColor:
+                    item.price_signal === "underpriced"
+                      ? "rgba(77, 190, 149, 0.15)"
+                      : "rgba(242, 87, 87, 0.15)",
+                }}
+              >
+                {item.price_signal}
+                {item.matched_market?.outcome && (
+                  <span className="ml-1 opacity-70">
+                    ({item.matched_market.outcome.length > 15
+                      ? item.matched_market.outcome.slice(0, 15) + "..."
+                      : item.matched_market.outcome})
+                  </span>
+                )}
+              </span>
+              {/* Tooltip */}
+              {item.signal_reasoning && (
+                <span
+                  className="absolute left-0 top-full mt-1 z-50 hidden group-hover/signal:block w-72 p-2 rounded text-[11px] font-normal normal-case leading-relaxed shadow-lg pointer-events-none"
+                  style={{
+                    backgroundColor: "#1A1B20",
+                    color: fey.grey100,
+                    border: `1px solid ${fey.border}`,
+                  }}
+                >
+                  {item.signal_reasoning}
+                </span>
+              )}
+            </Link>
+          )}
+
+          {/* Action badge */}
+          {action && (
+            <span
+              className="text-[10px] font-bold tracking-wide px-2 py-0.5 rounded"
+              style={{
+                color: action.color,
+                backgroundColor: `${action.color}20`,
+                border: `1px solid ${action.color}30`,
+              }}
+            >
+              {action.label}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Main news content */}
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block group"
+      >
+        {/* Source + time */}
+        <div className="flex items-center gap-1.5 mb-1">
+          {item.source.favicon_url && (
+            <img
+              src={item.source.favicon_url}
+              alt=""
+              className="w-3.5 h-3.5 rounded-sm opacity-70"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+          )}
+          <span className="text-[11px] font-medium" style={{ color: fey.grey400 }}>
+            {item.source.name}
+          </span>
+          <span className="text-[11px]" style={{ color: fey.grey600 }}>
+            · {formatTimeAgo(item.published_at)}
+          </span>
+        </div>
+
+        {/* Headline */}
+        <h3
+          className="text-[13px] font-medium leading-snug group-hover:text-[#54BBF7] transition-colors"
+          style={{ color: fey.grey100 }}
+        >
+          {item.title}
+        </h3>
+      </a>
+    </div>
+  );
+};
+
+export default NewsFeed;

@@ -689,6 +689,11 @@ fn parse_google_news_channel(channel: &rss::Channel, _feed: &RssFeed) -> Vec<New
                 relevance_score: 0.9, // Google News pre-filters for relevance
                 related_market_ids: vec![],
                 search_query: None,
+                // AI-enriched fields (set later by NewsAnalyzer)
+                matched_market: None,
+                price_signal: None,
+                suggested_action: None,
+                signal_reasoning: None,
             })
         })
         .collect()

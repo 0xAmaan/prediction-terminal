@@ -1,9 +1,9 @@
 //! News Aggregator Service
 //!
-//! Background service that polls for news updates and broadcasts
-//! new articles to WebSocket clients.
+//! Background service that maintains a rolling buffer of AI-enriched news
+//! articles with market matching and trading signals.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,48 +11,45 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
-use terminal_core::{NewsItem, NewsSearchParams, Platform};
+use terminal_core::{NewsFeed, NewsItem, NewsSearchParams};
 
+use crate::news_analyzer::NewsAnalyzer;
 use crate::news_service::NewsService;
 use crate::websocket::WebSocketState;
+
+/// Maximum number of enriched news items to keep in the rolling buffer
+const MAX_BUFFER_SIZE: usize = 20;
 
 /// Configuration for NewsAggregator
 #[derive(Debug, Clone)]
 pub struct NewsAggregatorConfig {
-    /// How often to poll for global news (in seconds)
-    pub global_poll_interval_secs: u64,
-    /// How often to poll for market-specific news (in seconds)
-    pub market_poll_interval_secs: u64,
+    /// How often to poll for news (in seconds)
+    pub poll_interval_secs: u64,
     /// Maximum articles to fetch per poll
     pub articles_per_poll: usize,
+    /// Whether to enable AI enrichment (requires OPENAI_API_KEY)
+    pub enable_ai_enrichment: bool,
 }
 
 impl Default for NewsAggregatorConfig {
     fn default() -> Self {
         Self {
-            global_poll_interval_secs: 5, // 5 seconds for RSS
-            market_poll_interval_secs: 5, // 5 seconds for RSS
-            articles_per_poll: 20,
+            poll_interval_secs: 30, // Poll every 30 seconds
+            articles_per_poll: 10,
+            enable_ai_enrichment: true,
         }
     }
 }
 
-/// Tracked market info
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct TrackedMarket {
-    platform: Platform,
-    market_id: String,
-    title: String,
-}
-
-/// Background service for aggregating and broadcasting news
+/// Background service for aggregating and broadcasting AI-enriched news
 pub struct NewsAggregator {
     news_service: Arc<NewsService>,
+    news_analyzer: Option<Arc<NewsAnalyzer>>,
     ws_state: Arc<WebSocketState>,
     config: NewsAggregatorConfig,
-    /// Markets currently being tracked for news
-    tracked_markets: RwLock<HashSet<TrackedMarket>>,
-    /// IDs of articles already seen (to avoid duplicates)
+    /// Rolling buffer of enriched news items (newest first)
+    buffer: RwLock<VecDeque<NewsItem>>,
+    /// IDs of articles already processed (to avoid duplicates)
     seen_article_ids: RwLock<HashSet<String>>,
 }
 
@@ -60,38 +57,47 @@ impl NewsAggregator {
     /// Create a new NewsAggregator
     pub fn new(
         news_service: Arc<NewsService>,
+        news_analyzer: Option<Arc<NewsAnalyzer>>,
         ws_state: Arc<WebSocketState>,
         config: NewsAggregatorConfig,
     ) -> Self {
-        info!("Initializing NewsAggregator");
+        info!(
+            "Initializing NewsAggregator (AI enrichment: {})",
+            news_analyzer.is_some() && config.enable_ai_enrichment
+        );
         Self {
             news_service,
+            news_analyzer,
             ws_state,
             config,
-            tracked_markets: RwLock::new(HashSet::new()),
+            buffer: RwLock::new(VecDeque::with_capacity(MAX_BUFFER_SIZE)),
             seen_article_ids: RwLock::new(HashSet::new()),
         }
     }
 
-    /// Start the background polling loops
+    /// Get the current news buffer as a NewsFeed
+    pub async fn get_news_feed(&self) -> NewsFeed {
+        let buffer = self.buffer.read().await;
+        NewsFeed {
+            items: buffer.iter().cloned().collect(),
+            total_count: buffer.len(),
+            next_cursor: None,
+        }
+    }
+
+    /// Start the background polling loop
     pub async fn start(self: Arc<Self>) {
         info!(
-            "Starting NewsAggregator with global poll interval {}s, market poll interval {}s",
-            self.config.global_poll_interval_secs, self.config.market_poll_interval_secs
+            "Starting NewsAggregator with poll interval {}s",
+            self.config.poll_interval_secs
         );
 
-        let self_global = Arc::clone(&self);
-        let self_market = Arc::clone(&self);
+        let self_poll = Arc::clone(&self);
         let self_cleanup = Arc::clone(&self);
 
-        // Spawn global news polling task
+        // Spawn news polling task
         tokio::spawn(async move {
-            self_global.poll_global_news_loop().await;
-        });
-
-        // Spawn market-specific news polling task
-        tokio::spawn(async move {
-            self_market.poll_market_news_loop().await;
+            self_poll.poll_news_loop().await;
         });
 
         // Spawn cleanup task for seen article IDs (run hourly)
@@ -104,52 +110,36 @@ impl NewsAggregator {
         });
     }
 
-    /// Track a market for news updates
-    pub async fn track_market(&self, platform: Platform, market_id: String, title: String) {
-        let mut markets = self.tracked_markets.write().await;
-        markets.insert(TrackedMarket {
-            platform,
-            market_id: market_id.clone(),
-            title: title.clone(),
-        });
-        info!("Now tracking market for news: {:?}/{}", platform, market_id);
-    }
+    /// Poll for news in a loop
+    async fn poll_news_loop(&self) {
+        // Do initial poll immediately after a very short delay
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        info!("Running initial news poll...");
+        if let Err(e) = self.poll_and_enrich_news().await {
+            error!("Initial news poll failed: {}", e);
+        }
 
-    /// Stop tracking a market
-    pub async fn untrack_market(&self, platform: Platform, market_id: &str) {
-        let mut markets = self.tracked_markets.write().await;
-        markets.retain(|m| !(m.platform == platform && m.market_id == market_id));
-        debug!(
-            "Stopped tracking market for news: {:?}/{}",
-            platform, market_id
-        );
-    }
-
-    /// Poll for global news in a loop
-    async fn poll_global_news_loop(&self) {
-        let mut ticker = interval(Duration::from_secs(self.config.global_poll_interval_secs));
-
-        // Initial poll after a short delay
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Then continue with regular interval
+        let mut ticker = interval(Duration::from_secs(self.config.poll_interval_secs));
 
         loop {
             ticker.tick().await;
-            if let Err(e) = self.poll_global_news().await {
-                error!("Failed to poll global news: {}", e);
+            if let Err(e) = self.poll_and_enrich_news().await {
+                error!("Failed to poll news: {}", e);
             }
         }
     }
 
-    /// Poll for global news once
-    async fn poll_global_news(&self) -> Result<(), String> {
-        debug!("Polling for global news");
+    /// Poll for news and enrich with AI analysis
+    async fn poll_and_enrich_news(&self) -> Result<(), String> {
+        debug!("Polling for news");
 
         let params = NewsSearchParams {
             query: None,
             limit: self.config.articles_per_poll,
             time_range: Some("24h".to_string()),
             market_id: None,
-            skip_embeddings: false,
+            skip_embeddings: true, // Skip embeddings, we'll do AI analysis instead
         };
 
         let feed = self
@@ -158,88 +148,72 @@ impl NewsAggregator {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Filter out already-seen articles
         let new_articles = self.filter_new_articles(feed.items).await;
 
-        if !new_articles.is_empty() {
-            info!(
-                "Broadcasting {} new global news articles",
-                new_articles.len()
-            );
-            for article in new_articles {
-                self.ws_state.broadcast_global_news(article);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Poll for market-specific news in a loop
-    async fn poll_market_news_loop(&self) {
-        let mut ticker = interval(Duration::from_secs(self.config.market_poll_interval_secs));
-
-        // Initial poll after a short delay
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        loop {
-            ticker.tick().await;
-            if let Err(e) = self.poll_market_news().await {
-                error!("Failed to poll market news: {}", e);
-            }
-        }
-    }
-
-    /// Poll for market-specific news once
-    async fn poll_market_news(&self) -> Result<(), String> {
-        let markets: Vec<TrackedMarket> = {
-            let tracked = self.tracked_markets.read().await;
-            tracked.iter().cloned().collect()
-        };
-
-        if markets.is_empty() {
-            debug!("No markets being tracked for news");
+        if new_articles.is_empty() {
+            debug!("No new articles to process");
             return Ok(());
         }
 
-        debug!("Polling news for {} tracked markets", markets.len());
+        info!("Processing {} new articles", new_articles.len());
 
-        for market in markets {
-            match self
-                .news_service
-                .get_market_news(&market.title, &market.market_id, 5, None)
-                .await
-            {
-                Ok(feed) => {
-                    let new_articles = self.filter_new_articles(feed.items).await;
+        // Enrich each article with AI analysis (if enabled)
+        for article in new_articles {
+            let enriched = if self.config.enable_ai_enrichment {
+                self.enrich_article(article).await
+            } else {
+                article
+            };
 
-                    if !new_articles.is_empty() {
-                        info!(
-                            "Broadcasting {} new articles for market {:?}/{}",
-                            new_articles.len(),
-                            market.platform,
-                            market.market_id
-                        );
-                        for article in new_articles {
-                            self.ws_state.broadcast_market_news(
-                                market.platform,
-                                market.market_id.clone(),
-                                article,
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to fetch news for market {:?}/{}: {}",
-                        market.platform, market.market_id, e
-                    );
-                }
-            }
-
-            // Small delay between markets to avoid rate limiting
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Add to buffer and broadcast
+            self.add_to_buffer(enriched.clone()).await;
+            self.ws_state.broadcast_global_news(enriched);
         }
 
         Ok(())
+    }
+
+    /// Enrich an article with AI analysis
+    async fn enrich_article(&self, article: NewsItem) -> NewsItem {
+        if let Some(analyzer) = &self.news_analyzer {
+            match analyzer.analyze_news(article.clone()).await {
+                Ok(enriched) => {
+                    if enriched.matched_market.is_some() {
+                        info!(
+                            "Enriched article '{}' -> market: {}, signal: {:?}",
+                            truncate(&enriched.title, 50),
+                            enriched
+                                .matched_market
+                                .as_ref()
+                                .map(|m| m.title.as_str())
+                                .unwrap_or("none"),
+                            enriched.price_signal
+                        );
+                    }
+                    enriched
+                }
+                Err(e) => {
+                    warn!("Failed to enrich article '{}': {}", truncate(&article.title, 50), e);
+                    article
+                }
+            }
+        } else {
+            article
+        }
+    }
+
+    /// Add an article to the rolling buffer
+    async fn add_to_buffer(&self, article: NewsItem) {
+        let mut buffer = self.buffer.write().await;
+
+        // Add to front (newest first)
+        buffer.push_front(article);
+
+        // Trim buffer if it exceeds max size
+        while buffer.len() > MAX_BUFFER_SIZE {
+            buffer.pop_back();
+        }
     }
 
     /// Filter out articles we've already seen
@@ -262,12 +236,19 @@ impl NewsAggregator {
         let mut seen = self.seen_article_ids.write().await;
         let before = seen.len();
 
-        // Keep only the most recent 1000 article IDs
-        if seen.len() > 1000 {
-            // Since HashSet doesn't maintain order, we just clear it
-            // This is acceptable because duplicates will be rare after cleanup
+        // Keep only the most recent 500 article IDs
+        if seen.len() > 500 {
             seen.clear();
             info!("Cleared seen articles cache (was {} entries)", before);
         }
+    }
+}
+
+/// Truncate a string for logging
+fn truncate(s: &str, max_len: usize) -> &str {
+    if s.len() <= max_len {
+        s
+    } else {
+        &s[..max_len]
     }
 }

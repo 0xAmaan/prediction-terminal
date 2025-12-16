@@ -37,6 +37,7 @@ pub struct ArticleQuery {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/news", get(get_global_news))
+        .route("/news/enriched", get(get_enriched_news))
         .route("/news/search", get(search_news))
         .route("/news/article", get(get_article_content))
         .route("/markets/{platform}/{id}/news", get(get_market_news))
@@ -110,6 +111,34 @@ async fn get_global_news(
                 .into_response()
         }
     }
+}
+
+/// GET /api/news/enriched - Get AI-enriched news from the aggregator buffer
+/// Returns news with matched markets, price signals, and buy/sell suggestions
+async fn get_enriched_news(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let aggregator = match &state.news_aggregator {
+        Some(agg) => agg,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "News aggregator not available"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let feed = aggregator.get_news_feed().await;
+
+    info!(
+        "Returning {} enriched news items from aggregator buffer",
+        feed.items.len()
+    );
+
+    (StatusCode::OK, Json(feed)).into_response()
 }
 
 /// GET /api/news/search - Search news with custom query

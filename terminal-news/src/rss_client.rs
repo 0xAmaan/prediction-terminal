@@ -678,6 +678,11 @@ impl RssClient {
                     relevance_score: 1.0,
                     related_market_ids: vec![],
                     search_query: None,
+                    // AI-enriched fields (set later by NewsAnalyzer)
+                    matched_market: None,
+                    price_signal: None,
+                    suggested_action: None,
+                    signal_reasoning: None,
                 })
             })
             .collect()
@@ -775,6 +780,11 @@ impl RssClient {
                     relevance_score: 1.0,
                     related_market_ids: vec![],
                     search_query: None,
+                    // AI-enriched fields (set later by NewsAnalyzer)
+                    matched_market: None,
+                    price_signal: None,
+                    suggested_action: None,
+                    signal_reasoning: None,
                 })
             })
             .collect()

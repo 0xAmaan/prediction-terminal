@@ -14,8 +14,9 @@ use terminal_kalshi::KalshiClient;
 use terminal_polymarket::PolymarketClient;
 use terminal_services::{
     AggregatorConfig, CandleService, DiscordAggregator, MarketCache, MarketDataAggregator,
-    MarketService, MarketStatsService, NewsCache, RateLimiter, ResearchService, TradeCollector,
-    TradeCollectorConfig, TradeStorage, WebSocketState,
+    MarketService, MarketStatsService, NewsAggregator, NewsAggregatorConfig, NewsAnalyzer,
+    NewsCache, RateLimiter, ResearchService, TradeCollector, TradeCollectorConfig, TradeStorage,
+    WebSocketState,
 };
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub market_stats_service: Arc<MarketStatsService>,
     pub news_service: Option<Arc<terminal_services::NewsService>>,
     pub news_cache: Arc<NewsCache>,
+    /// News aggregator with AI-enriched rolling buffer
+    pub news_aggregator: Option<Arc<NewsAggregator>>,
     /// Research service (optional - requires EXA_API_KEY and OPENAI_API_KEY)
     pub research_service: Option<Arc<ResearchService>>,
     /// Trading state (optional - requires TRADING_PRIVATE_KEY)
@@ -349,6 +352,48 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Initialize news analyzer (optional - requires OPENAI_API_KEY)
+    let news_analyzer: Option<Arc<NewsAnalyzer>> = match NewsAnalyzer::new(market_cache.clone()) {
+        Ok(analyzer) => {
+            info!("News analyzer initialized (AI-powered market matching enabled)");
+            Some(Arc::new(analyzer))
+        }
+        Err(e) => {
+            info!("News analyzer not available: {}. Set OPENAI_API_KEY to enable AI news enrichment.", e);
+            None
+        }
+    };
+
+    // Initialize and start news aggregator with AI enrichment
+    let news_aggregator: Option<Arc<NewsAggregator>> = if let Some(news_svc) = &news_service {
+        let news_aggregator_config = NewsAggregatorConfig {
+            poll_interval_secs: 30, // Poll every 30 seconds
+            articles_per_poll: 5,   // Process 5 articles per poll (to avoid rate limits)
+            enable_ai_enrichment: news_analyzer.is_some(),
+        };
+        let news_aggregator = Arc::new(NewsAggregator::new(
+            Arc::clone(news_svc),
+            news_analyzer.clone(),
+            ws_state.clone(),
+            news_aggregator_config,
+        ));
+
+        // Start the news aggregator in background
+        let aggregator_handle = Arc::clone(&news_aggregator);
+        tokio::spawn(async move {
+            aggregator_handle.start().await;
+        });
+
+        info!(
+            "News aggregator started (AI enrichment: {})",
+            news_analyzer.is_some()
+        );
+
+        Some(news_aggregator)
+    } else {
+        None
+    };
+
     // Auto-generate market embeddings on startup if needed
     if let Some(news_svc) = &news_service {
         let news_svc_for_embeddings = Arc::clone(news_svc);
@@ -500,6 +545,7 @@ async fn main() -> anyhow::Result<()> {
         market_stats_service,
         news_service,
         news_cache,
+        news_aggregator,
         research_service,
         trading_state,
     };

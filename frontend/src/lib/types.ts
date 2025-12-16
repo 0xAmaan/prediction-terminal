@@ -233,6 +233,23 @@ export interface NewsSource {
   favicon_url: string | null;
 }
 
+/** Price signal indicating whether a market appears mispriced based on news */
+export type PriceSignal = "underpriced" | "overpriced" | "neutral";
+
+/** Suggested trading action based on news analysis */
+export type SuggestedAction = "buy" | "sell" | "hold";
+
+/** Information about a market matched to a news item */
+export interface MatchedMarket {
+  platform: Platform;
+  market_id: string;
+  title: string;
+  current_price: number;
+  url: string | null;
+  /** Specific outcome for multi-outcome markets (e.g., "Susie Wiles") */
+  outcome: string | null;
+}
+
 export interface NewsItem {
   id: string;
   title: string;
@@ -245,6 +262,11 @@ export interface NewsItem {
   relevance_score: number;
   related_market_ids: string[];
   search_query: string | null;
+  // AI-enriched fields
+  matched_market: MatchedMarket | null;
+  price_signal: PriceSignal | null;
+  suggested_action: SuggestedAction | null;
+  signal_reasoning: string | null;
 }
 
 export interface NewsFeed {

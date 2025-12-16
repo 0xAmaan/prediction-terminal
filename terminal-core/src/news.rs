@@ -5,6 +5,49 @@ use serde::{Deserialize, Serialize};
 
 use crate::Platform;
 
+/// Price signal indicating whether a market appears mispriced based on news
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PriceSignal {
+    /// News suggests the market is underpriced (probability should be higher)
+    Underpriced,
+    /// News suggests the market is overpriced (probability should be lower)
+    Overpriced,
+    /// News doesn't clearly indicate mispricing
+    Neutral,
+}
+
+/// Suggested trading action based on news analysis
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuggestedAction {
+    /// Consider buying YES shares
+    Buy,
+    /// Consider selling YES shares (or buying NO)
+    Sell,
+    /// No clear action suggested
+    Hold,
+}
+
+/// Information about a market matched to a news item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchedMarket {
+    /// Platform the market is on
+    pub platform: Platform,
+    /// Market identifier
+    pub market_id: String,
+    /// Market title for display
+    pub title: String,
+    /// Current YES price (0.0 - 1.0)
+    pub current_price: f64,
+    /// URL to the market
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Specific outcome that's affected (for multi-outcome markets, e.g., "Susie Wiles")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+}
+
 /// Source of a news article
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsSource {
@@ -46,6 +89,22 @@ pub struct NewsItem {
     /// Search query that found this article
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_query: Option<String>,
+
+    // ========================================================================
+    // AI-enriched fields for trading signals
+    // ========================================================================
+    /// The market this news is most relevant to (AI-matched)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_market: Option<MatchedMarket>,
+    /// Price signal: does this news suggest the market is mispriced?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price_signal: Option<PriceSignal>,
+    /// Suggested trading action based on the news
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_action: Option<SuggestedAction>,
+    /// Brief AI reasoning for the signal (1-2 sentences)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal_reasoning: Option<String>,
 }
 
 /// News feed response

@@ -81,13 +81,22 @@ const MarketsPage = () => {
             <MarketsGrid search={debouncedSearch} />
           ) : (
             <div>
-              <h2
-                className="text-lg font-semibold mb-6"
-                style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
-              >
-                Market News
-              </h2>
-              <NewsFeed />
+              <div className="flex items-center justify-between mb-4">
+                <h2
+                  className="text-lg font-semibold"
+                  style={{ color: fey.grey100, letterSpacing: "-0.02em" }}
+                >
+                  Live News Feed
+                </h2>
+                <span
+                  className="text-xs px-2 py-1 rounded-full flex items-center gap-1.5"
+                  style={{ backgroundColor: "rgba(77, 190, 149, 0.1)", color: fey.teal }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: fey.teal }} />
+                  Streaming
+                </span>
+              </div>
+              <NewsFeed maxItems={30} />
             </div>
           )}
         </div>
