@@ -1249,6 +1249,51 @@ Generate 3-5 specific follow-up questions a trader would want to ask."#,
 
         Ok(parsed.questions)
     }
+
+    /// Simple chat completion for quick AI queries
+    ///
+    /// Used for lightweight tasks like news analysis that don't need
+    /// complex multi-step reasoning.
+    #[instrument(skip(self, system_prompt, user_prompt))]
+    pub async fn simple_chat(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<String, TerminalError> {
+        let request = CreateChatCompletionRequestArgs::default()
+            .model("gpt-4o-mini") // Use mini for cost efficiency
+            .messages([
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(user_prompt)
+                    .build()
+                    .map_err(|e| TerminalError::internal(e.to_string()))?
+                    .into(),
+            ])
+            .temperature(0.3)
+            .max_tokens(500u32)
+            .build()
+            .map_err(|e| TerminalError::internal(e.to_string()))?;
+
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| TerminalError::api(format!("OpenAI API error: {}", e)))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|c| c.message.content.as_ref())
+            .ok_or_else(|| TerminalError::parse("No response from OpenAI"))?;
+
+        Ok(content.clone())
+    }
 }
 
 /// Extract JSON from a string that might contain markdown code blocks

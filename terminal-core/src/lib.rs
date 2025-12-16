@@ -14,7 +14,10 @@ pub use market::{
     MarketStatus, OrderBook, OrderBookLevel, PredictionMarket, PriceCandle, PriceHistory,
     PriceInterval, Trade, TradeHistory, TradeOutcome, TradeSide, UnifiedMarket,
 };
-pub use news::{MarketNewsContext, NewsFeed, NewsItem, NewsSearchParams, NewsSource};
+pub use news::{
+    MarketNewsContext, MatchedMarket, NewsFeed, NewsItem, NewsSearchParams, NewsSource,
+    PriceSignal, SuggestedAction,
+};
 pub use platform::Platform;
 pub use position::{Balance, Portfolio, Position};
 pub use error::TerminalError;

@@ -10,6 +10,7 @@ pub mod market_cache;
 pub mod market_service;
 pub mod market_stats;
 pub mod news_aggregator;
+pub mod news_analyzer;
 pub mod news_cache;
 pub mod news_service;
 pub mod rate_limiter;
@@ -25,7 +26,8 @@ pub use market_cache::{CacheStats, MarketCache, MarketCacheError, RefreshRequest
 pub use market_service::{MarketService, OutcomePriceHistory};
 pub use terminal_polymarket::MarketFilter;
 pub use market_stats::{MarketStats, MarketStatsService, Timeframe};
-pub use news_aggregator::NewsAggregator;
+pub use news_aggregator::{NewsAggregator, NewsAggregatorConfig};
+pub use news_analyzer::{NewsAnalyzer, NewsAnalyzerConfig};
 pub use news_cache::{NewsCache, NewsCacheError};
 pub use news_service::{NewsService, NewsServiceError};
 pub use rate_limiter::{RateLimiter, RateLimiterStats};

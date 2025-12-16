@@ -321,6 +321,20 @@ export const api = {
     return response.json();
   },
 
+  /** Get AI-enriched news with market matching and buy/sell signals */
+  async getEnrichedNews(): Promise<NewsFeed> {
+    const url = `${API_BASE}/api/news/enriched`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      // Fall back to regular news if enriched endpoint fails
+      console.warn("Enriched news not available, falling back to regular news");
+      return this.getGlobalNews({ limit: 20, skip_embeddings: true });
+    }
+
+    return response.json();
+  },
+
   /** Search news with custom query */
   async searchNews(
     query: string,

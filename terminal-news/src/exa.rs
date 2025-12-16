@@ -388,6 +388,11 @@ impl ExaClient {
             relevance_score: result.score,
             related_market_ids: market_id.into_iter().collect(),
             search_query: None,
+            // AI-enriched fields (set later by NewsAnalyzer)
+            matched_market: None,
+            price_signal: None,
+            suggested_action: None,
+            signal_reasoning: None,
         }
     }
 

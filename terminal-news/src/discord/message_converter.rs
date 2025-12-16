@@ -65,6 +65,12 @@ pub fn discord_message_to_news_item(
 
         // Search query: Discord server name for context
         search_query: Some(guild_name.to_string()),
+
+        // AI-enriched fields (set later by NewsAnalyzer)
+        matched_market: None,
+        price_signal: None,
+        suggested_action: None,
+        signal_reasoning: None,
     }
 }
 
