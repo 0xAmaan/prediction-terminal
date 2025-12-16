@@ -1,10 +1,22 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import type { Trade } from "@/lib/types";
 import { api } from "@/lib/api";
 import { useTradingBalance } from "@/hooks/use-trading-balance";
+
+interface Position {
+  marketId: string;
+  tokenId: string;
+  outcome: string;
+  shares: string;
+  avgPrice: string;
+  currentPrice: string;
+  pnl: string;
+  title: string;
+  negRisk: boolean;
+}
 
 // Fey color tokens
 const fey = {
@@ -78,16 +90,54 @@ export const TradeExecution = ({
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [approvalSuccess, setApprovalSuccess] = useState<string | null>(null);
 
+  // Positions state for selling
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [positionsLoading, setPositionsLoading] = useState(false);
+
+  // Fetch positions when component mounts or tokenId changes
+  useEffect(() => {
+    if (!tokenId) return;
+
+    const fetchPositions = async () => {
+      setPositionsLoading(true);
+      try {
+        const data = await api.getPositions();
+        setPositions(data);
+      } catch (err) {
+        console.error("Failed to fetch positions:", err);
+      } finally {
+        setPositionsLoading(false);
+      }
+    };
+
+    fetchPositions();
+  }, [tokenId]);
+
+  // Find the position matching this token for selling
+  const currentPosition = useMemo(() => {
+    if (!tokenId) return null;
+    return positions.find((p) => p.tokenId === tokenId) || null;
+  }, [positions, tokenId]);
+
+  const availableShares = currentPosition ? parseFloat(currentPosition.shares) : 0;
+
   // Fetch trading balance (only when trading is enabled)
   const {
     balance: usdcBalance,
     hasBalance,
     hasAllowance,
     needsApproval,
+    ctfApproved,
+    needsCtfApproval,
     isLoading: balanceLoading,
     walletAddress,
     refetch: refetchBalance,
   } = useTradingBalance(!!tokenId);
+
+  // State for CTF approval
+  const [isApprovingCtf, setIsApprovingCtf] = useState(false);
+  const [ctfApprovalError, setCtfApprovalError] = useState<string | null>(null);
+  const [ctfApprovalSuccess, setCtfApprovalSuccess] = useState<string | null>(null);
 
   const isBuy = side === "buy";
   const accentColor = isBuy ? fey.teal : fey.red;
@@ -115,13 +165,16 @@ export const TradeExecution = ({
     ? currentPrice > 0 && currentPrice <= 1
     : orderPrice >= 0.01 && orderPrice <= 0.99;
   const hasSufficientBalance = isBuy ? usdcBalance >= estimatedCost : true; // Selling doesn't require USDC
+  const hasSufficientShares = isBuy ? true : availableShares >= parsedAmount;
+  // For selling, we need CTF approval; for buying, we need USDC allowance
+  const hasRequiredApprovals = isBuy ? hasAllowance : (hasAllowance && ctfApproved);
   const canTrade =
     tokenId &&
     isValidAmount &&
     isValidPrice &&
     !isSubmitting &&
-    hasAllowance &&
-    (isBuy ? hasSufficientBalance : true);
+    hasRequiredApprovals &&
+    (isBuy ? hasSufficientBalance : hasSufficientShares);
 
   // Calculate 5-minute volume stats from trades
   const volumeStats = useMemo(() => {
@@ -235,6 +288,34 @@ export const TradeExecution = ({
       setApprovalError(errorMsg);
     } finally {
       setIsApproving(false);
+    }
+  }, [refetchBalance]);
+
+  const handleApproveCtf = useCallback(async () => {
+    setIsApprovingCtf(true);
+    setCtfApprovalError(null);
+    setCtfApprovalSuccess(null);
+
+    const toastId = toast.loading("Approving tokens for selling...");
+
+    try {
+      const result = await api.approveCtf();
+
+      if (result.success) {
+        toast.success(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`, { id: toastId });
+        setCtfApprovalSuccess(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`);
+        // Refetch balance to update CTF approval state
+        setTimeout(() => refetchBalance(), 2000); // Wait for chain confirmation
+      } else {
+        toast.error(result.error || "Approval failed", { id: toastId });
+        setCtfApprovalError(result.error || "Approval failed");
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Approval failed";
+      toast.error(errorMsg, { id: toastId });
+      setCtfApprovalError(errorMsg);
+    } finally {
+      setIsApprovingCtf(false);
     }
   }, [refetchBalance]);
 
@@ -458,20 +539,44 @@ export const TradeExecution = ({
         </div>
       </div>
 
-      {/* Balance Display */}
+      {/* Balance / Position Display */}
       {tokenId && (
         <div
           className="mx-4 mt-3 p-2.5 rounded-md"
           style={{ backgroundColor: fey.bg400 }}
         >
+          {/* Show USDC balance for buying, shares for selling */}
           <div className="flex items-center justify-between">
             <span className="text-xs uppercase tracking-wider" style={{ color: fey.grey500 }}>
-              Available
+              {isBuy ? "Available USDC" : "Your Shares"}
             </span>
             <span className="text-sm font-mono font-medium" style={{ color: fey.grey100 }}>
-              {balanceLoading ? "..." : `$${usdcBalance.toFixed(2)}`}
+              {isBuy
+                ? balanceLoading ? "..." : `$${usdcBalance.toFixed(2)}`
+                : positionsLoading ? "..." : `${availableShares.toFixed(2)}`
+              }
             </span>
           </div>
+          {/* Show position details when selling */}
+          {!isBuy && currentPosition && (
+            <div className="mt-1.5 pt-1.5 border-t" style={{ borderColor: fey.border }}>
+              <div className="flex justify-between text-xs">
+                <span style={{ color: fey.grey500 }}>Avg Price</span>
+                <span style={{ color: fey.grey300 }}>{(parseFloat(currentPosition.avgPrice) * 100).toFixed(1)}¢</span>
+              </div>
+              <div className="flex justify-between text-xs mt-0.5">
+                <span style={{ color: fey.grey500 }}>P&L</span>
+                <span style={{ color: parseFloat(currentPosition.pnl) >= 0 ? fey.teal : fey.red }}>
+                  ${currentPosition.pnl}
+                </span>
+              </div>
+            </div>
+          )}
+          {!isBuy && !currentPosition && !positionsLoading && (
+            <div className="mt-1 text-xs" style={{ color: fey.grey500 }}>
+              No position in this market
+            </div>
+          )}
           {walletAddress && (
             <div className="mt-1 text-xs font-mono truncate" style={{ color: fey.grey500 }}>
               {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
@@ -503,6 +608,33 @@ export const TradeExecution = ({
               </p>
             </div>
           )}
+          {/* CTF Approval for Selling */}
+          {!isBuy && needsCtfApproval && (
+            <div className="mt-2 space-y-2">
+              <button
+                onClick={handleApproveCtf}
+                disabled={isApprovingCtf}
+                className="w-full py-2 rounded text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: isApprovingCtf ? fey.bg400 : fey.red,
+                  color: isApprovingCtf ? fey.grey500 : fey.bg100,
+                  opacity: isApprovingCtf ? 0.7 : 1,
+                }}
+              >
+                {isApprovingCtf ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="animate-spin">⏳</span>
+                    Approving...
+                  </span>
+                ) : (
+                  "Approve Tokens for Selling"
+                )}
+              </button>
+              <p className="text-xs text-center" style={{ color: fey.grey500 }}>
+                One-time approval to let Polymarket transfer your shares
+              </p>
+            </div>
+          )}
           {approvalError && (
             <div
               className="mt-2 p-2 rounded text-xs"
@@ -517,6 +649,22 @@ export const TradeExecution = ({
               style={{ backgroundColor: fey.tealMuted, color: fey.teal }}
             >
               {approvalSuccess}
+            </div>
+          )}
+          {ctfApprovalError && (
+            <div
+              className="mt-2 p-2 rounded text-xs"
+              style={{ backgroundColor: fey.redMuted, color: fey.red }}
+            >
+              {ctfApprovalError}
+            </div>
+          )}
+          {ctfApprovalSuccess && (
+            <div
+              className="mt-2 p-2 rounded text-xs"
+              style={{ backgroundColor: fey.tealMuted, color: fey.teal }}
+            >
+              {ctfApprovalSuccess}
             </div>
           )}
         </div>
@@ -545,7 +693,7 @@ export const TradeExecution = ({
         />
 
         {/* Quick Amount Buttons */}
-        <div className="grid grid-cols-4 gap-2 mt-2">
+        <div className={`grid ${!isBuy && availableShares > 0 ? "grid-cols-5" : "grid-cols-4"} gap-2 mt-2`}>
           {quickAmounts.map((amt) => (
             <button
               key={amt}
@@ -562,6 +710,22 @@ export const TradeExecution = ({
               {amt}
             </button>
           ))}
+          {/* Max button for selling */}
+          {!isBuy && availableShares > 0 && (
+            <button
+              onClick={() => setAmount(availableShares.toString())}
+              disabled={isSubmitting}
+              className="py-1.5 rounded text-sm font-medium transition-colors hover:opacity-80"
+              style={{
+                backgroundColor: fey.redMuted,
+                color: fey.red,
+                border: `1px solid ${fey.red}`,
+                opacity: isSubmitting ? 0.5 : 1,
+              }}
+            >
+              Max
+            </button>
+          )}
         </div>
 
         {/* Limit Price Input (only for limit orders) */}
@@ -660,6 +824,16 @@ export const TradeExecution = ({
         {tokenId && hasAllowance && !hasSufficientBalance && isBuy && parsedAmount > 0 && (
           <p className="text-xs text-center mt-2" style={{ color: fey.red }}>
             Insufficient balance (need ${estimatedCost.toFixed(2)})
+          </p>
+        )}
+        {tokenId && hasAllowance && !hasSufficientShares && !isBuy && parsedAmount > 0 && (
+          <p className="text-xs text-center mt-2" style={{ color: fey.red }}>
+            Insufficient shares (have {availableShares.toFixed(2)}, need {parsedAmount.toFixed(2)})
+          </p>
+        )}
+        {tokenId && !isBuy && needsCtfApproval && (
+          <p className="text-xs text-center mt-2" style={{ color: fey.yellow }}>
+            Token approval required for selling (scroll up)
           </p>
         )}
         {tokenId && !isValidPrice && limitPrice && (

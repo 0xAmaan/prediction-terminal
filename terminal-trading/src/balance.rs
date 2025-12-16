@@ -4,7 +4,7 @@
 //! direct eth_call to the ERC20 contract. Also provides USDC approval
 //! functionality for the CTF Exchange.
 
-use crate::types::{Result, TradingError, CTF_EXCHANGE_ADDRESS, NEG_RISK_ADAPTER_ADDRESS, NEG_RISK_CTF_EXCHANGE_ADDRESS, USDC_ADDRESS};
+use crate::types::{Result, TradingError, CTF_ADDRESS, CTF_EXCHANGE_ADDRESS, NEG_RISK_ADAPTER_ADDRESS, NEG_RISK_CTF_EXCHANGE_ADDRESS, USDC_ADDRESS};
 use crate::wallet::TradingWallet;
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
@@ -313,6 +313,192 @@ fn build_approve_calldata(spender: Address, amount: U256) -> Vec<u8> {
     calldata.extend_from_slice(&amount.to_be_bytes::<32>());
 
     calldata
+}
+
+// ============================================================================
+// ERC1155 Token Approval (for Selling)
+// ============================================================================
+
+/// Approve CTF (outcome tokens) for the exchange contracts
+/// This is required for selling positions - the exchange needs permission to transfer your tokens
+///
+/// For Neg Risk (multi-outcome) markets, all three contracts are required:
+/// 1. CTF Exchange - for binary markets
+/// 2. Neg Risk CTF Exchange - for multi-outcome markets
+/// 3. Neg Risk Adapter - required for Neg Risk order fills
+pub async fn approve_ctf_for_all_exchanges(wallet: &TradingWallet) -> Result<Vec<ApprovalResponse>> {
+    let mut results = Vec::new();
+
+    let exchanges = [
+        (CTF_EXCHANGE_ADDRESS, "CTF Exchange"),
+        (NEG_RISK_CTF_EXCHANGE_ADDRESS, "Neg Risk CTF Exchange"),
+        (NEG_RISK_ADAPTER_ADDRESS, "Neg Risk Adapter"),
+    ];
+
+    for (address, name) in exchanges {
+        info!("Approving CTF tokens for {}: {}", name, address);
+        let operator = Address::from_str(address)
+            .map_err(|e| TradingError::Api(format!("Invalid {} address: {}", name, e)))?;
+
+        match set_approval_for_all_ctf(wallet, operator, true).await {
+            Ok(response) => {
+                info!("{} CTF approval successful: {:?}", name, response.transaction_hash);
+                results.push(response);
+            }
+            Err(e) => {
+                info!("{} CTF approval failed: {}", name, e);
+                results.push(ApprovalResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Set approval for all on the CTF contract (ERC1155)
+async fn set_approval_for_all_ctf(
+    wallet: &TradingWallet,
+    operator: Address,
+    approved: bool,
+) -> Result<ApprovalResponse> {
+    let ctf_address = Address::from_str(CTF_ADDRESS)
+        .map_err(|e| TradingError::Api(format!("Invalid CTF address: {}", e)))?;
+
+    info!(
+        "Setting CTF approval: from={}, operator={}, approved={}",
+        wallet.address(),
+        operator,
+        approved
+    );
+
+    // Build setApprovalForAll calldata
+    let calldata = build_set_approval_for_all_calldata(operator, approved);
+
+    // Create wallet for provider
+    let eth_wallet = EthereumWallet::from(wallet.signer().clone());
+
+    // Build provider with wallet
+    let provider = ProviderBuilder::new()
+        .wallet(eth_wallet)
+        .connect_http(POLYGON_RPC_URL.parse().unwrap());
+
+    // Build transaction request
+    let tx = TransactionRequest::default()
+        .to(ctf_address)
+        .input(calldata.into());
+
+    // Send transaction and wait for receipt
+    let pending_tx = provider
+        .send_transaction(tx)
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to send CTF approval transaction: {}", e)))?;
+
+    let tx_hash = format!("{:?}", pending_tx.tx_hash());
+    info!("CTF approval transaction sent: {}", tx_hash);
+
+    // Wait for receipt to confirm success
+    let receipt = pending_tx
+        .get_receipt()
+        .await
+        .map_err(|e| TradingError::Api(format!("Failed to get receipt: {}", e)))?;
+
+    // Check if transaction succeeded
+    if receipt.status() {
+        info!("CTF approval confirmed in block {:?}", receipt.block_number);
+        Ok(ApprovalResponse {
+            success: true,
+            transaction_hash: Some(tx_hash),
+            error: None,
+        })
+    } else {
+        Err(TradingError::Api(format!(
+            "CTF approval transaction reverted: {}",
+            tx_hash
+        )))
+    }
+}
+
+/// Build ERC1155 setApprovalForAll calldata
+fn build_set_approval_for_all_calldata(operator: Address, approved: bool) -> Vec<u8> {
+    let mut calldata = Vec::with_capacity(68);
+
+    // Function selector: setApprovalForAll(address,bool) = 0xa22cb465
+    calldata.extend_from_slice(&hex::decode("a22cb465").unwrap());
+
+    // Pad operator address to 32 bytes
+    calldata.extend_from_slice(&[0u8; 12]); // 12 zero bytes
+    calldata.extend_from_slice(operator.as_slice()); // 20 bytes address
+
+    // Bool approved as 32 bytes (1 or 0)
+    let mut approved_bytes = [0u8; 32];
+    if approved {
+        approved_bytes[31] = 1;
+    }
+    calldata.extend_from_slice(&approved_bytes);
+
+    calldata
+}
+
+// ============================================================================
+// CTF Approval Status Check (for Selling)
+// ============================================================================
+
+/// CTF approval status for exchanges
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CtfApprovalStatus {
+    /// Whether CTF Exchange is approved
+    pub ctf_exchange_approved: bool,
+    /// Whether Neg Risk CTF Exchange is approved
+    pub neg_risk_ctf_exchange_approved: bool,
+    /// Whether Neg Risk Adapter is approved (required for multi-outcome market sells)
+    pub neg_risk_adapter_approved: bool,
+    /// Whether all required exchanges are approved (for selling)
+    pub can_sell: bool,
+}
+
+/// Check if CTF tokens are approved for the exchange contracts
+///
+/// This checks `isApprovedForAll` on the CTF contract for each exchange.
+/// Required for selling positions - the exchange needs permission to transfer your tokens.
+///
+/// For Neg Risk (multi-outcome) markets, all three must be approved:
+/// - CTF Exchange
+/// - Neg Risk CTF Exchange
+/// - Neg Risk Adapter
+pub async fn check_ctf_approval(owner: &str) -> Result<CtfApprovalStatus> {
+    let ctf_exchange = is_approved_for_all(owner, CTF_EXCHANGE_ADDRESS).await?;
+    let neg_risk_ctf = is_approved_for_all(owner, NEG_RISK_CTF_EXCHANGE_ADDRESS).await?;
+    let neg_risk_adapter = is_approved_for_all(owner, NEG_RISK_ADAPTER_ADDRESS).await?;
+
+    Ok(CtfApprovalStatus {
+        ctf_exchange_approved: ctf_exchange,
+        neg_risk_ctf_exchange_approved: neg_risk_ctf,
+        neg_risk_adapter_approved: neg_risk_adapter,
+        can_sell: ctf_exchange && neg_risk_ctf && neg_risk_adapter,
+    })
+}
+
+/// Check isApprovedForAll on CTF contract
+async fn is_approved_for_all(owner: &str, operator: &str) -> Result<bool> {
+    // Function selector: isApprovedForAll(address,address) = 0xe985e9c5
+    const IS_APPROVED_SELECTOR: &str = "e985e9c5";
+
+    let padded_owner = pad_address(owner)?;
+    let padded_operator = pad_address(operator)?;
+    let data = format!("0x{}{}{}", IS_APPROVED_SELECTOR, padded_owner, padded_operator);
+
+    let result = eth_call(CTF_ADDRESS, &data).await?;
+
+    // Result is a bool encoded as uint256 (32 bytes)
+    // If last byte is 1, it's approved; if 0, not approved
+    let result_hex = result.strip_prefix("0x").unwrap_or(&result);
+
+    // Check if the result is non-zero (approved)
+    Ok(!result_hex.chars().all(|c| c == '0'))
 }
 
 /// Check MATIC balance for gas

@@ -610,10 +610,68 @@ impl ClobClient {
         })
     }
 
-    /// Get current positions from trade history
+    /// Get current positions from Polymarket Data API
+    /// This is more reliable than calculating from trades as it queries the actual on-chain state
     pub async fn get_positions(&self) -> Result<Vec<crate::types::Position>> {
-        let trades = self.get_trades().await?;
-        Ok(crate::positions::calculate_positions(&trades))
+        let address = self.wallet.address_string();
+        debug!("Fetching positions for wallet: {}", address);
+
+        // Query the Polymarket Data API (no auth required)
+        let url = format!(
+            "https://data-api.polymarket.com/positions?user={}",
+            address
+        );
+
+        let response = self.http_client.get(&url).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(TradingError::Api(format!(
+                "Failed to get positions from Data API: {} - {}",
+                status, body
+            )));
+        }
+
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DataApiPosition {
+            asset: String,
+            #[serde(default)]
+            condition_id: String,
+            size: f64,
+            avg_price: f64,
+            cur_price: f64,
+            #[serde(default)]
+            title: String,
+            #[serde(default)]
+            outcome: String,
+            #[serde(default)]
+            cash_pnl: f64,
+            #[serde(default)]
+            negative_risk: bool,
+        }
+
+        let data_positions: Vec<DataApiPosition> = response.json().await?;
+        debug!("Fetched {} positions from Data API", data_positions.len());
+
+        let positions = data_positions
+            .into_iter()
+            .filter(|p| p.size > 0.0) // Only include positions with shares
+            .map(|p| crate::types::Position {
+                market_id: p.condition_id,
+                token_id: p.asset,
+                outcome: p.outcome,
+                shares: format!("{:.6}", p.size),
+                avg_price: format!("{:.4}", p.avg_price),
+                current_price: format!("{:.4}", p.cur_price),
+                pnl: format!("{:.2}", p.cash_pnl),
+                title: p.title,
+                neg_risk: p.negative_risk,
+            })
+            .collect();
+
+        Ok(positions)
     }
 }
 

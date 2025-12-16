@@ -7,6 +7,14 @@ export interface TradingBalance {
   usdcBalance: string;
   usdcAllowance: string;
   walletAddress: string;
+  /** Whether CTF tokens are approved for selling (all required contracts) */
+  ctfApproved: boolean;
+  /** Whether CTF Exchange specifically is approved */
+  ctfExchangeApproved: boolean;
+  /** Whether Neg Risk CTF Exchange is approved */
+  negRiskCtfApproved: boolean;
+  /** Whether Neg Risk Adapter is approved (required for multi-outcome markets) */
+  negRiskAdapterApproved: boolean;
 }
 
 /**
@@ -43,6 +51,10 @@ export const useTradingBalance = (
   const hasAllowance = allowance > 0;
   const needsApproval = hasBalance && !hasAllowance;
 
+  // CTF approval status (for selling)
+  const ctfApproved = query.data?.ctfApproved ?? false;
+  const needsCtfApproval = !ctfApproved;
+
   return {
     // Raw data
     data: query.data,
@@ -59,6 +71,10 @@ export const useTradingBalance = (
     hasBalance,
     hasAllowance,
     needsApproval,
+
+    // CTF approval for selling
+    ctfApproved,
+    needsCtfApproval,
 
     // Actions
     refetch: query.refetch,

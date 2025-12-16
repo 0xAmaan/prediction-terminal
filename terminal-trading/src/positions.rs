@@ -83,6 +83,8 @@ impl PositionAccumulator {
             avg_price: format!("{:.4}", avg_price),
             current_price: "0.00".to_string(), // Would need orderbook data to fill
             pnl: format!("{:.2}", pnl),
+            title: String::new(), // Not available from trade-based calculation
+            neg_risk: false,      // Default to false, would need market metadata
         }
     }
 }

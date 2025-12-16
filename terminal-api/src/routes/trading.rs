@@ -13,7 +13,8 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use terminal_trading::{
-    approve_usdc_for_all_exchanges, get_matic_balance, ClobClient, OrderBuilder, OrderType, Side,
+    approve_ctf_for_all_exchanges, approve_usdc_for_all_exchanges, check_ctf_approval,
+    get_matic_balance, ClobClient, OrderBuilder, OrderType, Side,
 };
 
 use crate::AppState;
@@ -66,6 +67,14 @@ pub struct BalanceResponse {
     pub usdc_balance: String,
     pub usdc_allowance: String,
     pub wallet_address: String,
+    /// Whether CTF tokens are approved for selling (all required contracts)
+    pub ctf_approved: bool,
+    /// Whether CTF Exchange specifically is approved
+    pub ctf_exchange_approved: bool,
+    /// Whether Neg Risk CTF Exchange is approved
+    pub neg_risk_ctf_approved: bool,
+    /// Whether Neg Risk Adapter is approved (required for multi-outcome markets)
+    pub neg_risk_adapter_approved: bool,
 }
 
 /// Deposit info response
@@ -109,6 +118,8 @@ pub struct PositionResponse {
     pub avg_price: String,
     pub current_price: String,
     pub pnl: String,
+    pub title: String,
+    pub neg_risk: bool,
 }
 
 /// Approval response
@@ -400,6 +411,41 @@ async fn submit_order(
                 }
             }
 
+            // Check for "not enough balance / allowance" error - provide helpful guidance
+            if error_str.contains("not enough balance") || error_str.contains("allowance") {
+                // Check if this was a SELL order
+                if req.side.to_lowercase() == "sell" {
+                    error!("Sell order failed with balance/allowance error: {}", e);
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(SubmitOrderResponse {
+                            success: false,
+                            order_id: None,
+                            error: Some(format!(
+                                "Cannot sell: CTF tokens not approved for exchange. Call POST /api/trade/approve-ctf first, then retry. Original error: {}",
+                                error_str
+                            )),
+                            transaction_hashes: vec![],
+                        }),
+                    );
+                } else {
+                    // BUY order - likely USDC balance/allowance issue
+                    error!("Buy order failed with balance/allowance error: {}", e);
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(SubmitOrderResponse {
+                            success: false,
+                            order_id: None,
+                            error: Some(format!(
+                                "Cannot buy: Insufficient USDC balance or allowance. Check GET /api/trade/balance and call POST /api/trade/approve if needed. Original error: {}",
+                                error_str
+                            )),
+                            transaction_hashes: vec![],
+                        }),
+                    );
+                }
+            }
+
             error!("Order submission failed: {}", e);
             (
                 StatusCode::BAD_REQUEST,
@@ -608,6 +654,10 @@ async fn get_balance(State(state): State<AppState>) -> impl IntoResponse {
                     usdc_balance: "0".to_string(),
                     usdc_allowance: "0".to_string(),
                     wallet_address: String::new(),
+                    ctf_approved: false,
+                    ctf_exchange_approved: false,
+                    neg_risk_ctf_approved: false,
+                    neg_risk_adapter_approved: false,
                 }),
             );
         }
@@ -624,6 +674,10 @@ async fn get_balance(State(state): State<AppState>) -> impl IntoResponse {
                     usdc_balance: "0".to_string(),
                     usdc_allowance: "0".to_string(),
                     wallet_address: String::new(),
+                    ctf_approved: false,
+                    ctf_exchange_approved: false,
+                    neg_risk_ctf_approved: false,
+                    neg_risk_adapter_approved: false,
                 }),
             );
         }
@@ -639,6 +693,10 @@ async fn get_balance(State(state): State<AppState>) -> impl IntoResponse {
                     usdc_balance: "0".to_string(),
                     usdc_allowance: "0".to_string(),
                     wallet_address: String::new(),
+                    ctf_approved: false,
+                    ctf_exchange_approved: false,
+                    neg_risk_ctf_approved: false,
+                    neg_risk_adapter_approved: false,
                 }),
             );
         }
@@ -647,13 +705,30 @@ async fn get_balance(State(state): State<AppState>) -> impl IntoResponse {
     let address = client.address();
 
     // Query actual balance from Polygon
-    match client.get_balance().await {
+    let balance_result = client.get_balance().await;
+
+    // Query CTF approval status (for selling)
+    let ctf_status = check_ctf_approval(&address).await.unwrap_or_else(|e| {
+        error!("Failed to check CTF approval: {}", e);
+        terminal_trading::CtfApprovalStatus {
+            ctf_exchange_approved: false,
+            neg_risk_ctf_exchange_approved: false,
+            neg_risk_adapter_approved: false,
+            can_sell: false,
+        }
+    });
+
+    match balance_result {
         Ok(balance) => (
             StatusCode::OK,
             Json(BalanceResponse {
                 usdc_balance: balance.usdc_balance,
                 usdc_allowance: balance.usdc_allowance,
                 wallet_address: address,
+                ctf_approved: ctf_status.can_sell,
+                ctf_exchange_approved: ctf_status.ctf_exchange_approved,
+                neg_risk_ctf_approved: ctf_status.neg_risk_ctf_exchange_approved,
+                neg_risk_adapter_approved: ctf_status.neg_risk_adapter_approved,
             }),
         ),
         Err(e) => {
@@ -664,6 +739,10 @@ async fn get_balance(State(state): State<AppState>) -> impl IntoResponse {
                     usdc_balance: "0".to_string(),
                     usdc_allowance: "0".to_string(),
                     wallet_address: address,
+                    ctf_approved: ctf_status.can_sell,
+                    ctf_exchange_approved: ctf_status.ctf_exchange_approved,
+                    neg_risk_ctf_approved: ctf_status.neg_risk_ctf_exchange_approved,
+                    neg_risk_adapter_approved: ctf_status.neg_risk_adapter_approved,
                 }),
             )
         }
@@ -708,6 +787,8 @@ async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
                     avg_price: p.avg_price,
                     current_price: p.current_price,
                     pnl: p.pnl,
+                    title: p.title,
+                    neg_risk: p.neg_risk,
                 })
                 .collect();
             (StatusCode::OK, Json(response))
@@ -843,6 +924,132 @@ async fn approve_usdc(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+/// Approve CTF (outcome tokens) for selling
+///
+/// This approves the CTF Exchange contracts to transfer your outcome tokens.
+/// Required for selling positions.
+async fn approve_ctf(State(state): State<AppState>) -> impl IntoResponse {
+    info!("Approving CTF tokens for exchanges (for selling)");
+
+    let trading_state = match state.trading_state.as_ref() {
+        Some(ts) => ts,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some("Trading not enabled".to_string()),
+                    matic_balance: None,
+                }),
+            );
+        }
+    };
+
+    // Ensure initialized
+    {
+        let mut ts = trading_state.write().await;
+        if let Err(e) = ts.initialize().await {
+            error!("Failed to initialize trading: {}", e);
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!("Failed to initialize: {}", e)),
+                    matic_balance: None,
+                }),
+            );
+        }
+    }
+
+    let ts = trading_state.read().await;
+    let client = match ts.client() {
+        Some(c) => c,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some("Trading client not available".to_string()),
+                    matic_balance: None,
+                }),
+            );
+        }
+    };
+
+    // Check MATIC balance for gas first
+    let address = client.address();
+    let matic_balance = match get_matic_balance(&address).await {
+        Ok(b) => Some(b),
+        Err(e) => {
+            error!("Failed to get MATIC balance: {}", e);
+            None
+        }
+    };
+
+    // Check if we have enough MATIC for gas
+    if let Some(ref balance) = matic_balance {
+        let balance_f64: f64 = balance.parse().unwrap_or(0.0);
+        if balance_f64 < 0.001 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!(
+                        "Insufficient MATIC for gas. Balance: {} MATIC. Need at least 0.001 MATIC.",
+                        balance
+                    )),
+                    matic_balance,
+                }),
+            );
+        }
+    }
+
+    // Execute CTF approvals for exchange contracts
+    match approve_ctf_for_all_exchanges(client.wallet()).await {
+        Ok(approvals) => {
+            let tx_hashes: Vec<_> = approvals
+                .iter()
+                .filter_map(|a| a.transaction_hash.clone())
+                .collect();
+            let all_success = approvals.iter().all(|a| a.success);
+            let errors: Vec<_> = approvals
+                .iter()
+                .filter_map(|a| a.error.clone())
+                .collect();
+
+            info!("CTF approvals completed: {} successes, {} transactions",
+                  approvals.iter().filter(|a| a.success).count(),
+                  tx_hashes.len());
+
+            (
+                StatusCode::OK,
+                Json(ApproveResponse {
+                    success: all_success || !tx_hashes.is_empty(),
+                    transaction_hash: tx_hashes.first().cloned(),
+                    error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+                    matic_balance,
+                }),
+            )
+        }
+        Err(e) => {
+            error!("CTF approval failed: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApproveResponse {
+                    success: false,
+                    transaction_hash: None,
+                    error: Some(format!("{}", e)),
+                    matic_balance,
+                }),
+            )
+        }
+    }
+}
+
 // ============================================================================
 // Router
 // ============================================================================
@@ -858,4 +1065,5 @@ pub fn routes() -> Router<AppState> {
         .route("/trade/balance", get(get_balance))
         .route("/trade/positions", get(get_positions))
         .route("/trade/approve", post(approve_usdc))
+        .route("/trade/approve-ctf", post(approve_ctf))
 }

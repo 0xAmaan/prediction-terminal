@@ -644,6 +644,14 @@ export const api = {
     usdcBalance: string;
     usdcAllowance: string;
     walletAddress: string;
+    /** Whether CTF tokens are approved for selling (all required contracts) */
+    ctfApproved: boolean;
+    /** Whether CTF Exchange specifically is approved */
+    ctfExchangeApproved: boolean;
+    /** Whether Neg Risk CTF Exchange is approved */
+    negRiskCtfApproved: boolean;
+    /** Whether Neg Risk Adapter is approved (required for multi-outcome markets) */
+    negRiskAdapterApproved: boolean;
   }> {
     const response = await fetch(`${API_BASE}/api/trade/balance`);
 
@@ -654,7 +662,7 @@ export const api = {
     return response.json();
   },
 
-  /** Get current positions derived from trade history */
+  /** Get current positions from Polymarket Data API */
   async getPositions(): Promise<
     Array<{
       marketId: string;
@@ -664,6 +672,8 @@ export const api = {
       avgPrice: string;
       currentPrice: string;
       pnl: string;
+      title: string;
+      negRisk: boolean;
     }>
   > {
     const response = await fetch(`${API_BASE}/api/trade/positions`);
@@ -675,7 +685,7 @@ export const api = {
     return response.json();
   },
 
-  /** Approve USDC spending for the CTF Exchange (required before trading) */
+  /** Approve USDC spending for the CTF Exchange (required before buying) */
   async approveUsdc(): Promise<{
     success: boolean;
     transactionHash?: string;
@@ -690,6 +700,27 @@ export const api = {
       const data = await response.json().catch(() => ({}));
       throw new Error(
         data.error || `Failed to approve USDC: ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  },
+
+  /** Approve CTF tokens for the exchange (required before selling) */
+  async approveCtf(): Promise<{
+    success: boolean;
+    transactionHash?: string;
+    error?: string;
+    maticBalance?: string;
+  }> {
+    const response = await fetch(`${API_BASE}/api/trade/approve-ctf`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(
+        data.error || `Failed to approve CTF tokens: ${response.statusText}`,
       );
     }
 

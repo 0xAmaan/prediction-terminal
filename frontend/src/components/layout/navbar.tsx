@@ -130,9 +130,13 @@ export const Navbar = ({ search, onSearchChange }: NavbarProps) => {
             </div>
           </div>
 
-          {/* Right: Account */}
+          {/* Right: Account / Portfolio */}
           <div className="shrink-0">
-            <button className="gradient-orb h-9 w-9 rounded-full" aria-label="Account" />
+            <Link
+              href="/portfolio"
+              className="gradient-orb h-9 w-9 rounded-full block hover:opacity-80 transition-opacity"
+              aria-label="Portfolio"
+            />
           </div>
         </div>
       </div>

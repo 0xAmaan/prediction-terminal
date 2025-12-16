@@ -146,17 +146,33 @@ impl OrderBuilder {
         // And "1 share" = 10^6 units
 
         let scale = 1_000_000u64; // 10^6
+
+        // Polymarket precision requirements:
+        // - Token amounts: max 2 decimal places (e.g., 45.00 shares)
+        // - USDC amounts: max 5 decimal places (e.g., 2.25000 USDC)
+        // Round to these precisions to avoid "invalid amounts" errors
+
         let (maker_amount, taker_amount) = match self.side {
             Side::Buy => {
-                // Buying: we give USDC, receive tokens
-                let usdc_amount = (self.size * self.price * scale as f64) as u64;
-                let token_amount = (self.size * scale as f64) as u64;
+                // Buying: we give USDC (5 decimals), receive tokens (2 decimals)
+                let usdc_raw = self.size * self.price;
+                let usdc_rounded = (usdc_raw * 100000.0).round() / 100000.0;
+                let usdc_amount = (usdc_rounded * scale as f64).round() as u64;
+
+                let token_rounded = (self.size * 100.0).round() / 100.0;
+                let token_amount = (token_rounded * scale as f64).round() as u64;
+
                 (U256::from(usdc_amount), U256::from(token_amount))
             }
             Side::Sell => {
-                // Selling: we give tokens, receive USDC
-                let token_amount = (self.size * scale as f64) as u64;
-                let usdc_amount = (self.size * self.price * scale as f64) as u64;
+                // Selling: we give tokens (2 decimals), receive USDC (5 decimals)
+                let token_rounded = (self.size * 100.0).round() / 100.0;
+                let token_amount = (token_rounded * scale as f64).round() as u64;
+
+                let usdc_raw = self.size * self.price;
+                let usdc_rounded = (usdc_raw * 100000.0).round() / 100000.0;
+                let usdc_amount = (usdc_rounded * scale as f64).round() as u64;
+
                 (U256::from(token_amount), U256::from(usdc_amount))
             }
         };

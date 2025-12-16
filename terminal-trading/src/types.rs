@@ -321,6 +321,12 @@ pub struct Position {
     pub avg_price: String,
     pub current_price: String,
     pub pnl: String,
+    /// Market title for display
+    #[serde(default)]
+    pub title: String,
+    /// Whether this is a neg_risk market (multi-outcome)
+    #[serde(default)]
+    pub neg_risk: bool,
 }
 
 // ============================================================================
