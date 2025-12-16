@@ -67,8 +67,8 @@ export const Navbar = ({ search, onSearchChange }: NavbarProps) => {
   const handleSearchSubmit = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter" && !onSearchChange) {
-        // Navigate to home with search query when not in controlled mode
-        router.push(`/?search=${encodeURIComponent(searchValue)}`);
+        // Navigate to markets with search query when not in controlled mode
+        router.push(`/markets?search=${encodeURIComponent(searchValue)}`);
       }
     },
     [router, searchValue, onSearchChange]
