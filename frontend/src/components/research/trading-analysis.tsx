@@ -45,18 +45,6 @@ export function TradingAnalysisPanel({ analysis }: TradingAnalysisProps) {
                   </Badge>
                   <div className="flex-1 min-w-0">
                     <span className="text-foreground">{catalyst.event}</span>
-                    {catalyst.direction_if_positive && (
-                      <span
-                        className={cn(
-                          "ml-2 text-xs",
-                          catalyst.direction_if_positive === "bullish"
-                            ? "text-green-400"
-                            : "text-red-400"
-                        )}
-                      >
-                        ({catalyst.direction_if_positive} if positive)
-                      </span>
-                    )}
                   </div>
                   {catalyst.date && (
                     <span className="text-muted-foreground text-xs shrink-0">
