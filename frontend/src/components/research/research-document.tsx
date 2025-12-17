@@ -398,13 +398,13 @@ function MispricingBanner({ analysis }: { analysis: TradingAnalysis }) {
           badgeClass: "bg-red-500/20 text-red-400 border-red-500/30",
         }
       : {
-          bgColor: "bg-gray-500/10",
-          borderColor: "border-gray-500/30",
-          textColor: "text-gray-400",
-          icon: <Target className="h-5 w-5 text-gray-500" />,
+          bgColor: "bg-amber-500/10",
+          borderColor: "border-amber-500/30",
+          textColor: "text-amber-400",
+          icon: <Target className="h-5 w-5 text-amber-500" />,
           label: "Fairly Priced",
           description: "Market appears to be trading near fair value",
-          badgeClass: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+          badgeClass: "bg-amber-500/20 text-amber-400 border-amber-500/30",
         };
 
   const fairValueLow = (analysis.fair_value_low * 100).toFixed(0);

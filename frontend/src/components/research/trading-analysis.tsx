@@ -2,15 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Calendar,
-  AlertTriangle,
-  Target,
-  Scale,
-} from "lucide-react";
+import { Calendar, AlertTriangle, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TradingAnalysis } from "@/lib/types";
 
@@ -19,85 +11,8 @@ interface TradingAnalysisProps {
 }
 
 export function TradingAnalysisPanel({ analysis }: TradingAnalysisProps) {
-  const edgePercent = (analysis.implied_edge * 100).toFixed(1);
-  const isPositiveEdge = analysis.implied_edge > 0.02; // 2% threshold
-  const isNegativeEdge = analysis.implied_edge < -0.02;
-
   return (
     <div className="space-y-4">
-      {/* Fair Value Card */}
-      <Card className="border-border/30 bg-card/50">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Target className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-base">Fair Value Estimate</CardTitle>
-            </div>
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-xs",
-                analysis.estimate_confidence === "high" &&
-                  "bg-green-500/10 text-green-400 border-green-500/30",
-                analysis.estimate_confidence === "medium" &&
-                  "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
-                analysis.estimate_confidence === "low" &&
-                  "bg-muted text-muted-foreground border-border"
-              )}
-            >
-              {analysis.estimate_confidence} confidence
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-baseline gap-4">
-            <div className="text-3xl font-bold">
-              {(analysis.fair_value_low * 100).toFixed(0)}–
-              {(analysis.fair_value_high * 100).toFixed(0)}%
-            </div>
-            <div className="text-sm text-muted-foreground">
-              vs market at {(analysis.current_price * 100).toFixed(1)}%
-            </div>
-          </div>
-
-          {/* Edge indicator */}
-          <div
-            className={cn(
-              "flex items-center gap-2 p-3 rounded-lg",
-              isPositiveEdge && "bg-green-500/10",
-              isNegativeEdge && "bg-red-500/10",
-              !isPositiveEdge && !isNegativeEdge && "bg-muted/50"
-            )}
-          >
-            {isPositiveEdge ? (
-              <TrendingUp className="h-5 w-5 text-green-500" />
-            ) : isNegativeEdge ? (
-              <TrendingDown className="h-5 w-5 text-red-500" />
-            ) : (
-              <Minus className="h-5 w-5 text-muted-foreground" />
-            )}
-            <span
-              className={cn(
-                "font-medium text-sm",
-                isPositiveEdge && "text-green-400",
-                isNegativeEdge && "text-red-400",
-                !isPositiveEdge && !isNegativeEdge && "text-muted-foreground"
-              )}
-            >
-              {isPositiveEdge
-                ? `+${edgePercent}% edge (market may be underpriced)`
-                : isNegativeEdge
-                ? `${edgePercent}% edge (market may be overpriced)`
-                : "No significant edge detected"}
-            </span>
-          </div>
-
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {analysis.fair_value_reasoning}
-          </p>
-        </CardContent>
-      </Card>
-
       {/* Catalysts */}
       {analysis.catalysts.length > 0 && (
         <Card className="border-border/30 bg-card/50">
