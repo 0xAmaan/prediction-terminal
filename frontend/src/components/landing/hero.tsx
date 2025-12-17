@@ -26,13 +26,19 @@ export const Hero = () => {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-radial from-[#54BBF7]/[0.07] via-transparent to-transparent blur-3xl" />
 
       {/* Navigation */}
-      <nav className="relative z-20 flex items-center px-6 lg:px-12 py-6">
+      <nav className="relative z-20 flex items-center justify-between px-6 lg:px-12 py-6">
         <div className="flex items-center gap-2">
           <PremonitionLogo size={32} />
           <span className="text-[#EEF0F1] font-semibold text-lg tracking-tight">
             Premonition
           </span>
         </div>
+        <Link
+          href="/signup"
+          className="px-4 py-2 rounded-lg border border-[#1e1f25] text-[#EEF0F1] text-sm font-medium hover:bg-[#1e1f25] transition-colors"
+        >
+          Sign up
+        </Link>
       </nav>
 
       {/* Main content */}

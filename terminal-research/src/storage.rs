@@ -313,6 +313,80 @@ impl ResearchStorage {
         format!("research/{:?}/{}", platform, market_id).to_lowercase()
     }
 
+    /// List all saved research reports from S3
+    ///
+    /// Returns all completed research jobs stored in S3.
+    /// This is used to populate the reports page with persisted research.
+    #[instrument(skip(self))]
+    pub async fn list_all_reports(&self) -> Result<Vec<ResearchJob>, TerminalError> {
+        let prefix = "research/";
+
+        // List all objects with the research prefix
+        let mut continuation_token: Option<String> = None;
+        let mut all_keys: Vec<String> = Vec::new();
+
+        loop {
+            let mut request = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(prefix);
+
+            if let Some(token) = continuation_token {
+                request = request.continuation_token(token);
+            }
+
+            let result = request
+                .send()
+                .await
+                .map_err(|e| TerminalError::internal(format!("S3 list error: {}", e)))?;
+
+            // Collect keys for current.json files only
+            for obj in result.contents() {
+                if let Some(key) = obj.key() {
+                    if key.ends_with("/current.json") {
+                        all_keys.push(key.to_string());
+                    }
+                }
+            }
+
+            // Check if there are more results
+            if result.is_truncated() == Some(true) {
+                continuation_token = result.next_continuation_token().map(|s| s.to_string());
+            } else {
+                break;
+            }
+        }
+
+        info!("Found {} research reports in S3", all_keys.len());
+
+        // Fetch each report (in parallel with limited concurrency)
+        let mut reports: Vec<ResearchJob> = Vec::new();
+        for key in all_keys {
+            match self.get_object(&key).await {
+                Ok(Some(job)) => {
+                    // Only include completed reports
+                    if job.status == crate::types::ResearchStatus::Completed {
+                        reports.push(job);
+                    }
+                }
+                Ok(None) => {
+                    // Expired or invalid, skip
+                    info!("Skipping expired/invalid report: {}", key);
+                }
+                Err(e) => {
+                    warn!("Failed to fetch report {}: {}", key, e);
+                }
+            }
+        }
+
+        // Sort by updated_at (newest first)
+        reports.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        info!("Returning {} completed research reports", reports.len());
+        Ok(reports)
+    }
+
     // ========================================================================
     // Chat Storage Methods
     // ========================================================================
