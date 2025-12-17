@@ -438,6 +438,17 @@ export const api = {
     return response.json();
   },
 
+  /** List all saved research reports from S3 (persisted) */
+  async listSavedReports(): Promise<ResearchJob[]> {
+    const response = await fetch(`${API_BASE}/api/research/reports`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to list saved reports: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
   async getResearchByMarket(
     platform: string,
     marketId: string,
@@ -550,7 +561,7 @@ export const api = {
     side: "buy" | "sell";
     price: number;
     size: number;
-    orderType?: "GTC" | "GTD" | "FOK";
+    orderType?: "GTC" | "GTD" | "FOK" | "FAK";
     /** Whether this is a neg_risk market (multi-outcome). Affects which exchange contract is used for signing. */
     negRisk?: boolean;
   }): Promise<{

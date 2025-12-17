@@ -493,6 +493,20 @@ impl ResearchService {
         jobs.values().cloned().collect()
     }
 
+    /// List all saved research reports from S3 storage
+    ///
+    /// Returns all completed research reports persisted in S3.
+    /// This is used for the reports page to show all historical research.
+    #[instrument(skip(self))]
+    pub async fn list_all_reports(&self) -> Result<Vec<ResearchJob>, TerminalError> {
+        if let Some(ref storage) = self.storage {
+            storage.list_all_reports().await
+        } else {
+            // No storage configured, return empty list
+            Ok(Vec::new())
+        }
+    }
+
     /// Build rich market context for AI research
     ///
     /// Fetches market details, recent trades, order book, and resolution source content

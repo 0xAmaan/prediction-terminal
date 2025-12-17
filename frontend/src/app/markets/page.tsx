@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { MarketsGrid } from "@/components/markets-grid";
 import { NewsFeed } from "@/components/news";
+import { ResearchReports } from "@/components/research/research-reports";
 import { Navbar } from "@/components/layout/navbar";
 
 // Fey color tokens
@@ -15,10 +17,36 @@ const fey = {
   border: "rgba(255, 255, 255, 0.06)",
 };
 
-const MarketsPage = () => {
+type TabType = "markets" | "news" | "research";
+
+// Wrapper to handle Suspense boundary for useSearchParams
+export default function MarketsPage() {
+  return (
+    <Suspense fallback={<MarketsPageContent initialTab="markets" />}>
+      <MarketsPageWithParams />
+    </Suspense>
+  );
+}
+
+function MarketsPageWithParams() {
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab") as TabType;
+  const initialTab = tabParam && ["markets", "news", "research"].includes(tabParam)
+    ? tabParam
+    : "markets";
+
+  return <MarketsPageContent initialTab={initialTab} />;
+}
+
+function MarketsPageContent({ initialTab }: { initialTab: TabType }) {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"markets" | "news">("markets");
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+
+  // Update tab when initialTab prop changes (from URL)
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
@@ -70,6 +98,21 @@ const MarketsPage = () => {
                 />
               )}
             </button>
+            <button
+              onClick={() => setActiveTab("research")}
+              className="px-6 py-3 text-sm font-medium transition-colors relative"
+              style={{
+                color: activeTab === "research" ? fey.grey100 : fey.grey500,
+              }}
+            >
+              Research
+              {activeTab === "research" && (
+                <div
+                  className="absolute bottom-0 left-0 right-0 h-0.5"
+                  style={{ backgroundColor: fey.skyBlue }}
+                />
+              )}
+            </button>
           </div>
         </div>
       </div>
@@ -77,9 +120,8 @@ const MarketsPage = () => {
       {/* Main content - scrollable */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto px-8 pt-8 pb-6" style={{ maxWidth: "1800px" }}>
-          {activeTab === "markets" ? (
-            <MarketsGrid search={debouncedSearch} />
-          ) : (
+          {activeTab === "markets" && <MarketsGrid search={debouncedSearch} />}
+          {activeTab === "news" && (
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h2
@@ -99,6 +141,7 @@ const MarketsPage = () => {
               <NewsFeed maxItems={30} />
             </div>
           )}
+          {activeTab === "research" && <ResearchReports />}
         </div>
       </main>
 
@@ -137,6 +180,4 @@ const MarketsPage = () => {
       </footer>
     </div>
   );
-};
-
-export default MarketsPage;
+}

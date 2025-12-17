@@ -37,6 +37,7 @@ pub fn routes() -> Router<AppState> {
         // Static routes (no wildcards in the middle)
         .route("/research/job/{job_id}", get(get_job))
         .route("/research/jobs", get(list_jobs))
+        .route("/research/reports", get(list_reports))
 }
 
 #[derive(Debug, Serialize)]
@@ -210,7 +211,7 @@ async fn get_job(
     }
 }
 
-/// List all research jobs
+/// List all research jobs (in-memory, current session only)
 async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
     info!("Listing research jobs");
 
@@ -229,6 +230,38 @@ async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
 
     let jobs: Vec<ResearchJob> = research_service.list_jobs().await;
     (StatusCode::OK, Json(jobs)).into_response()
+}
+
+/// List all saved research reports from S3 (persisted)
+async fn list_reports(State(state): State<AppState>) -> impl IntoResponse {
+    info!("Listing all saved research reports");
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service.list_all_reports().await {
+        Ok(reports) => (StatusCode::OK, Json(reports)).into_response(),
+        Err(e) => {
+            error!("Failed to list reports: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to list reports: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// List all versions of research for a market
