@@ -44,20 +44,6 @@ export const Hero = () => {
       {/* Main content */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 lg:px-12 pb-24">
         <div className="max-w-4xl mx-auto text-center space-y-8">
-          {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#131419] border border-[#1e1f25] text-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#4DBE95] animate-pulse" />
-              <span className="text-[#9AA4AD] font-mono">
-                Polymarket • Real-time
-              </span>
-            </div>
-          </motion.div>
-
           {/* Headline */}
           <motion.h1
             initial={{ opacity: 0, y: 20 }}
@@ -135,7 +121,11 @@ export const Hero = () => {
                     {["All", "Politics", "Crypto", "Sports"].map((tab, i) => (
                       <div
                         key={tab}
-                        className={`px-3 py-1 rounded-md text-xs ${i === 0 ? "bg-[#1e1f25] text-[#EEF0F1]" : "text-[#64727C]"}`}
+                        className={`px-3 py-1 rounded-md text-xs ${
+                          i === 0
+                            ? "bg-[#1e1f25] text-[#EEF0F1]"
+                            : "text-[#64727C]"
+                        }`}
                       >
                         {tab}
                       </div>
@@ -185,7 +175,11 @@ export const Hero = () => {
                         {market.price}
                       </span>
                       <span
-                        className={`font-mono w-16 text-right ${market.change.startsWith("+") ? "text-[#4DBE95]" : "text-[#D84F68]"}`}
+                        className={`font-mono w-16 text-right ${
+                          market.change.startsWith("+")
+                            ? "text-[#4DBE95]"
+                            : "text-[#D84F68]"
+                        }`}
                       >
                         {market.change}
                       </span>
