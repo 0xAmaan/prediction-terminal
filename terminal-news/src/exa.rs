@@ -3,6 +3,7 @@
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::time::Duration as StdDuration;
 use tracing::{debug, info, instrument};
 
 use terminal_core::{NewsItem, NewsSearchParams, NewsSource};
@@ -12,6 +13,9 @@ use crate::types::{
     ExaContentsOptions, ExaHighlightsOptions, ExaResult, ExaSearchRequest, ExaSearchResponse,
     ExaTextOptions,
 };
+
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY_MS: u64 = 1000;
 
 /// Exa.ai API client
 pub struct ExaClient {
@@ -130,29 +134,65 @@ impl ExaClient {
             request.num_results
         );
 
-        let response = self
-            .client
-            .post(format!("{}/search", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
+        // Retry loop for rate limiting (429 errors)
+        let exa_response: ExaSearchResponse = {
+            let mut last_error = None;
+            let mut result = None;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(NewsError::ApiError {
-                status: status.as_u16(),
-                message: body,
-            });
-        }
+            for attempt in 1..=MAX_RETRIES {
+                let response = self
+                    .client
+                    .post(format!("{}/search", self.base_url))
+                    .header("x-api-key", &self.api_key)
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
 
-        let exa_response: ExaSearchResponse = response
-            .json()
-            .await
-            .map_err(|e| NewsError::ParseError(e.to_string()))?;
+                let status = response.status();
+
+                // Handle rate limiting with automatic retry
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    if attempt < MAX_RETRIES {
+                        debug!(
+                            "[EXA_NEWS] Rate limited, retrying in {}ms (attempt {}/{})",
+                            RETRY_DELAY_MS, attempt, MAX_RETRIES
+                        );
+                        tokio::time::sleep(StdDuration::from_millis(RETRY_DELAY_MS)).await;
+                        continue;
+                    }
+                    let body = response.text().await.unwrap_or_default();
+                    last_error = Some(NewsError::ApiError {
+                        status: status.as_u16(),
+                        message: body,
+                    });
+                    break;
+                }
+
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    last_error = Some(NewsError::ApiError {
+                        status: status.as_u16(),
+                        message: body,
+                    });
+                    break;
+                }
+
+                result = Some(
+                    response
+                        .json()
+                        .await
+                        .map_err(|e| NewsError::ParseError(e.to_string()))?,
+                );
+                break;
+            }
+
+            match result {
+                Some(r) => r,
+                None => return Err(last_error.unwrap_or_else(|| NewsError::RequestFailed("All retries failed".to_string()))),
+            }
+        };
 
         info!(
             "Received {} results from Exa.ai",
@@ -309,29 +349,65 @@ impl ExaClient {
             },
         };
 
-        let response = self
-            .client
-            .post(format!("{}/findSimilar", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
+        // Retry loop for rate limiting (429 errors)
+        let exa_response: ExaSearchResponse = {
+            let mut last_error = None;
+            let mut result = None;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(NewsError::ApiError {
-                status: status.as_u16(),
-                message: body,
-            });
-        }
+            for attempt in 1..=MAX_RETRIES {
+                let response = self
+                    .client
+                    .post(format!("{}/findSimilar", self.base_url))
+                    .header("x-api-key", &self.api_key)
+                    .header("Content-Type", "application/json")
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| NewsError::RequestFailed(e.to_string()))?;
 
-        let exa_response: ExaSearchResponse = response
-            .json()
-            .await
-            .map_err(|e| NewsError::ParseError(e.to_string()))?;
+                let status = response.status();
+
+                // Handle rate limiting with automatic retry
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    if attempt < MAX_RETRIES {
+                        debug!(
+                            "[EXA_NEWS] Rate limited on findSimilar, retrying in {}ms (attempt {}/{})",
+                            RETRY_DELAY_MS, attempt, MAX_RETRIES
+                        );
+                        tokio::time::sleep(StdDuration::from_millis(RETRY_DELAY_MS)).await;
+                        continue;
+                    }
+                    let body = response.text().await.unwrap_or_default();
+                    last_error = Some(NewsError::ApiError {
+                        status: status.as_u16(),
+                        message: body,
+                    });
+                    break;
+                }
+
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    last_error = Some(NewsError::ApiError {
+                        status: status.as_u16(),
+                        message: body,
+                    });
+                    break;
+                }
+
+                result = Some(
+                    response
+                        .json()
+                        .await
+                        .map_err(|e| NewsError::ParseError(e.to_string()))?,
+                );
+                break;
+            }
+
+            match result {
+                Some(r) => r,
+                None => return Err(last_error.unwrap_or_else(|| NewsError::RequestFailed("All retries failed".to_string()))),
+            }
+        };
 
         let items = exa_response
             .results

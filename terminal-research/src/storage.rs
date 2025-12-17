@@ -14,6 +14,7 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{operation::get_object::GetObjectError, primitives::ByteStream, Client};
 use chrono::DateTime;
+use futures::stream::{self, StreamExt};
 use terminal_core::{Platform, TerminalError};
 use tracing::{info, instrument, warn};
 
@@ -360,25 +361,74 @@ impl ResearchStorage {
 
         info!("Found {} research reports in S3", all_keys.len());
 
-        // Fetch each report (in parallel with limited concurrency)
-        let mut reports: Vec<ResearchJob> = Vec::new();
-        for key in all_keys {
-            match self.get_object(&key).await {
-                Ok(Some(job)) => {
-                    // Only include completed reports
-                    if job.status == crate::types::ResearchStatus::Completed {
-                        reports.push(job);
+        // Fetch reports in parallel with limited concurrency (10 concurrent requests)
+        let client = self.client.clone();
+        let bucket = self.bucket.clone();
+
+        let mut reports: Vec<ResearchJob> = stream::iter(all_keys)
+            .map(|key| {
+                let client = client.clone();
+                let bucket = bucket.clone();
+                async move {
+                    let result = client
+                        .get_object()
+                        .bucket(&bucket)
+                        .key(&key)
+                        .send()
+                        .await;
+
+                    match result {
+                        Ok(output) => {
+                            let bytes = match output.body.collect().await {
+                                Ok(b) => b.into_bytes(),
+                                Err(e) => {
+                                    warn!("Failed to read S3 body for {}: {}", key, e);
+                                    return None;
+                                }
+                            };
+
+                            match serde_json::from_slice::<ResearchJob>(&bytes) {
+                                Ok(job) => {
+                                    // Check if cache is still valid
+                                    let age = chrono::Utc::now() - job.updated_at;
+                                    if age.num_hours() > job.cache_ttl_hours {
+                                        info!("Cache expired for key: {}", key);
+                                        return None;
+                                    }
+                                    // Only include completed reports
+                                    if job.status == crate::types::ResearchStatus::Completed {
+                                        Some(job)
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to parse report {}: {}", key, e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // Check for NoSuchKey
+                            if let Some(GetObjectError::NoSuchKey(_)) = e.as_service_error() {
+                                return None;
+                            }
+                            let error_str = e.to_string();
+                            if !error_str.contains("NoSuchKey")
+                                && !error_str.contains("NotFound")
+                                && !error_str.contains("404")
+                            {
+                                warn!("S3 error for {}: {}", key, error_str);
+                            }
+                            None
+                        }
                     }
                 }
-                Ok(None) => {
-                    // Expired or invalid, skip
-                    info!("Skipping expired/invalid report: {}", key);
-                }
-                Err(e) => {
-                    warn!("Failed to fetch report {}: {}", key, e);
-                }
-            }
-        }
+            })
+            .buffer_unordered(10) // 10 concurrent S3 requests
+            .filter_map(|opt| async { opt })
+            .collect()
+            .await;
 
         // Sort by updated_at (newest first)
         reports.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));

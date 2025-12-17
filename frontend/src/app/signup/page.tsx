@@ -10,9 +10,9 @@ export default function SignupPage() {
     <div className="min-h-screen bg-[#070709] flex flex-col">
       {/* Navigation */}
       <nav className="flex items-center justify-between px-6 lg:px-12 py-6">
-        <Link href="/" className="flex items-center gap-2">
-          <PremonitionLogo size={32} />
-          <span className="text-[#EEF0F1] font-semibold text-lg tracking-tight">
+        <Link href="/" className="flex items-center gap-3">
+          <PremonitionLogo size={40} />
+          <span className="text-[#EEF0F1] font-semibold text-xl tracking-tight">
             Premonition
           </span>
         </Link>
@@ -27,27 +27,27 @@ export default function SignupPage() {
 
       {/* Main content */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
-        <div className="max-w-md mx-auto text-center space-y-8">
-          <h1 className="text-3xl sm:text-4xl font-semibold text-[#EEF0F1] tracking-[-0.02em]">
+        <div className="max-w-2xl mx-auto text-center space-y-10">
+          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold text-[#EEF0F1] tracking-[-0.02em]">
             Join Premonition
           </h1>
-          <p className="text-[#7D8B96] text-lg">
+          <p className="text-[#7D8B96] text-xl sm:text-2xl">
             Scan the QR code below to sign up for early access.
           </p>
 
           {/* QR Code */}
           <div className="flex justify-center">
-            <div className="p-8 rounded-2xl bg-white">
+            <div className="p-10 rounded-3xl bg-white">
               <QRCodeSVG
                 value="https://premonition-waiting-list.vercel.app/"
-                size={200}
+                size={400}
                 level="H"
                 includeMargin={false}
               />
             </div>
           </div>
 
-          <p className="text-[#64727C] text-sm">
+          <p className="text-[#64727C] text-base sm:text-lg">
             Point your camera at the code to continue
           </p>
         </div>

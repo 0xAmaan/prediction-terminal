@@ -1,7 +1,7 @@
 //! Research API endpoints for AI-powered market analysis
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use terminal_core::Platform;
-use terminal_research::{ChatMessage, ResearchJob, ResearchStatus, ResearchVersionList};
+use terminal_research::{ChatMessage, ResearchJob, ResearchJobSummary, ResearchStatus, ResearchVersionList};
 use tracing::{error, info};
 
 use crate::AppState;
@@ -233,9 +233,24 @@ async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(jobs)).into_response()
 }
 
+/// Query params for listing reports
+#[derive(Debug, Deserialize)]
+struct ListReportsQuery {
+    /// When true, returns ResearchJobSummary instead of full ResearchJob
+    /// This reduces payload size by ~80-90% for list views
+    #[serde(default)]
+    summary_only: bool,
+}
+
 /// List all saved research reports from S3 (persisted)
-async fn list_reports(State(state): State<AppState>) -> impl IntoResponse {
-    info!("Listing all saved research reports");
+async fn list_reports(
+    State(state): State<AppState>,
+    Query(query): Query<ListReportsQuery>,
+) -> impl IntoResponse {
+    info!(
+        "Listing all saved research reports (summary_only={})",
+        query.summary_only
+    );
 
     let research_service = match &state.research_service {
         Some(service) => service,
@@ -251,7 +266,15 @@ async fn list_reports(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     match research_service.list_all_reports().await {
-        Ok(reports) => (StatusCode::OK, Json(reports)).into_response(),
+        Ok(reports) => {
+            if query.summary_only {
+                let summaries: Vec<ResearchJobSummary> =
+                    reports.into_iter().map(Into::into).collect();
+                (StatusCode::OK, Json(summaries)).into_response()
+            } else {
+                (StatusCode::OK, Json(reports)).into_response()
+            }
+        }
         Err(e) => {
             error!("Failed to list reports: {}", e);
             (

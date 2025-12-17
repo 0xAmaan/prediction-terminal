@@ -17,7 +17,27 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
-import type { ResearchJob, ResearchStatus } from "@/lib/types";
+import type {
+  ResearchJob,
+  ResearchJobSummary,
+  ResearchStatus,
+} from "@/lib/types";
+
+// Union type for merged reports - can be either full job or summary
+type MergedReport = ResearchJob | ResearchJobSummary;
+
+// Helper to get executive summary from either type
+const getExecutiveSummary = (job: MergedReport): string | undefined => {
+  // Check if it's a full ResearchJob (has 'report' field)
+  if ("report" in job && job.report) {
+    return job.report.executive_summary;
+  }
+  // Otherwise it's a ResearchJobSummary (has 'executive_summary' directly)
+  if ("executive_summary" in job) {
+    return job.executive_summary;
+  }
+  return undefined;
+};
 
 // Fey color tokens
 const fey = {
@@ -45,10 +65,17 @@ export function ResearchReports() {
   });
 
   // Also fetch in-progress jobs (in-memory, for real-time status)
+  // Only poll when there are active (non-completed/failed) jobs
   const { data: activeJobs } = useQuery({
     queryKey: ["research-jobs"],
     queryFn: api.listResearchJobs,
-    refetchInterval: 5000, // Poll every 5 seconds for active jobs
+    refetchInterval: (query) => {
+      const jobs = query.state.data;
+      const hasActiveJobs = jobs?.some(
+        (j) => j.status !== "completed" && j.status !== "failed",
+      );
+      return hasActiveJobs ? 5000 : false;
+    },
   });
 
   // Merge: active jobs that are not completed + saved reports
@@ -158,7 +185,7 @@ export function ResearchReports() {
   );
 }
 
-function ResearchJobCard({ job }: { job: ResearchJob }) {
+function ResearchJobCard({ job }: { job: MergedReport }) {
   const statusConfig: Record<
     ResearchStatus,
     { icon: React.ReactNode; color: string; bgColor: string }
@@ -243,9 +270,9 @@ function ResearchJobCard({ job }: { job: ResearchJob }) {
             {job.progress.current_step || "Starting..."}
           </p>
         )}
-        {job.status === "completed" && job.report && (
+        {job.status === "completed" && getExecutiveSummary(job) && (
           <p className="text-sm line-clamp-3" style={{ color: fey.grey500 }}>
-            {job.report.executive_summary}
+            {getExecutiveSummary(job)}
           </p>
         )}
         {job.status === "failed" && (

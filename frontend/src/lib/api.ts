@@ -14,6 +14,7 @@ import type {
   NewsSearchParams,
   ArticleContent,
   ResearchJob,
+  ResearchJobSummary,
   ChatHistory,
   ChatMessage,
   ResearchVersionList,
@@ -439,9 +440,11 @@ export const api = {
     return response.json();
   },
 
-  /** List all saved research reports from S3 (persisted) */
-  async listSavedReports(): Promise<ResearchJob[]> {
-    const response = await fetch(`${API_BASE}/api/research/reports`);
+  /** List all saved research reports from S3 (persisted, summary only for faster loading) */
+  async listSavedReports(): Promise<ResearchJobSummary[]> {
+    const response = await fetch(
+      `${API_BASE}/api/research/reports?summary_only=true`,
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to list saved reports: ${response.statusText}`);

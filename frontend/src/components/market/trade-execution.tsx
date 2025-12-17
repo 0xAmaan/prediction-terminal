@@ -90,6 +90,7 @@ export const TradeExecution = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [showSuccessButton, setShowSuccessButton] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
 
@@ -238,6 +239,7 @@ export const TradeExecution = ({
     setIsSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);
+    setShowSuccessButton(false);
 
     const toastId = tradingToast.loading("Submitting order...");
 
@@ -262,6 +264,9 @@ export const TradeExecution = ({
         tradingToast.success({ toastId, txHash });
         setAmount("");
         setLimitPrice("");
+        setShowSuccessButton(true);
+        // Reset success state after 2 seconds
+        setTimeout(() => setShowSuccessButton(false), 2000);
         onOrderSubmitted?.();
 
         // Optimistic position update for instant UI feedback
@@ -802,12 +807,16 @@ export const TradeExecution = ({
       <div className="p-4 flex-shrink-0">
         <button
           onClick={handleSubmitClick}
-          disabled={!canTrade}
+          disabled={!canTrade || showSuccessButton}
           className={`w-full py-3.5 rounded-lg text-base font-semibold transition-all ${
-            canTrade ? "cursor-pointer hover:opacity-90" : "cursor-not-allowed opacity-60"
+            showSuccessButton
+              ? "cursor-default"
+              : canTrade
+                ? "cursor-pointer hover:opacity-90"
+                : "cursor-not-allowed opacity-60"
           }`}
           style={{
-            backgroundColor: accentColor,
+            backgroundColor: showSuccessButton ? fey.teal : accentColor,
             color: fey.bg100,
           }}
         >
@@ -815,6 +824,13 @@ export const TradeExecution = ({
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin">⏳</span>
               Submitting...
+            </span>
+          ) : showSuccessButton ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Order Placed
             </span>
           ) : (
             `${isBuy ? "Buy" : "Sell"} YES`

@@ -308,6 +308,21 @@ export interface ResearchJob {
   cached: boolean;
 }
 
+/** Lightweight summary for list views (excludes full report content) */
+export interface ResearchJobSummary {
+  id: string;
+  platform: string;
+  market_id: string;
+  market_title: string;
+  status: ResearchStatus;
+  progress: ResearchProgress;
+  /** Just the executive summary, not the full report */
+  executive_summary?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ResearchStatus =
   | "pending"
   | "decomposing"

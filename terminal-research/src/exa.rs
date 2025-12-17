@@ -1,11 +1,13 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use terminal_core::TerminalError;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 const EXA_API_BASE: &str = "https://api.exa.ai";
+const MAX_RETRIES: u32 = 3;
+const RETRY_DELAY_MS: u64 = 1000;
 
 /// Global request counter for debugging
 static EXA_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -116,44 +118,69 @@ impl ExaClient {
             request.num_results
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                let elapsed = now_ms() - start_ms;
+        // Retry loop for rate limiting (429 errors)
+        for attempt in 1..=MAX_RETRIES {
+            let response = self
+                .client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| {
+                    let elapsed = now_ms() - start_ms;
+                    warn!(
+                        "[EXA_API] #{} NETWORK ERROR after {}ms: {}",
+                        req_num, elapsed, e
+                    );
+                    TerminalError::network(format!("Exa API request failed: {}", e))
+                })?;
+
+            let status = response.status();
+            let elapsed = now_ms() - start_ms;
+
+            // Handle rate limiting with automatic retry
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if attempt < MAX_RETRIES {
+                    debug!(
+                        "[EXA_API] #{} Rate limited, retrying in {}ms (attempt {}/{})",
+                        req_num, RETRY_DELAY_MS, attempt, MAX_RETRIES
+                    );
+                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+                    continue;
+                }
+                // Final attempt also failed with 429
+                let body = response.text().await.unwrap_or_default();
                 warn!(
-                    "[EXA_API] #{} NETWORK ERROR after {}ms: {}",
-                    req_num, elapsed, e
+                    "[EXA_API] #{} RATE LIMITED after {}ms and {} retries | response: {}",
+                    req_num, elapsed, MAX_RETRIES, body
                 );
-                TerminalError::network(format!("Exa API request failed: {}", e))
-            })?;
+                return Err(TerminalError::api(format!("Exa API rate limited after {} retries", MAX_RETRIES)));
+            }
 
-        let status = response.status();
-        let elapsed = now_ms() - start_ms;
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                warn!(
+                    "[EXA_API] #{} FAILED after {}ms | status: {} | response: {}",
+                    req_num, elapsed, status, body
+                );
+                return Err(TerminalError::api(format!("Exa API error ({}): {}", status, body)));
+            }
 
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            warn!(
-                "[EXA_API] #{} FAILED after {}ms | status: {} | response: {}",
-                req_num, elapsed, status, body
+            info!(
+                "[EXA_API] #{} SUCCESS after {}ms | status: {}",
+                req_num, elapsed, status
             );
-            return Err(TerminalError::api(format!("Exa API error ({}): {}", status, body)));
+
+            return response
+                .json()
+                .await
+                .map_err(|e| TerminalError::parse(format!("Failed to parse Exa response: {}", e)));
         }
 
-        info!(
-            "[EXA_API] #{} SUCCESS after {}ms | status: {}",
-            req_num, elapsed, status
-        );
-
-        response
-            .json()
-            .await
-            .map_err(|e| TerminalError::parse(format!("Failed to parse Exa response: {}", e)))
+        // This should never be reached due to the loop logic, but satisfy the compiler
+        Err(TerminalError::api("Exa API request failed after all retries"))
     }
 
     /// Convenience method for news search with recent date filter

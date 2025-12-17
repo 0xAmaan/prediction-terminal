@@ -20,6 +20,6 @@ pub use types::{
     calculate_cache_ttl, Catalyst, CatalystImpact, ChatHistory, ChatMessage, ChatRole,
     ContrarianAnalysis, Direction, DocumentEdit, DocumentEditOperation, EdgeIndex, EstimateConfidence,
     FollowUpRequest, FollowUpResponse, MarketContext, MarketEdgeEntry, OrderBookSummary, RecentTrade,
-    ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate, ResearchVersion, ResearchVersionList,
-    ResolutionAnalysis, ResolutionSourceData, TradingAnalysis,
+    ResearchJob, ResearchJobSummary, ResearchProgress, ResearchStatus, ResearchUpdate, ResearchVersion,
+    ResearchVersionList, ResolutionAnalysis, ResolutionSourceData, TradingAnalysis,
 };
