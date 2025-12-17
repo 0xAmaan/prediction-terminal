@@ -39,8 +39,8 @@ export default function SignupPage() {
           <div className="flex justify-center">
             <div className="p-8 rounded-2xl bg-white">
               <QRCodeSVG
-                value="https://www.google.com"
-                size={280}
+                value="https://premonition-waiting-list.vercel.app/"
+                size={200}
                 level="H"
                 includeMargin={false}
               />
