@@ -37,10 +37,10 @@ export default function SignupPage() {
 
           {/* QR Code */}
           <div className="flex justify-center">
-            <div className="p-6 rounded-2xl bg-white">
+            <div className="p-8 rounded-2xl bg-white">
               <QRCodeSVG
                 value="https://www.google.com"
-                size={200}
+                size={280}
                 level="H"
                 includeMargin={false}
               />
