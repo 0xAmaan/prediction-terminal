@@ -397,6 +397,22 @@ export interface ContrarianAnalysis {
   contrarian_triggers: string[];
 }
 
+// ============================================================================
+// Market Edge Index Types (for filtering mispriced markets)
+// ============================================================================
+
+export interface MarketEdgeEntry {
+  platform: Platform;
+  market_id: string;
+  title: string;
+  implied_edge: number;
+  fair_value_low: number;
+  fair_value_high: number;
+  current_price: number;
+  estimate_confidence: EstimateConfidence;
+  updated_at: string;
+}
+
 export interface ReportSection {
   heading: string;
   content: string;

@@ -17,6 +17,7 @@ import type {
   ChatHistory,
   ChatMessage,
   ResearchVersionList,
+  MarketEdgeEntry,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -463,6 +464,19 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to get research: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /** Get markets with research indicating mispricing (edge > 2%) */
+  async getMispricedMarkets(): Promise<MarketEdgeEntry[]> {
+    const response = await fetch(`${API_BASE}/api/research/mispriced`);
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get mispriced markets: ${response.statusText}`,
+      );
     }
 
     return response.json();

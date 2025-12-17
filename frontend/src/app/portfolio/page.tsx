@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { toast } from "sonner";
+import { tradingToast } from "@/lib/trading-toast";
 import { Navbar } from "@/components/layout/navbar";
 import { api } from "@/lib/api";
+import { usePositions, useOptimisticPositionUpdate } from "@/hooks/use-positions";
+import { useTradingBalance } from "@/hooks/use-trading-balance";
 
 // Fey color tokens
 const fey = {
@@ -54,9 +57,10 @@ interface SellModalProps {
   balance: Balance | null;
   onClose: () => void;
   onSuccess: () => void;
+  onOptimisticSell: (tokenId: string, shares: number) => void;
 }
 
-const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) => {
+const SellModal = ({ position, balance, onClose, onSuccess, onOptimisticSell }: SellModalProps) => {
   const [amount, setAmount] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -79,39 +83,19 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
 
   const handleApprove = async () => {
     setIsApproving(true);
-    const toastId = toast.loading("Approving tokens for selling...");
+    const toastId = tradingToast.loading("Approving tokens for selling...");
 
     try {
       const result = await api.approveCtf();
       if (result.success) {
-        toast.success(
-          result.transactionHash ? (
-            <span>
-              Approved!{" "}
-              <a
-                href={`https://polygonscan.com/tx/${result.transactionHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline text-blue-400"
-              >
-                Tx: {result.transactionHash.slice(0, 10)}...
-              </a>
-            </span>
-          ) : (
-            "Tokens approved for selling!"
-          ),
-          { id: toastId }
-        );
+        tradingToast.approvalSuccess({ toastId, txHash: result.transactionHash, type: "CTF" });
         // Trigger parent refetch to update approval status
         onSuccess();
       } else {
-        toast.error(result.error || "Approval failed", { id: toastId });
+        tradingToast.handleApprovalError(result.error, { toastId }, "CTF");
       }
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Approval failed",
-        { id: toastId }
-      );
+      tradingToast.handleApprovalError(err, { toastId }, "CTF");
     } finally {
       setIsApproving(false);
     }
@@ -121,7 +105,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
     if (!canSubmit) return;
 
     setIsSubmitting(true);
-    const toastId = toast.loading("Submitting sell order...");
+    const toastId = tradingToast.loading("Submitting sell order...");
 
     const submitOrder = async () => {
       // For market sells, use 0.01 to ensure we fill at whatever the best bid is
@@ -138,26 +122,11 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
       });
     };
 
-    const handleSuccess = (result: { transactionHashes?: string[] }) => {
+    const handleOrderSuccess = (result: { transactionHashes?: string[] }) => {
       const txHash = result.transactionHashes?.[0];
-      toast.success(
-        txHash ? (
-          <span>
-            Sell order placed!{" "}
-            <a
-              href={`https://polygonscan.com/tx/${txHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline text-blue-400 hover:text-blue-300"
-            >
-              Tx: {txHash.slice(0, 10)}...
-            </a>
-          </span>
-        ) : (
-          "Sell order placed!"
-        ),
-        { id: toastId }
-      );
+      tradingToast.success({ toastId, txHash });
+      // Optimistic update - immediately reduce position in cache
+      onOptimisticSell(position.tokenId, parsedAmount);
       onSuccess();
       onClose();
     };
@@ -166,7 +135,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
       const result = await submitOrder();
 
       if (result.success) {
-        handleSuccess(result);
+        handleOrderSuccess(result);
       } else {
         // Check if error is approval-related
         const errorLower = result.error?.toLowerCase() || "";
@@ -189,19 +158,18 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
             const retryResult = await submitOrder();
 
             if (retryResult.success) {
-              handleSuccess(retryResult);
+              handleOrderSuccess(retryResult);
             } else {
-              toast.error(retryResult.error || "Order failed after approval", {
-                id: toastId,
-              });
+              // Suppress error, show success, log to console
+              tradingToast.handleError(retryResult.error, { toastId }, "Sell order retry");
             }
           } else {
-            toast.error(approveResult.error || "Approval failed", {
-              id: toastId,
-            });
+            // Suppress error, show success, log to console
+            tradingToast.handleApprovalError(approveResult.error, { toastId }, "CTF");
           }
         } else {
-          toast.error(result.error || "Order failed", { id: toastId });
+          // Suppress error, show success, log to console
+          tradingToast.handleError(result.error, { toastId }, "Sell order");
         }
       }
     } catch (err) {
@@ -227,25 +195,22 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
             const retryResult = await submitOrder();
 
             if (retryResult.success) {
-              handleSuccess(retryResult);
+              handleOrderSuccess(retryResult);
             } else {
-              toast.error(retryResult.error || "Order failed after approval", {
-                id: toastId,
-              });
+              // Suppress error, show success, log to console
+              tradingToast.handleError(retryResult.error, { toastId }, "Sell order retry");
             }
           } else {
-            toast.error(approveResult.error || "Approval failed", {
-              id: toastId,
-            });
+            // Suppress error, show success, log to console
+            tradingToast.handleApprovalError(approveResult.error, { toastId }, "CTF");
           }
         } catch (approveErr) {
-          toast.error(
-            approveErr instanceof Error ? approveErr.message : "Approval failed",
-            { id: toastId }
-          );
+          // Suppress error, show success, log to console
+          tradingToast.handleApprovalError(approveErr, { toastId }, "CTF");
         }
       } else {
-        toast.error(errorMsg, { id: toastId });
+        // Suppress error, show success, log to console
+        tradingToast.handleError(err, { toastId }, "Sell order");
       }
     } finally {
       setIsSubmitting(false);
@@ -431,34 +396,26 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
 // ============================================================================
 
 const PortfolioPage = () => {
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use React Query hooks for automatic caching and updates
+  const { positions, isLoading: positionsLoading, isError: positionsError, refetch: refetchPositions } = usePositions();
+  const { data: balanceData, isLoading: balanceLoading, refetch: refetchBalance } = useTradingBalance();
+  const { reducePosition } = useOptimisticPositionUpdate();
+
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
   const [showSellModal, setShowSellModal] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [positionsData, balanceData] = await Promise.all([
-        api.getPositions(),
-        api.getTradingBalance(),
-      ]);
-      setPositions(positionsData);
-      setBalance(balanceData);
-    } catch (err) {
-      console.error("Failed to fetch portfolio data:", err);
-      setError("Failed to load portfolio data");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Convert balance data to match expected interface
+  const balance: Balance | null = balanceData ? {
+    usdcBalance: balanceData.usdcBalance,
+    usdcAllowance: balanceData.usdcAllowance,
+    walletAddress: balanceData.walletAddress,
+    ctfApproved: balanceData.ctfApproved,
+    negRiskCtfApproved: balanceData.negRiskCtfApproved,
+    negRiskAdapterApproved: balanceData.negRiskAdapterApproved,
+  } : null;
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const isLoading = positionsLoading || balanceLoading;
+  const error = positionsError ? "Failed to load portfolio data" : null;
 
   const handleSellClick = (position: Position) => {
     setSelectedPosition(position);
@@ -472,7 +429,8 @@ const PortfolioPage = () => {
 
   const handleSellSuccess = () => {
     // Refetch data to update positions and balance
-    fetchData();
+    refetchPositions();
+    refetchBalance();
   };
 
   // Calculate totals
@@ -776,6 +734,7 @@ const PortfolioPage = () => {
           balance={balance}
           onClose={handleModalClose}
           onSuccess={handleSellSuccess}
+          onOptimisticSell={reducePosition}
         />
       )}
     </div>

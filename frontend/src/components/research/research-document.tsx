@@ -3,14 +3,14 @@
 import React, { useEffect, useRef, useState, useMemo, ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, Lock, FileText } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ExternalLink, Loader2, Lock, FileText, Target } from "lucide-react";
 import ReactMarkdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { VersionHistory } from "./version-history";
 import { TradingAnalysisPanel } from "./trading-analysis";
-import type { SynthesizedReport, KeyFactor, SourceInfo } from "@/lib/types";
+import type { SynthesizedReport, KeyFactor, SourceInfo, TradingAnalysis } from "@/lib/types";
 import { hasCitations, renderWithCitations } from "@/lib/citation-parser";
 
 // Helper to process children and render citations
@@ -161,6 +161,12 @@ export function ResearchDocument({
           )}
         </div>
       )}
+
+      {/* Mispricing Banner - Prominent indicator at top of report */}
+      {report.trading_analysis && (
+        <MispricingBanner analysis={report.trading_analysis} />
+      )}
+
       {/* Streaming indicator */}
       {isStreaming && (
         <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/30 rounded-lg">
@@ -356,6 +362,106 @@ function KeyFactorBadge({ factor }: { factor: KeyFactor }) {
       <Badge variant="outline" className={confidenceColor}>
         {factor.confidence}
       </Badge>
+    </div>
+  );
+}
+
+/**
+ * Prominent banner showing mispricing status at the top of the report.
+ * Shows underpriced (buy signal), overpriced (sell signal), or fairly priced.
+ */
+function MispricingBanner({ analysis }: { analysis: TradingAnalysis }) {
+  const edge = analysis.implied_edge;
+  const isUnderpriced = edge > 0.02;
+  const isOverpriced = edge < -0.02;
+  const edgePercent = Math.abs(edge * 100).toFixed(1);
+
+  // Determine styling based on mispricing status
+  const bannerConfig = isUnderpriced
+    ? {
+        bgColor: "bg-green-500/10",
+        borderColor: "border-green-500/30",
+        textColor: "text-green-400",
+        icon: <TrendingUp className="h-5 w-5 text-green-500" />,
+        label: "Potentially Underpriced",
+        description: "Market may be trading below fair value",
+        badgeClass: "bg-green-500/20 text-green-400 border-green-500/30",
+      }
+    : isOverpriced
+      ? {
+          bgColor: "bg-red-500/10",
+          borderColor: "border-red-500/30",
+          textColor: "text-red-400",
+          icon: <TrendingDown className="h-5 w-5 text-red-500" />,
+          label: "Potentially Overpriced",
+          description: "Market may be trading above fair value",
+          badgeClass: "bg-red-500/20 text-red-400 border-red-500/30",
+        }
+      : {
+          bgColor: "bg-gray-500/10",
+          borderColor: "border-gray-500/30",
+          textColor: "text-gray-400",
+          icon: <Target className="h-5 w-5 text-gray-500" />,
+          label: "Fairly Priced",
+          description: "Market appears to be trading near fair value",
+          badgeClass: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+        };
+
+  const fairValueLow = (analysis.fair_value_low * 100).toFixed(0);
+  const fairValueHigh = (analysis.fair_value_high * 100).toFixed(0);
+  const currentPrice = (analysis.current_price * 100).toFixed(0);
+
+  return (
+    <div
+      className={cn(
+        "p-4 rounded-lg border mb-4",
+        bannerConfig.bgColor,
+        bannerConfig.borderColor
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {bannerConfig.icon}
+          <div>
+            <div className={cn("font-semibold", bannerConfig.textColor)}>
+              {bannerConfig.label}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {bannerConfig.description}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className={bannerConfig.badgeClass}>
+            {edgePercent}% edge
+          </Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-xs",
+              analysis.estimate_confidence === "high"
+                ? "bg-green-500/20 text-green-400 border-green-500/30"
+                : analysis.estimate_confidence === "medium"
+                  ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                  : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+            )}
+          >
+            {analysis.estimate_confidence} confidence
+          </Badge>
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-border/30 flex items-center gap-6 text-sm">
+        <div>
+          <span className="text-muted-foreground">Fair Value: </span>
+          <span className="font-mono font-medium">
+            {fairValueLow}% - {fairValueHigh}%
+          </span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Current Price: </span>
+          <span className="font-mono font-medium">{currentPrice}%</span>
+        </div>
+      </div>
     </div>
   );
 }

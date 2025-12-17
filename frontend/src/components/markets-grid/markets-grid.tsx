@@ -2,9 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo } from "react";  // useMemo for live market categorization
-import { Zap } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown } from "lucide-react";
 import { api } from "@/lib/api";
-import type { PredictionMarket, Timeframe, MarketFilter } from "@/lib/types";
+import type { PredictionMarket, Timeframe, MarketFilter, MarketEdgeEntry } from "@/lib/types";
 import { colors } from "./colors";
 import { BinaryCard } from "./binary-card";
 import { MultiOutcomeCard } from "./multi-outcome-card";
@@ -76,32 +76,64 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
   // Determine sort parameter based on filter
   const sortParam = filter === "expiring" ? "expiring_soon" : filter === "new" ? "newest" : undefined;
 
-  const { data, isLoading, error } = useQuery({
+  // Special handling for "has_edge" filter - fetch from edge index
+  const isEdgeFilter = filter === "has_edge";
+
+  // Fetch mispriced markets from edge index (only when has_edge filter is active)
+  const { data: edgeData, isLoading: edgeLoading } = useQuery({
+    queryKey: ["mispriced-markets"],
+    queryFn: () => api.getMispricedMarkets(),
+    enabled: isEdgeFilter,
+  });
+
+  // Regular markets fetch (skip when has_edge filter is active, as we'll use edge data)
+  const { data, isLoading: marketsLoading, error } = useQuery({
     queryKey: ["markets", search, filter, sortParam],
     queryFn: () =>
       api.listMarkets({
         platform: "polymarket",
         search: search || undefined,
-        filter: filter as MarketFilter,
+        filter: isEdgeFilter ? undefined : filter as MarketFilter,
         limit: sortParam ? 200 : 100, // Fetch more for server-side filtered views
         sort: sortParam,
       }),
   });
 
-  // Categorize markets for display (filtering is done server-side)
+  const isLoading = marketsLoading || (isEdgeFilter && edgeLoading);
+
+  // Create a map of edge data for quick lookup
+  const edgeMap = useMemo(() => {
+    if (!edgeData) return new Map<string, MarketEdgeEntry>();
+    return new Map(edgeData.map((e) => [`${e.platform}:${e.market_id}`, e]));
+  }, [edgeData]);
+
+  // Categorize markets for display (filtering is done server-side, except for has_edge)
   const { markets, liveMarkets } = useMemo(() => {
     if (!data?.markets) {
       return { markets: [], liveMarkets: [] };
     }
 
-    const allMarkets = data.markets;
+    let allMarkets = data.markets;
+
+    // Filter to only mispriced markets when has_edge filter is active
+    if (isEdgeFilter && edgeData) {
+      const edgeMarketIds = new Set(edgeData.map((e) => e.market_id));
+      allMarkets = allMarkets.filter((m) => edgeMarketIds.has(m.id));
+      // Sort by absolute edge (highest first)
+      allMarkets.sort((a, b) => {
+        const edgeA = edgeMap.get(`${a.platform}:${a.id}`)?.implied_edge ?? 0;
+        const edgeB = edgeMap.get(`${b.platform}:${b.id}`)?.implied_edge ?? 0;
+        return Math.abs(edgeB) - Math.abs(edgeA);
+      });
+    }
+
     const sportsMarkets = allMarkets.filter(
       (m) => m.is_sports && m.home_team && m.away_team
     );
     const live = sportsMarkets.filter((m) => m.is_live);
 
     return { markets: allMarkets, liveMarkets: live };
-  }, [data?.markets]);
+  }, [data?.markets, isEdgeFilter, edgeData, edgeMap]);
 
   const getMarketHref = (market: PredictionMarket) =>
     `/market/${market.platform}/${market.id}`;
@@ -148,7 +180,9 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
                   className="text-center py-12 text-sm"
                   style={{ color: colors.textMuted }}
                 >
-                  No markets found
+                  {isEdgeFilter
+                    ? "No mispriced markets found. Research more markets to populate this list."
+                    : "No markets found"}
                 </div>
               )}
             </>
@@ -219,7 +253,9 @@ export const MarketsGrid = ({ search = "" }: MarketsGridProps) => {
                     className="text-center py-12 text-sm"
                     style={{ color: colors.textMuted }}
                   >
-                    No markets found
+                    {isEdgeFilter
+                      ? "No mispriced markets found. Research more markets to populate this list."
+                      : "No markets found"}
                   </div>
                 )}
               </section>

@@ -17,7 +17,7 @@ use chrono::DateTime;
 use terminal_core::{Platform, TerminalError};
 use tracing::{info, instrument, warn};
 
-use crate::types::{ChatHistory, ChatMessage, ResearchVersion};
+use crate::types::{ChatHistory, ChatMessage, EdgeIndex, MarketEdgeEntry, ResearchVersion};
 use crate::ResearchJob;
 
 /// S3-based storage for research results
@@ -489,5 +489,83 @@ impl ResearchStorage {
         history.append(message);
         self.save_chat(platform, market_id, &history).await?;
         Ok(history)
+    }
+
+    // ========================================================================
+    // Edge Index Methods (for filtering mispriced markets)
+    // ========================================================================
+
+    const EDGE_INDEX_KEY: &'static str = "research/edge-index.json";
+
+    /// Get the edge index containing all markets with research edge data
+    #[instrument(skip(self))]
+    pub async fn get_edge_index(&self) -> Result<EdgeIndex, TerminalError> {
+        let result = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(Self::EDGE_INDEX_KEY)
+            .send()
+            .await;
+
+        match result {
+            Ok(output) => {
+                let bytes = output
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|e| TerminalError::internal(format!("Failed to read S3 body: {}", e)))?
+                    .into_bytes();
+
+                let index: EdgeIndex = serde_json::from_slice(&bytes).map_err(|e| {
+                    TerminalError::parse(format!("Failed to parse edge index: {}", e))
+                })?;
+
+                info!("Loaded edge index with {} entries", index.entries.len());
+                Ok(index)
+            }
+            Err(e) => {
+                // Check for NoSuchKey
+                if let Some(GetObjectError::NoSuchKey(_)) = e.as_service_error() {
+                    info!("No edge index found, returning empty");
+                    return Ok(EdgeIndex::new());
+                }
+
+                let error_str = e.to_string();
+                if error_str.contains("NoSuchKey") || error_str.contains("NotFound") || error_str.contains("404") {
+                    info!("No edge index found, returning empty");
+                    Ok(EdgeIndex::new())
+                } else {
+                    warn!("S3 error for edge index: {}", error_str);
+                    // Return empty index on error rather than failing
+                    Ok(EdgeIndex::new())
+                }
+            }
+        }
+    }
+
+    /// Save the edge index
+    #[instrument(skip(self, index))]
+    pub async fn save_edge_index(&self, index: &EdgeIndex) -> Result<(), TerminalError> {
+        let body = serde_json::to_vec(index)
+            .map_err(|e| TerminalError::internal(format!("Failed to serialize edge index: {}", e)))?;
+
+        self.put_object(Self::EDGE_INDEX_KEY, body).await?;
+        info!("Saved edge index with {} entries", index.entries.len());
+        Ok(())
+    }
+
+    /// Update a single entry in the edge index
+    ///
+    /// This is a convenience method that:
+    /// 1. Gets the existing index
+    /// 2. Updates or inserts the entry
+    /// 3. Saves the updated index
+    #[instrument(skip(self, entry))]
+    pub async fn update_edge_entry(&self, entry: MarketEdgeEntry) -> Result<(), TerminalError> {
+        let mut index = self.get_edge_index().await?;
+        index.upsert(entry);
+        self.save_edge_index(&index).await?;
+        Ok(())
     }
 }

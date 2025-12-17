@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { toast } from "sonner";
+import { tradingToast } from "@/lib/trading-toast";
 import type { Trade } from "@/lib/types";
 import { api } from "@/lib/api";
 import { useTradingBalance } from "@/hooks/use-trading-balance";
+import { useOptimisticPositionUpdate } from "@/hooks/use-positions";
 
 interface Position {
   marketId: string;
@@ -45,6 +46,10 @@ interface TradeExecutionProps {
   className?: string;
   /** CLOB token ID for order submission - required for trading */
   tokenId?: string;
+  /** Market ID for position tracking */
+  marketId?: string;
+  /** Outcome name (e.g., "Yes", "No", or custom outcome name) */
+  outcome?: string;
   /** Market title for confirmation modal */
   marketTitle?: string;
   /** Callback after successful order */
@@ -68,6 +73,8 @@ export const TradeExecution = ({
   trades = [],
   className = "",
   tokenId,
+  marketId,
+  outcome = "Yes",
   marketTitle,
   onOrderSubmitted,
   negRisk = false,
@@ -133,6 +140,9 @@ export const TradeExecution = ({
     walletAddress,
     refetch: refetchBalance,
   } = useTradingBalance(!!tokenId);
+
+  // Hook for optimistic position updates (immediate UI feedback)
+  const { addPosition, reducePosition } = useOptimisticPositionUpdate();
 
   // State for CTF approval
   const [isApprovingCtf, setIsApprovingCtf] = useState(false);
@@ -229,7 +239,7 @@ export const TradeExecution = ({
     setSubmitError(null);
     setSubmitSuccess(null);
 
-    const toastId = toast.loading("Submitting order...");
+    const toastId = tradingToast.loading("Submitting order...");
 
     try {
       // Map UI order type to API order type:
@@ -249,41 +259,41 @@ export const TradeExecution = ({
 
       if (result.success) {
         const txHash = result.transactionHashes?.[0];
-        toast.success(
-          txHash ? (
-            <span>
-              Order placed!{" "}
-              <a
-                href={`https://polygonscan.com/tx/${txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline text-blue-400 hover:text-blue-300"
-              >
-                Tx: {txHash.slice(0, 10)}...
-              </a>
-            </span>
-          ) : (
-            "Order placed!"
-          ),
-          { id: toastId }
-        );
+        tradingToast.success({ toastId, txHash });
         setAmount("");
         setLimitPrice("");
         onOrderSubmitted?.();
-        // Refetch balance after successful order
+
+        // Optimistic position update for instant UI feedback
+        if (tokenId) {
+          if (side === "buy") {
+            addPosition({
+              marketId: marketId || "",
+              tokenId,
+              outcome,
+              shares: parsedAmount.toString(),
+              avgPrice: orderPrice.toString(),
+              currentPrice: orderPrice.toString(),
+              pnl: "0",
+              title: marketTitle || "",
+              negRisk,
+            });
+          } else {
+            reducePosition(tokenId, parsedAmount);
+          }
+        }
+
+        // Refetch balance (positions already updated optimistically, polling will sync)
         refetchBalance();
       } else {
-        toast.error(result.error || "Order failed", { id: toastId });
-        setSubmitError(result.error || "Order failed");
+        tradingToast.handleError(result.error, { toastId }, "Order");
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Order submission failed";
-      toast.error(errorMsg, { id: toastId });
-      setSubmitError(errorMsg);
+      tradingToast.handleError(err, { toastId }, "Order submission");
     } finally {
       setIsSubmitting(false);
     }
-  }, [tokenId, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance, negRisk]);
+  }, [tokenId, marketId, outcome, marketTitle, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance, addPosition, reducePosition, negRisk]);
 
   const handleCancelConfirm = useCallback(() => {
     setShowConfirmModal(false);
@@ -294,24 +304,21 @@ export const TradeExecution = ({
     setApprovalError(null);
     setApprovalSuccess(null);
 
-    const toastId = toast.loading("Approving USDC...");
+    const toastId = tradingToast.loading("Approving USDC...");
 
     try {
       const result = await api.approveUsdc();
 
       if (result.success) {
-        toast.success(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`, { id: toastId });
+        tradingToast.approvalSuccess({ toastId, txHash: result.transactionHash, type: "USDC" });
         setApprovalSuccess(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`);
         // Refetch balance to update allowance state
         setTimeout(() => refetchBalance(), 2000); // Wait for chain confirmation
       } else {
-        toast.error(result.error || "Approval failed", { id: toastId });
-        setApprovalError(result.error || "Approval failed");
+        tradingToast.handleApprovalError(result.error, { toastId }, "USDC");
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Approval failed";
-      toast.error(errorMsg, { id: toastId });
-      setApprovalError(errorMsg);
+      tradingToast.handleApprovalError(err, { toastId }, "USDC");
     } finally {
       setIsApproving(false);
     }
@@ -322,24 +329,21 @@ export const TradeExecution = ({
     setCtfApprovalError(null);
     setCtfApprovalSuccess(null);
 
-    const toastId = toast.loading("Approving tokens for selling...");
+    const toastId = tradingToast.loading("Approving tokens for selling...");
 
     try {
       const result = await api.approveCtf();
 
       if (result.success) {
-        toast.success(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`, { id: toastId });
+        tradingToast.approvalSuccess({ toastId, txHash: result.transactionHash, type: "CTF" });
         setCtfApprovalSuccess(`Approved! Tx: ${result.transactionHash?.slice(0, 10)}...`);
         // Refetch balance to update CTF approval state
         setTimeout(() => refetchBalance(), 2000); // Wait for chain confirmation
       } else {
-        toast.error(result.error || "Approval failed", { id: toastId });
-        setCtfApprovalError(result.error || "Approval failed");
+        tradingToast.handleApprovalError(result.error, { toastId }, "CTF");
       }
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Approval failed";
-      toast.error(errorMsg, { id: toastId });
-      setCtfApprovalError(errorMsg);
+      tradingToast.handleApprovalError(err, { toastId }, "CTF");
     } finally {
       setIsApprovingCtf(false);
     }
@@ -661,28 +665,12 @@ export const TradeExecution = ({
               </p>
             </div>
           )}
-          {approvalError && (
-            <div
-              className="mt-2 p-2 rounded text-xs"
-              style={{ backgroundColor: fey.redMuted, color: fey.red }}
-            >
-              {approvalError}
-            </div>
-          )}
           {approvalSuccess && (
             <div
               className="mt-2 p-2 rounded text-xs"
               style={{ backgroundColor: fey.tealMuted, color: fey.teal }}
             >
               {approvalSuccess}
-            </div>
-          )}
-          {ctfApprovalError && (
-            <div
-              className="mt-2 p-2 rounded text-xs"
-              style={{ backgroundColor: fey.redMuted, color: fey.red }}
-            >
-              {ctfApprovalError}
             </div>
           )}
           {ctfApprovalSuccess && (
@@ -796,16 +784,6 @@ export const TradeExecution = ({
                 ${estimatedCost.toFixed(2)}
               </span>
             </div>
-          </div>
-        )}
-
-        {/* Error Message */}
-        {submitError && (
-          <div
-            className="mt-3 p-2 rounded-md text-sm"
-            style={{ backgroundColor: fey.redMuted, color: fey.red }}
-          >
-            {submitError}
           </div>
         )}
 

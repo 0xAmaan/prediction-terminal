@@ -471,3 +471,113 @@ pub struct ContrarianAnalysis {
     /// What would need to happen for contrarian view to win
     pub contrarian_triggers: Vec<String>,
 }
+
+// ============================================================================
+// Edge Index Types (for filtering mispriced markets)
+// ============================================================================
+
+/// An entry in the edge index tracking a market's implied edge from research
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketEdgeEntry {
+    /// Platform (polymarket, kalshi)
+    pub platform: Platform,
+    /// Market ID
+    pub market_id: String,
+    /// Market title for display
+    pub title: String,
+    /// Implied edge from research (positive = underpriced, negative = overpriced)
+    pub implied_edge: f64,
+    /// Fair value low bound
+    pub fair_value_low: f64,
+    /// Fair value high bound
+    pub fair_value_high: f64,
+    /// Current price when research was conducted
+    pub current_price: f64,
+    /// Confidence in the estimate
+    pub estimate_confidence: EstimateConfidence,
+    /// When this entry was last updated
+    pub updated_at: DateTime<Utc>,
+}
+
+impl MarketEdgeEntry {
+    /// Create a new edge entry from trading analysis
+    pub fn from_analysis(
+        platform: Platform,
+        market_id: &str,
+        title: &str,
+        analysis: &TradingAnalysis,
+    ) -> Self {
+        Self {
+            platform,
+            market_id: market_id.to_string(),
+            title: title.to_string(),
+            implied_edge: analysis.implied_edge,
+            fair_value_low: analysis.fair_value_low,
+            fair_value_high: analysis.fair_value_high,
+            current_price: analysis.current_price,
+            estimate_confidence: analysis.estimate_confidence.clone(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Check if market has significant edge (>2% in either direction)
+    pub fn has_edge(&self) -> bool {
+        self.implied_edge.abs() > 0.02
+    }
+
+    /// Check if market is underpriced (positive edge > 2%)
+    pub fn is_underpriced(&self) -> bool {
+        self.implied_edge > 0.02
+    }
+
+    /// Check if market is overpriced (negative edge < -2%)
+    pub fn is_overpriced(&self) -> bool {
+        self.implied_edge < -0.02
+    }
+}
+
+/// Index of all markets with research reports and their edge values
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EdgeIndex {
+    /// All market entries with edge data
+    pub entries: Vec<MarketEdgeEntry>,
+    /// When this index was last updated
+    pub updated_at: DateTime<Utc>,
+}
+
+impl EdgeIndex {
+    /// Create a new empty index
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Update or insert an entry
+    pub fn upsert(&mut self, entry: MarketEdgeEntry) {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.platform == entry.platform && e.market_id == entry.market_id)
+        {
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+        }
+        self.updated_at = Utc::now();
+    }
+
+    /// Get all markets with significant edge (>2% in either direction)
+    pub fn mispriced_markets(&self) -> Vec<&MarketEdgeEntry> {
+        self.entries.iter().filter(|e| e.has_edge()).collect()
+    }
+
+    /// Get markets filtered by platform
+    pub fn by_platform(&self, platform: Platform) -> Vec<&MarketEdgeEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.platform == platform)
+            .collect()
+    }
+}

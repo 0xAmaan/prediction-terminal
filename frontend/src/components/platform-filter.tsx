@@ -15,7 +15,8 @@ export type FilterOption =
   | "new"
   | "crypto"
   | "politics"
-  | "sports";
+  | "sports"
+  | "has_edge";
 
 interface PlatformFilterProps {
   value: FilterOption;
@@ -25,6 +26,7 @@ interface PlatformFilterProps {
 export const PlatformFilter = ({ value, onChange }: PlatformFilterProps) => {
   const options: { label: string; value: FilterOption }[] = [
     { label: "All", value: "all" },
+    { label: "Has Edge", value: "has_edge" },
     { label: "Trending", value: "trending" },
     { label: "Expiring Soon", value: "expiring" },
     { label: "New", value: "new" },

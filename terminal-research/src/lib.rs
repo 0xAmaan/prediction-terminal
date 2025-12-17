@@ -18,8 +18,8 @@ pub use resolution_source::{extract_urls_from_text, fetch_resolution_sources, Re
 pub use storage::ResearchStorage;
 pub use types::{
     calculate_cache_ttl, Catalyst, CatalystImpact, ChatHistory, ChatMessage, ChatRole,
-    ContrarianAnalysis, Direction, DocumentEdit, DocumentEditOperation, EstimateConfidence,
-    FollowUpRequest, FollowUpResponse, MarketContext, OrderBookSummary, RecentTrade, ResearchJob,
-    ResearchProgress, ResearchStatus, ResearchUpdate, ResearchVersion, ResearchVersionList,
+    ContrarianAnalysis, Direction, DocumentEdit, DocumentEditOperation, EdgeIndex, EstimateConfidence,
+    FollowUpRequest, FollowUpResponse, MarketContext, MarketEdgeEntry, OrderBookSummary, RecentTrade,
+    ResearchJob, ResearchProgress, ResearchStatus, ResearchUpdate, ResearchVersion, ResearchVersionList,
     ResolutionAnalysis, ResolutionSourceData, TradingAnalysis,
 };

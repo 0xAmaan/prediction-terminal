@@ -456,6 +456,28 @@ impl ResearchService {
                     cache_ttl_hours, job_id
                 );
             }
+
+            // Update edge index if report has trading analysis
+            if let Some(ref report) = job.report {
+                if let Some(ref analysis) = report.trading_analysis {
+                    let entry = terminal_research::MarketEdgeEntry::from_analysis(
+                        job.platform,
+                        &job.market_id,
+                        &job.market_title,
+                        analysis,
+                    );
+                    if let Err(e) = storage.update_edge_entry(entry).await {
+                        warn!("Failed to update edge index: {}", e);
+                    } else {
+                        info!(
+                            "Updated edge index for {}/{} with edge {:.2}%",
+                            job.platform,
+                            job.market_id,
+                            analysis.implied_edge * 100.0
+                        );
+                    }
+                }
+            }
         }
 
         let _ = self.update_tx.send(ResearchUpdate::Completed {
@@ -936,6 +958,42 @@ impl ResearchService {
         );
 
         Ok((answer, updated_report))
+    }
+
+    // ========================================================================
+    // Edge Index Methods (for filtering mispriced markets)
+    // ========================================================================
+
+    /// Get the edge index containing all markets with research edge data
+    pub async fn get_edge_index(&self) -> Result<terminal_research::EdgeIndex, TerminalError> {
+        if let Some(ref storage) = self.storage {
+            storage.get_edge_index().await
+        } else {
+            // No storage configured, return empty index
+            Ok(terminal_research::EdgeIndex::new())
+        }
+    }
+
+    /// Update the edge index with a new entry from research
+    pub async fn update_edge_index(
+        &self,
+        platform: Platform,
+        market_id: &str,
+        title: &str,
+        analysis: &terminal_research::TradingAnalysis,
+    ) -> Result<(), TerminalError> {
+        if let Some(ref storage) = self.storage {
+            let entry = terminal_research::MarketEdgeEntry::from_analysis(
+                platform,
+                market_id,
+                title,
+                analysis,
+            );
+            storage.update_edge_entry(entry).await
+        } else {
+            // No storage, silently skip
+            Ok(())
+        }
     }
 }
 

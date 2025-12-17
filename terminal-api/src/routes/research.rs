@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/research/job/{job_id}", get(get_job))
         .route("/research/jobs", get(list_jobs))
         .route("/research/reports", get(list_reports))
+        .route("/research/mispriced", get(get_mispriced_markets))
 }
 
 #[derive(Debug, Serialize)]
@@ -497,6 +498,43 @@ async fn send_chat(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: format!("Failed to send message: {}", e),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get markets with research indicating mispricing (edge > 2%)
+async fn get_mispriced_markets(State(state): State<AppState>) -> impl IntoResponse {
+    info!("Getting mispriced markets from edge index");
+
+    let research_service = match &state.research_service {
+        Some(service) => service,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Research service not available.".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    match research_service.get_edge_index().await {
+        Ok(index) => {
+            // Filter to only markets with significant edge (>2%)
+            let mispriced: Vec<_> = index.entries.into_iter().filter(|e| e.implied_edge.abs() > 0.02).collect();
+            info!("Found {} mispriced markets", mispriced.len());
+            (StatusCode::OK, Json(mispriced)).into_response()
+        }
+        Err(e) => {
+            error!("Failed to get edge index: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get mispriced markets: {}", e),
                 }),
             )
                 .into_response()
