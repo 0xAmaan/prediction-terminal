@@ -15,7 +15,10 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Premonition",
+  title: {
+    default: "Premonition",
+    template: "%s | Premonition",
+  },
   description: "Unified prediction market trading terminal",
 };
 

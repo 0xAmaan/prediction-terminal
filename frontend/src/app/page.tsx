@@ -1,4 +1,9 @@
+import { Metadata } from "next";
 import { Hero, Features, Footer } from "@/components/landing";
+
+export const metadata: Metadata = {
+  title: "Premonition - Prediction Market Terminal",
+};
 
 export default function LandingPage() {
   return (
