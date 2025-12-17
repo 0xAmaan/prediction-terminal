@@ -242,7 +242,9 @@ export function ResearchChat({
                 >
                   <span>{formatTime(message.created_at)}</span>
                   {message.research_triggered && (
-                    <span className="text-yellow-400">Research triggered</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border border-emerald-400/50 text-yellow-300">
+                      Research Triggered
+                    </span>
                   )}
                 </div>
               </div>
