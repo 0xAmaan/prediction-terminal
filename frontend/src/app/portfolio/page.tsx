@@ -58,15 +58,14 @@ interface SellModalProps {
 
 const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) => {
   const [amount, setAmount] = useState("");
-  const [price, setPrice] = useState(
-    (parseFloat(position.currentPrice) * 100).toFixed(0)
-  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
 
   const shares = parseFloat(position.shares);
-  const parsedAmount = parseFloat(amount) || 0;
-  const parsedPrice = parseFloat(price) / 100; // Convert cents to decimal
+  // Round to 2 decimals - Polymarket requires max 2 decimal precision for share amounts
+  const maxShares = Math.floor(shares * 100) / 100;
+  const parsedAmount = Math.floor((parseFloat(amount) || 0) * 100) / 100;
+  const currentPrice = parseFloat(position.currentPrice);
 
   // Check if CTF approval is needed
   const needsApproval = position.negRisk
@@ -75,9 +74,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
 
   const canSubmit =
     parsedAmount > 0 &&
-    parsedAmount <= shares &&
-    parsedPrice > 0 &&
-    parsedPrice < 1 &&
+    parsedAmount <= maxShares &&
     !needsApproval;
 
   const handleApprove = async () => {
@@ -127,12 +124,16 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
     const toastId = toast.loading("Submitting sell order...");
 
     const submitOrder = async () => {
+      // For market sells, use 0.01 to ensure we fill at whatever the best bid is
+      // FOK ensures full fill or nothing (true market order behavior)
+      const marketSellPrice = 0.01;
+
       return api.submitOrder({
         tokenId: position.tokenId,
         side: "sell",
-        price: parsedPrice,
+        price: marketSellPrice,
         size: parsedAmount,
-        orderType: "GTC",
+        orderType: "FOK",  // Fill-Or-Kill - full fill at best bid or cancel entirely
         negRisk: position.negRisk,
       });
     };
@@ -307,7 +308,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
               >
                 {position.outcome}
               </span>
-              <span>Available: {shares.toFixed(2)} shares</span>
+              <span>Available: {maxShares.toFixed(2)} shares</span>
             </div>
           </div>
 
@@ -335,7 +336,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
                 }}
               />
               <button
-                onClick={() => setAmount(shares.toString())}
+                onClick={() => setAmount(maxShares.toString())}
                 className="px-3 py-2 rounded text-xs font-medium transition-colors hover:opacity-80"
                 style={{
                   backgroundColor: fey.bg400,
@@ -348,45 +349,41 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
             </div>
           </div>
 
-          {/* Price Input */}
-          <div>
-            <label
-              className="block text-xs uppercase tracking-wider mb-2"
-              style={{ color: fey.grey500 }}
-            >
-              Price (cents)
-            </label>
-            <input
-              type="number"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="50"
-              step="1"
-              min="1"
-              max="99"
-              className="w-full px-3 py-2 rounded text-sm font-mono bg-transparent outline-none"
-              style={{
-                border: `1px solid ${fey.border}`,
-                color: fey.grey100,
-              }}
-            />
-            <p className="text-xs mt-1" style={{ color: fey.grey500 }}>
-              Current: {(parseFloat(position.currentPrice) * 100).toFixed(1)}¢
+          {/* Market Sell Info */}
+          <div
+            className="p-3 rounded-lg"
+            style={{ backgroundColor: fey.bg200 }}
+          >
+            <div className="flex justify-between text-xs mb-1">
+              <span style={{ color: fey.grey500 }}>Order Type</span>
+              <span className="font-medium" style={{ color: fey.teal }}>Market Sell</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: fey.grey500 }}>Last Price</span>
+              <span className="font-mono" style={{ color: fey.grey300 }}>
+                {(currentPrice * 100).toFixed(1)}¢
+              </span>
+            </div>
+            <p className="text-xs mt-2" style={{ color: fey.grey500 }}>
+              Sells at best available bid price
             </p>
           </div>
 
           {/* Estimated Return */}
-          {parsedAmount > 0 && parsedPrice > 0 && (
+          {parsedAmount > 0 && (
             <div
               className="p-3 rounded-lg"
               style={{ backgroundColor: fey.bg200 }}
             >
               <div className="flex justify-between text-xs" style={{ color: fey.grey500 }}>
-                <span>Est. Return</span>
+                <span>Est. Return (approx)</span>
                 <span className="font-mono" style={{ color: fey.grey100 }}>
-                  ${(parsedAmount * parsedPrice).toFixed(2)}
+                  ~${(parsedAmount * currentPrice).toFixed(2)}
                 </span>
               </div>
+              <p className="text-xs mt-1" style={{ color: fey.grey500 }}>
+                Actual amount depends on orderbook
+              </p>
             </div>
           )}
 
@@ -418,7 +415,7 @@ const SellModal = ({ position, balance, onClose, onSuccess }: SellModalProps) =>
           )}
 
           {/* Validation Message */}
-          {parsedAmount > shares && (
+          {parsedAmount > maxShares && (
             <p className="text-xs text-center" style={{ color: fey.red }}>
               Amount exceeds available shares
             </p>

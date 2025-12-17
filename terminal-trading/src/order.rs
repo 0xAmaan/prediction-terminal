@@ -22,6 +22,8 @@ pub enum OrderType {
     Gtd,
     /// Fill-Or-Kill - must fill entirely or cancel immediately
     Fok,
+    /// Fill-And-Kill - fill what you can, cancel the rest
+    Fak,
 }
 
 impl OrderType {
@@ -30,6 +32,7 @@ impl OrderType {
             OrderType::Gtc => "GTC",
             OrderType::Gtd => "GTD",
             OrderType::Fok => "FOK",
+            OrderType::Fak => "FAK",
         }
     }
 }
@@ -107,6 +110,10 @@ impl OrderBuilder {
                 self.size
             )));
         }
+
+        // Note: Polymarket has a minimum order size (typically 5 shares)
+        // but it may vary by market, so we let the API validate this
+        // and return a clear error message if rejected
 
         if self.token_id.is_empty() {
             return Err(TradingError::InvalidOrder(

@@ -142,7 +142,8 @@ export const TradeExecution = ({
   const isBuy = side === "buy";
   const accentColor = isBuy ? fey.teal : fey.red;
 
-  const quickAmounts = ["0.01", "0.1", "1", "10"];
+  // Quick share amounts
+  const quickAmounts = ["1", "5", "10", "25"];
 
   const currentPrice = parseFloat(yesPrice) || 0;
   const parsedAmount = parseFloat(amount) || 0;
@@ -156,6 +157,7 @@ export const TradeExecution = ({
 
   // For market orders, use orderbook price; for limit orders, use the limit price
   const orderPrice = orderType === "market" ? marketPrice : parsedLimitPrice;
+  // Size is always in shares, cost = shares * price
   const estimatedCost = parsedAmount * orderPrice;
 
   // Validation
@@ -230,12 +232,18 @@ export const TradeExecution = ({
     const toastId = toast.loading("Submitting order...");
 
     try {
+      // Map UI order type to API order type:
+      // - "market" -> "FAK" (Fill-And-Kill: fill what's available, cancel rest)
+      // - "limit" -> "GTC" (Good-Til-Cancelled: rest in orderbook until filled)
+      // Note: FAK is better than FOK for market orders as it allows partial fills
+      const apiOrderType = orderType === "market" ? "FAK" : "GTC";
+
       const result = await api.submitOrder({
         tokenId,
         side,
         price: orderPrice,
         size: parsedAmount,
-        orderType: "GTC", // Good-til-cancelled
+        orderType: apiOrderType,
         negRisk,
       });
 
@@ -387,8 +395,8 @@ export const TradeExecution = ({
                 </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span style={{ color: fey.grey500 }}>Amount</span>
-                <span style={{ color: fey.grey100 }}>{parsedAmount} shares</span>
+                <span style={{ color: fey.grey500 }}>Shares</span>
+                <span style={{ color: fey.grey100 }}>{parsedAmount}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span style={{ color: fey.grey500 }}>Price</span>
@@ -857,6 +865,11 @@ export const TradeExecution = ({
         {tokenId && !isValidPrice && limitPrice && (
           <p className="text-xs text-center mt-2" style={{ color: fey.red }}>
             Price must be between 1¢ and 99¢
+          </p>
+        )}
+        {tokenId && orderType === "limit" && parsedAmount > 0 && parsedAmount < 5 && (
+          <p className="text-xs text-center mt-2" style={{ color: fey.yellow }}>
+            Limit orders require minimum 5 shares. Use Market order for smaller amounts.
           </p>
         )}
       </div>

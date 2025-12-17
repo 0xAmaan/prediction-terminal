@@ -120,10 +120,24 @@ impl TradingWallet {
 
         // Get the appropriate domain
         let domain = if is_neg_risk {
+            tracing::info!("Using Neg Risk CTF Exchange domain for multi-outcome market");
             neg_risk_ctf_exchange_domain()
         } else {
+            tracing::info!("Using CTF Exchange domain for binary market");
             ctf_exchange_domain()
         };
+
+        // Log key order details for debugging
+        tracing::info!("========== EIP-712 ORDER SIGNING ==========");
+        tracing::info!("  negRisk: {}", is_neg_risk);
+        tracing::info!("  salt: {}", order.salt);
+        tracing::info!("  maker: {}", order.maker);
+        tracing::info!("  tokenId: {}", order.token_id);
+        tracing::info!("  makerAmount: {}", order.maker_amount);
+        tracing::info!("  takerAmount: {}", order.taker_amount);
+        tracing::info!("  side: {} ({})", order.side, if order.side == 0 { "BUY" } else { "SELL" });
+        tracing::info!("  signatureType: {}", order.signature_type);
+        tracing::info!("============================================");
 
         // Calculate the EIP-712 signing hash
         let signing_hash = eip712_order.eip712_signing_hash(&domain);
@@ -133,8 +147,11 @@ impl TradingWallet {
         // Sign the hash
         let signature = self.sign_hash(signing_hash.into()).await?;
 
+        let sig_hex = format!("0x{}", hex::encode(signature.as_bytes()));
+        tracing::debug!("Order signature: {}", sig_hex);
+
         // Return as hex string
-        Ok(format!("0x{}", hex::encode(signature.as_bytes())))
+        Ok(sig_hex)
     }
 
     /// Sign an L1 authentication message using EIP-712 typed data
@@ -186,13 +203,20 @@ impl TradingWallet {
 pub fn generate_salt() -> U256 {
     use rand::Rng;
     let mut rng = rand::rng();
-    // Generate timestamp * random factor, similar to official clients
-    let timestamp = std::time::SystemTime::now()
+
+    // Generate a large random salt based on timestamp + random bits
+    // This ensures uniqueness and avoids collisions
+    let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as f64;
-    let random_factor: f64 = rng.random();
-    let salt = (timestamp * random_factor) as u64;
+        .as_millis() as u64;
+
+    // Use timestamp as base and add random bits
+    // This is similar to how the official Python client generates salts
+    let random_bits: u32 = rng.random();
+    let salt = timestamp_ms.wrapping_mul(1000).wrapping_add(random_bits as u64);
+
+    tracing::debug!("Generated order salt: {}", salt);
     U256::from(salt)
 }
 

@@ -286,6 +286,7 @@ async fn submit_order(
         "GTC" => OrderType::Gtc,
         "GTD" => OrderType::Gtd,
         "FOK" => OrderType::Fok,
+        "FAK" => OrderType::Fak,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -353,6 +354,57 @@ async fn submit_order(
         Err(e) => {
             let error_str = format!("{}", e);
 
+            // Check if this is an "invalid signature" error - retry once with fresh salt
+            if error_str.contains("invalid signature") {
+                info!("Got 'invalid signature' error, regenerating order with fresh salt and retrying...");
+
+                // Rebuild and resign the order with a new salt
+                let builder = OrderBuilder::new(&req.token_id, req.price, req.size, side)
+                    .with_neg_risk(req.neg_risk);
+                let retry_order = match builder.build_and_sign(client.wallet()).await {
+                    Ok(o) => o,
+                    Err(build_err) => {
+                        error!("Failed to rebuild order for retry: {}", build_err);
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(SubmitOrderResponse {
+                                success: false,
+                                order_id: None,
+                                error: Some(format!("Retry failed - could not rebuild order: {}", build_err)),
+                                transaction_hashes: vec![],
+                            }),
+                        );
+                    }
+                };
+
+                match client.post_order(retry_order, order_type.clone()).await {
+                    Ok(response) => {
+                        info!("Order submitted on retry: {:?}", response.order_id);
+                        return (
+                            StatusCode::OK,
+                            Json(SubmitOrderResponse {
+                                success: response.success,
+                                order_id: response.order_id,
+                                error: response.error_msg,
+                                transaction_hashes: response.transaction_hashes,
+                            }),
+                        );
+                    }
+                    Err(retry_err) => {
+                        error!("Order submission failed on retry: {}", retry_err);
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(SubmitOrderResponse {
+                                success: false,
+                                order_id: None,
+                                error: Some(format!("Order failed after retry: {}", retry_err)),
+                                transaction_hashes: vec![],
+                            }),
+                        );
+                    }
+                }
+            }
+
             // Check if this is a 401 Unauthorized error - credentials may be stale
             if error_str.contains("401") || error_str.contains("Unauthorized") || error_str.contains("Invalid api key") {
                 info!("Got 401 error, refreshing API credentials and retrying...");
@@ -381,7 +433,7 @@ async fn submit_order(
 
                     info!("API credentials refreshed, retrying order submission...");
 
-                    // Retry the order submission
+                    // Retry the order submission with the original signed order
                     match client.post_order(signed_order, order_type).await {
                         Ok(response) => {
                             info!("Order submitted on retry: {:?}", response.order_id);
