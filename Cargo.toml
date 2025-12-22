@@ -46,7 +46,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 anyhow = { version = "1.0" }
 
 # Logging
-tracing = { version = "0.1.41" }
+tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.19" }
 
 # Async
