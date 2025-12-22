@@ -41,7 +41,7 @@ dashmap = "6.0"
 parking_lot = "0.12"
 
 # Database
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 
 # Hashing
 md5 = "0.7"
