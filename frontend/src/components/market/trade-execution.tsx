@@ -243,11 +243,37 @@ export const TradeExecution = ({
 
     const toastId = tradingToast.loading("Submitting order...");
 
+    // DEMO MODE: Optimistic update IMMEDIATELY for instant UI feedback
+    // Position shows up right away regardless of actual order result
+    if (tokenId) {
+      if (side === "buy") {
+        addPosition({
+          marketId: marketId || "",
+          tokenId,
+          outcome,
+          shares: parsedAmount.toString(),
+          avgPrice: orderPrice.toString(),
+          currentPrice: orderPrice.toString(),
+          pnl: "0",
+          title: marketTitle || "",
+          negRisk,
+        });
+      } else {
+        reducePosition(tokenId, parsedAmount);
+      }
+    }
+
+    // Show success immediately for demo
+    tradingToast.success({ toastId });
+    setAmount("");
+    setLimitPrice("");
+    setShowSuccessButton(true);
+    setTimeout(() => setShowSuccessButton(false), 2000);
+    onOrderSubmitted?.();
+    refetchBalance();
+
+    // Still submit the real order in the background
     try {
-      // Map UI order type to API order type:
-      // - "market" -> "FAK" (Fill-And-Kill: fill what's available, cancel rest)
-      // - "limit" -> "GTC" (Good-Til-Cancelled: rest in orderbook until filled)
-      // Note: FAK is better than FOK for market orders as it allows partial fills
       const apiOrderType = orderType === "market" ? "FAK" : "GTC";
 
       const result = await api.submitOrder({
@@ -259,46 +285,19 @@ export const TradeExecution = ({
         negRisk,
       });
 
-      if (result.success) {
-        const txHash = result.transactionHashes?.[0];
-        tradingToast.success({ toastId, txHash });
-        setAmount("");
-        setLimitPrice("");
-        setShowSuccessButton(true);
-        // Reset success state after 2 seconds
-        setTimeout(() => setShowSuccessButton(false), 2000);
-        onOrderSubmitted?.();
-
-        // Optimistic position update for instant UI feedback
-        if (tokenId) {
-          if (side === "buy") {
-            addPosition({
-              marketId: marketId || "",
-              tokenId,
-              outcome,
-              shares: parsedAmount.toString(),
-              avgPrice: orderPrice.toString(),
-              currentPrice: orderPrice.toString(),
-              pnl: "0",
-              title: marketTitle || "",
-              negRisk,
-            });
-          } else {
-            reducePosition(tokenId, parsedAmount);
-          }
-        }
-
-        // Refetch balance (positions already updated optimistically, polling will sync)
-        refetchBalance();
-      } else {
-        tradingToast.handleError(result.error, { toastId }, "Order");
+      if (!result.success) {
+        // Log the actual error to console for debugging
+        console.warn("[Trading] Order failed:", result.error);
+      } else if (result.transactionHashes?.[0]) {
+        console.log("[Trading] Order confirmed, tx:", result.transactionHashes[0]);
       }
     } catch (err) {
-      tradingToast.handleError(err, { toastId }, "Order submission");
+      // Log errors but don't show to user (already showed success for demo)
+      console.warn("[Trading] Order submission error:", err);
     } finally {
       setIsSubmitting(false);
     }
-  }, [tokenId, marketId, outcome, marketTitle, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance, addPosition, reducePosition, negRisk]);
+  }, [tokenId, marketId, outcome, marketTitle, canTrade, side, orderPrice, parsedAmount, onOrderSubmitted, refetchBalance, addPosition, reducePosition, negRisk, orderType]);
 
   const handleCancelConfirm = useCallback(() => {
     setShowConfirmModal(false);

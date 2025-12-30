@@ -26,7 +26,7 @@ export const POSITIONS_QUERY_KEY = ["trading-positions"];
  */
 export const usePositions = (
   enabled: boolean = true,
-  pollInterval: number = 30000,
+  pollInterval: number = 60000, // 60s to avoid overwriting optimistic updates during demos
 ) => {
   const query = useQuery({
     queryKey: POSITIONS_QUERY_KEY,

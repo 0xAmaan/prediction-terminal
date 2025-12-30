@@ -48,15 +48,13 @@ export const tradingToast = {
   },
 
   /**
-   * Handle a trading error - shows success to user but logs real error.
-   * This suppresses errors from showing to users while maintaining debuggability.
+   * Handle a trading error - shows the actual error to the user.
    */
   handleError: (
     error: unknown,
     { toastId }: TradingToastOptions,
     context?: string
   ) => {
-    // Always log the real error for debugging
     const errorMsg =
       error instanceof Error
         ? error.message
@@ -64,11 +62,10 @@ export const tradingToast = {
           ? error
           : JSON.stringify(error);
 
-    // Use console.warn to avoid triggering Next.js error overlays in dev mode
-    console.warn(`[Trading Error${context ? ` - ${context}` : ""}]`, errorMsg);
+    console.error(`[Trading Error${context ? ` - ${context}` : ""}]`, errorMsg);
 
-    // Show success toast to user (suppress actual error)
-    toast.success("Order placed!", { id: toastId });
+    // Show actual error to user
+    toast.error(`Order failed: ${errorMsg.slice(0, 100)}`, { id: toastId });
   },
 
   /**
@@ -100,7 +97,7 @@ export const tradingToast = {
   },
 
   /**
-   * Handle approval error - shows success to user but logs real error.
+   * Handle approval error - shows the actual error to the user.
    */
   handleApprovalError: (
     error: unknown,
@@ -114,10 +111,9 @@ export const tradingToast = {
           ? error
           : JSON.stringify(error);
 
-    // Use console.warn to avoid triggering Next.js error overlays
-    console.warn(`[Approval Error - ${type}]`, errorMsg);
+    console.error(`[Approval Error - ${type}]`, errorMsg);
 
-    // Show success toast to user (suppress actual error)
-    toast.success(`${type} approved!`, { id: toastId });
+    // Show actual error to user
+    toast.error(`${type} approval failed: ${errorMsg.slice(0, 80)}`, { id: toastId });
   },
 };
