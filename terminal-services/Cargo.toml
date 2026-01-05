@@ -44,7 +44,7 @@ parking_lot = "0.12"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 # Hashing
-md5 = "0.7"
+md5 = "0.8"
 
 # Error handling
 thiserror = { workspace = true }
